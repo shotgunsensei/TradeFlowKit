@@ -1,0 +1,235 @@
+You are a principal engineer building a REAL, production-grade product. Build a multi-tenant practice management platform for blue-collar service businesses (electricians, plumbers, carpenters, HVAC) named “TradeFlow”. This must be as close to “final form” as possible: clean architecture, security-first, deployable, and ready to extend. Output the complete repo file-by-file with exact paths and exact commands. No hand-waving, no missing steps, no “TODO” for core functionality.
+
+HIGH-LEVEL TARGET
+A full-stack system with:
+1) Mobile app (Expo React Native) for iOS/Android/Web
+2) Admin web portal (Next.js) for office staff (optional but included)
+3) Supabase backend (Auth + Postgres + RLS + Storage + Edge Functions)
+4) Payments (Stripe subscriptions + invoice payments)
+5) Domain-ready deployment (Vercel for web, Supabase for backend, EAS for mobile)
+6) Store submission readiness (bundle IDs, signing, privacy basics, required assets checklist)
+
+NON-NEGOTIABLES
+- Multi-tenant: orgs + memberships; every business has isolated data.
+- Security: strict Row Level Security (RLS) for every table; never trust client.
+- Minimal guesswork: include .env.example and explicit setup commands.
+- Code quality: TypeScript everywhere, zod validation, TanStack Query, react-hook-form, linting, formatting, tests.
+- “Final form” structure: monorepo with shared types/schemas package.
+- Clean UX: minimal, mobile-first, extremely usable in the field.
+
+TECH STACK (REQUIRED)
+Monorepo:
+- pnpm workspaces
+Apps:
+- apps/mobile: Expo SDK (latest stable), Expo Router, TypeScript
+- apps/admin: Next.js 14+ App Router, TypeScript, Tailwind
+Packages:
+- packages/shared: zod schemas, shared types, shared helpers
+Backend:
+- Supabase CLI project under /supabase
+- supabase-js v2 client
+State/Data:
+- TanStack Query
+Forms:
+- react-hook-form + zod resolver
+Styling:
+- Tailwind for admin; minimal RN styling for mobile
+Testing:
+- Vitest for shared helpers; Playwright for admin smoke; basic mobile unit tests where practical
+Observability (optional but included if easy):
+- Sentry hooks prepared but disabled by default
+
+CORE FEATURES (MVP+ THAT CAN SHIP)
+AUTH & TENANCY
+- Supabase Auth: email/password + magic link (both enabled)
+- On first login, user can Create Org or Join Org via invite code
+- Membership roles: owner, admin, tech, viewer
+- Org switcher for users in multiple orgs
+
+CUSTOMERS
+- CRUD customers (name, phone, email, address, notes)
+- Customer detail shows jobs, quotes, invoices
+
+JOBS
+- Job CRUD: status (lead, quoted, scheduled, in_progress, done, invoiced, paid, canceled)
+- Scheduling fields: start/end time, assigned tech(s)
+- Job notes, internal notes
+- Job timeline (events: created, status change, photo upload, invoice sent, paid)
+
+EVIDENCE VAULT (PHOTOS)
+- Supabase Storage bucket: job-photos
+- Upload multiple photos per job from mobile; show gallery
+- Photos metadata stored in table with org_id + job_id
+- Policies: only org members can read/upload; object paths scoped by org_id/job_id
+
+QUOTES
+- Quote CRUD: line items (qty, unit price, description), tax %, discount
+- Convert quote -> job with one click
+- Quote PDF generation (server-side or edge function) for emailing/sharing
+
+INVOICES
+- Invoice CRUD: generated from job; line items + tax/discount; due date; status (draft/sent/paid/void)
+- Send invoice: email customer a secure public link
+- Public invoice view route: tokenized, read-only, pay button
+- Stripe Checkout for invoice payment; webhook updates invoice status to paid
+- Receipt email after payment
+
+PAYMENTS & SUBSCRIPTIONS
+- Stripe subscriptions for orgs: tiered (Solo, Crew, Business)
+- Feature gating by tier (ex: Crew has scheduling/dispatch; Solo basic)
+- Customer portal link for managing subscription
+- Webhooks: subscription status updates stored to org record
+
+DASHBOARD
+- Admin dashboard: revenue (paid invoices), outstanding, job counts by status, recent activity
+- Mobile dashboard: today’s jobs, outstanding invoices, quick-create buttons
+
+DISPATCH (MVP LIGHT)
+- Admin: simple calendar/week list view; assign tech to jobs
+- Mobile: “My Jobs” list filtered by assigned tech
+
+IMPORT/EXPORT
+- Export customer/job/invoice data to CSV
+- Basic import customers from CSV in admin
+
+RBAC
+- Owner: everything
+- Admin: manage customers/jobs/quotes/invoices, assign techs
+- Tech: see assigned jobs/customers, add notes/photos, mark status
+- Viewer: read-only
+
+PROJECT STRUCTURE (MANDATORY)
+tradeflow/
+  apps/
+    mobile/
+      app/ (expo-router routes)
+      src/ (components, lib, hooks)
+    admin/
+      src/app (next app router)
+      src/components
+      src/lib
+  packages/
+    shared/
+      src/schemas (zod)
+      src/types
+      src/utils
+  supabase/
+    migrations/
+    seed.sql
+    functions/
+  scripts/
+  .env.example
+  README.md
+  LICENSE
+  pnpm-workspace.yaml
+  package.json
+  turbo.json (optional)
+
+DATABASE (MANDATORY)
+Provide SQL migrations for:
+- orgs (id uuid pk, name, slug, billing fields, created_at)
+- profiles (id uuid pk = auth.users.id, name, phone)
+- memberships (id, org_id, user_id, role, created_at)
+- invite_codes (id, org_id, code, role, expires_at, created_by)
+- customers (id, org_id, name, phone, email, address jsonb, notes)
+- jobs (id, org_id, customer_id, title, description, status, scheduled_start, scheduled_end, assigned_user_ids uuid[], created_by, created_at)
+- job_events (id, org_id, job_id, type, payload jsonb, created_at)
+- job_photos (id, org_id, job_id, storage_path, caption, created_by, created_at)
+- quotes (id, org_id, customer_id, job_id nullable, status, totals, created_by, created_at)
+- quote_items (id, org_id, quote_id, description, qty, unit_price)
+- invoices (id, org_id, customer_id, job_id, status, totals, public_token, due_date, sent_at, paid_at)
+- invoice_items (id, org_id, invoice_id, description, qty, unit_price)
+- stripe_customers (org_id, stripe_customer_id)
+- stripe_subscriptions (org_id, stripe_subscription_id, status, current_period_end)
+- invoice_payments (id, org_id, invoice_id, stripe_payment_intent_id, amount, currency, status, created_at)
+
+RLS (MANDATORY)
+- Enable RLS on all tables.
+- Policies:
+  - Authenticated users can access rows only where they are members of org_id.
+  - Public invoice view uses public_token and exposes only minimal invoice+items fields via a SECURITY DEFINER function or a separate “public_invoices” view with safe access (no org leakage).
+  - Storage policies scoped to org membership AND object path prefix "org/{org_id}/job/{job_id}/...".
+- Include helper SQL functions:
+  - is_org_member(org_id uuid) returns boolean
+  - current_user_org_role(org_id uuid) returns text
+
+SUPABASE FUNCTIONS (MANDATORY)
+Edge Functions in supabase/functions for:
+1) create-stripe-checkout (invoice payment)
+2) stripe-webhook (invoice paid + subscription updates)
+3) send-invoice-email (email invoice link)
+4) generate-invoice-pdf (optional, can be server route but must exist somewhere)
+
+FRONTEND REQUIREMENTS (MANDATORY)
+Mobile (Expo):
+- Auth screens
+- Org select/create/join via invite
+- Customers list/detail/create/edit
+- Jobs list (filters), Job detail, Job create/edit
+- Quote create, Quote detail, Convert to job
+- Invoice create from job, Invoice detail, Send invoice
+- Photo upload to job (multiple) + gallery
+- Settings (profile, org switch, logout)
+- Offline-friendly: cache last viewed lists in async storage; queue photo uploads if offline (simple queue acceptable)
+
+Admin (Next.js):
+- Same core CRUD but optimized for desktop
+- Dispatch/week view
+- Subscription/billing page (view plan + manage portal link)
+- CSV import/export
+
+SHARED PACKAGE
+- Zod schemas for all inserts/updates
+- Shared calculation helpers (invoice totals, quote totals)
+- Shared types derived from schemas
+
+ENV + CONFIG (MANDATORY)
+Provide:
+- .env.example at repo root with:
+  - SUPABASE_URL
+  - SUPABASE_ANON_KEY
+  - STRIPE_SECRET_KEY
+  - STRIPE_WEBHOOK_SECRET
+  - STRIPE_PRICE_SOLO / CREW / BUSINESS
+  - RESEND_API_KEY (or POSTMARK)
+  - APP_BASE_URL (admin domain)
+  - PUBLIC_INVOICE_BASE_URL
+- Document where each env var lives (mobile/admin/supabase functions)
+
+QUALITY BAR
+- Lint + format:
+  - eslint + prettier configured at repo root
+- Strong error handling and user-friendly error messages
+- Use transactions where needed
+- No insecure direct object references
+- Avoid leaking PII in logs
+
+DELIVERABLES (MANDATORY)
+1) Full repo content, file-by-file with paths.
+2) README that includes:
+   - prerequisites (node, pnpm, supabase cli, expo)
+   - supabase init/link instructions
+   - apply migrations + seed
+   - run admin locally
+   - run mobile locally (ios/android/web)
+   - configure stripe products + webhooks
+   - configure email provider
+   - deploy admin to Vercel
+   - deploy functions to Supabase
+   - domain/DNS mapping overview
+   - EAS build commands for stores
+3) Smoke test checklist (manual QA)
+4) Minimal tests implemented and runnable with commands
+5) A short “Release & Store Submission Checklist” for Google Play + Apple App Store (assets, bundle ids, privacy policy basics)
+
+OUTPUT RULES
+- Do NOT ask me questions unless absolutely blocked.
+- If something is ambiguous, choose sensible defaults and document them.
+- Provide exact commands and file paths.
+- Do not omit “boring” files like configs; include them.
+- Ensure it runs from a fresh clone with minimal changes.
+
+START NOW
+1) Print the repo tree you will create.
+2) Then output files in a logical sequence: root configs → shared package → supabase migrations/functions → admin app → mobile app → scripts → README/tests.
+3) Make sure every referenced import path exists.
