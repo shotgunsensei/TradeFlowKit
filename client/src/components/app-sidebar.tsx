@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import { useLocation, Link } from "wouter";
 import { useAuth } from "@/lib/auth";
+import tradeflowLogo from "@assets/tradeflowlogo_1771743836671.png";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -59,9 +60,7 @@ export function AppSidebar() {
     <Sidebar>
       <SidebarHeader className="p-4">
         <div className="flex items-center gap-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary">
-            <Wrench className="h-4 w-4 text-primary-foreground" />
-          </div>
+          <img src={tradeflowLogo} alt="TradeFlow" className="h-8 w-8 rounded-md object-contain" />
           <div className="flex flex-col">
             <span className="text-sm font-semibold tracking-tight">TradeFlow</span>
             <span className="text-[10px] text-muted-foreground uppercase tracking-wider">
