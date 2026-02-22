@@ -105,7 +105,7 @@ function OrgMembersRow({ orgId }: { orgId: string }) {
           <div className="space-y-1.5">
             {members.map((m) => (
               <div
-                key={m.id}
+                key={m.userId}
                 className="flex items-center justify-between gap-2 text-sm"
                 data-testid={`member-row-${m.userId}`}
               >
