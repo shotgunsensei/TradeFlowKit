@@ -156,6 +156,18 @@ export async function registerRoutes(
     });
   });
 
+  app.delete("/api/auth/delete-account", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.session.userId!;
+      await storage.deleteUser(userId);
+      req.session.destroy(() => {
+        res.json({ ok: true });
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to delete account" });
+    }
+  });
+
   app.get("/api/auth/me", requireAuth, async (req: Request, res: Response) => {
     try {
       const user = await storage.getUser(req.session.userId!);

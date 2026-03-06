@@ -86,6 +86,8 @@ export interface IStorage {
   getDashboardStats(orgId: string): Promise<any>;
 
   getOrgCounts(orgId: string): Promise<{ customers: number; jobs: number; quotes: number; invoices: number; members: number }>;
+
+  deleteUser(userId: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -617,6 +619,40 @@ export class DatabaseStorage implements IStorage {
       invoices: invoiceCount.c,
       members: memberCount.c,
     };
+  }
+
+  async deleteUser(userId: string): Promise<void> {
+    await db.transaction(async (tx) => {
+      const userMemberships = await tx.select().from(memberships).where(eq(memberships.userId, userId));
+
+      for (const mem of userMemberships) {
+        const orgMembers = await tx.select().from(memberships).where(eq(memberships.orgId, mem.orgId));
+        const otherMembers = orgMembers.filter((m) => m.userId !== userId);
+
+        if (otherMembers.length === 0) {
+          await tx.delete(inviteCodes).where(eq(inviteCodes.orgId, mem.orgId));
+          await tx.delete(memberships).where(eq(memberships.orgId, mem.orgId));
+          await tx.delete(quoteItems).where(eq(quoteItems.orgId, mem.orgId));
+          await tx.delete(quotes).where(eq(quotes.orgId, mem.orgId));
+          await tx.delete(invoiceItems).where(eq(invoiceItems.orgId, mem.orgId));
+          await tx.delete(invoices).where(eq(invoices.orgId, mem.orgId));
+          await tx.delete(jobEvents).where(eq(jobEvents.orgId, mem.orgId));
+          await tx.delete(jobs).where(eq(jobs.orgId, mem.orgId));
+          await tx.delete(customers).where(eq(customers.orgId, mem.orgId));
+          await tx.delete(orgs).where(eq(orgs.id, mem.orgId));
+        } else {
+          await tx.delete(memberships).where(and(eq(memberships.orgId, mem.orgId), eq(memberships.userId, userId)));
+        }
+      }
+
+      await tx.update(inviteCodes).set({ createdBy: null }).where(eq(inviteCodes.createdBy, userId));
+      await tx.update(jobs).set({ createdBy: null }).where(eq(jobs.createdBy, userId));
+      await tx.update(jobEvents).set({ createdBy: null }).where(eq(jobEvents.createdBy, userId));
+      await tx.update(quotes).set({ createdBy: null }).where(eq(quotes.createdBy, userId));
+      await tx.update(invoices).set({ createdBy: null }).where(eq(invoices.createdBy, userId));
+
+      await tx.delete(users).where(eq(users.id, userId));
+    });
   }
 }
 
