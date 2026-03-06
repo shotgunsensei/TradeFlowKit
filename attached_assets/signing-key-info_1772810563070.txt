@@ -1,0 +1,10 @@
+Keep this file and signing.keystore in a safe place. You'll need these files if you want to upload future versions of your PWA to the Google Play Store.
+
+Key store file: signing.keystore
+Key store password: cHCh70NRtlEq
+Key alias: my-key-alias
+Key password: cHCh70NRtlEq
+Signer's full name: John T. Williams Jr. 
+Signer's organization: Shotgun Ninjas Productions
+Signer's organizational unit: Owner
+Signer's country code: US
