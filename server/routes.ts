@@ -976,13 +976,8 @@ export async function registerRoutes(
         return res.status(400).send("Not a call recovery session");
       }
 
-      await storage.updateOrg(orgId, {
-        callRecoveryPlan: callRecoveryPlan as CallRecoveryPlan,
-        callRecoveryStatus: 'active',
-        callRecoveryStripeSubId: session.subscription as string || null,
-      });
-
       const existingSub = await storage.getCallRecoverySubscription(orgId);
+      let subId: string;
       if (existingSub) {
         await storage.updateCallRecoverySubscription(existingSub.id, {
           plan: callRecoveryPlan as CallRecoveryPlan,
@@ -991,14 +986,23 @@ export async function registerRoutes(
           stripeCustomerId: session.customer as string,
           usageCount: 0,
         });
+        subId = existingSub.id;
       } else {
-        await storage.createCallRecoverySubscription({
+        const newSub = await storage.createCallRecoverySubscription({
           orgId,
           plan: callRecoveryPlan,
           stripeSubscriptionId: session.subscription as string,
           stripeCustomerId: session.customer as string,
         });
+        subId = newSub.id;
       }
+
+      await storage.updateOrg(orgId, {
+        callRecoveryPlan: callRecoveryPlan as CallRecoveryPlan,
+        callRecoveryStatus: 'active',
+        callRecoveryStripeSubId: session.subscription as string || null,
+        callRecoverySubscriptionId: subId,
+      });
 
       res.json({ ok: true, plan: callRecoveryPlan });
     } catch (err: any) {

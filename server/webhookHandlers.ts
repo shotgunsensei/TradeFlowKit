@@ -45,13 +45,8 @@ export class WebhookHandlers {
       const org = await storage.getOrg(orgId);
       if (!org) return;
 
-      await storage.updateOrg(orgId, {
-        callRecoveryPlan: callRecoveryPlan as CallRecoveryPlan,
-        callRecoveryStatus: 'active',
-        callRecoveryStripeSubId: session.subscription || null,
-      });
-
       const existingSub = await storage.getCallRecoverySubscription(orgId);
+      let subId: string;
       if (existingSub) {
         await storage.updateCallRecoverySubscription(existingSub.id, {
           plan: callRecoveryPlan as CallRecoveryPlan,
@@ -60,14 +55,23 @@ export class WebhookHandlers {
           stripeCustomerId: session.customer,
           usageCount: 0,
         });
+        subId = existingSub.id;
       } else {
-        await storage.createCallRecoverySubscription({
+        const newSub = await storage.createCallRecoverySubscription({
           orgId,
           plan: callRecoveryPlan,
           stripeSubscriptionId: session.subscription,
           stripeCustomerId: session.customer,
         });
+        subId = newSub.id;
       }
+
+      await storage.updateOrg(orgId, {
+        callRecoveryPlan: callRecoveryPlan as CallRecoveryPlan,
+        callRecoveryStatus: 'active',
+        callRecoveryStripeSubId: session.subscription || null,
+        callRecoverySubscriptionId: subId,
+      });
 
       console.log(`Call recovery checkout activated for org ${orgId} on plan ${callRecoveryPlan}`);
     } catch (err: any) {

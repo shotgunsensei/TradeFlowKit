@@ -97,6 +97,7 @@ export const orgs = pgTable("orgs", {
   currentPeriodEnd: timestamp("current_period_end"),
   callRecoveryPlan: callRecoveryPlanEnum("call_recovery_plan"),
   callRecoveryStripeSubId: text("call_recovery_stripe_sub_id"),
+  callRecoverySubscriptionId: varchar("call_recovery_subscription_id"),
   callRecoveryStatus: text("call_recovery_status"),
   callRecoveryPhone: text("call_recovery_phone"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
