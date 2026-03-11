@@ -15,6 +15,7 @@ import {
   missedCalls,
   aiMessages,
   callRecoverySubscriptions,
+  type CallRecoveryPlan,
   type User,
   type InsertUser,
   type Org,
@@ -102,7 +103,7 @@ export interface IStorage {
   updateMissedCall(id: string, data: Partial<MissedCall>): Promise<MissedCall | undefined>;
   getMissedCallCount(orgId: string, since: Date): Promise<number>;
 
-  createAiMessage(missedCallId: string, role: string, content: string): Promise<AiMessage>;
+  createAiMessage(missedCallId: string, role: "system" | "assistant" | "user", content: string): Promise<AiMessage>;
   getAiMessages(missedCallId: string): Promise<AiMessage[]>;
 
   getOrgByCallRecoveryPhone(phone: string): Promise<Org | undefined>;
@@ -110,7 +111,7 @@ export interface IStorage {
 
   createCallRecoverySubscription(data: {
     orgId: string;
-    plan: string;
+    plan: CallRecoveryPlan;
     stripeSubscriptionId?: string;
     stripeCustomerId?: string;
     currentPeriodStart?: Date;
@@ -713,11 +714,12 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getMissedCallByPhone(orgId: string, phone: string): Promise<MissedCall | undefined> {
+    const activeStatuses: ("new" | "in_progress")[] = ["new", "in_progress"];
     const [mc] = await db.select().from(missedCalls)
       .where(and(
         eq(missedCalls.orgId, orgId),
         eq(missedCalls.callerPhone, phone),
-        inArray(missedCalls.status, ["new", "in_progress"] as any)
+        inArray(missedCalls.status, activeStatuses)
       ))
       .orderBy(desc(missedCalls.createdAt));
     return mc;
@@ -745,10 +747,10 @@ export class DatabaseStorage implements IStorage {
     return result.c;
   }
 
-  async createAiMessage(missedCallId: string, role: string, content: string): Promise<AiMessage> {
+  async createAiMessage(missedCallId: string, role: "system" | "assistant" | "user", content: string): Promise<AiMessage> {
     const [msg] = await db.insert(aiMessages).values({
       missedCallId,
-      role: role as any,
+      role,
       content,
     }).returning();
     return msg;
@@ -766,10 +768,11 @@ export class DatabaseStorage implements IStorage {
   }
 
   async findMissedCallByCallerPhone(phone: string): Promise<(MissedCall & { orgId: string }) | undefined> {
+    const activeStatuses: ("new" | "in_progress")[] = ["new", "in_progress"];
     const [mc] = await db.select().from(missedCalls)
       .where(and(
         eq(missedCalls.callerPhone, phone),
-        inArray(missedCalls.status, ["new", "in_progress"] as any)
+        inArray(missedCalls.status, activeStatuses)
       ))
       .orderBy(desc(missedCalls.createdAt));
     return mc;
@@ -777,7 +780,7 @@ export class DatabaseStorage implements IStorage {
 
   async createCallRecoverySubscription(data: {
     orgId: string;
-    plan: string;
+    plan: CallRecoveryPlan;
     stripeSubscriptionId?: string;
     stripeCustomerId?: string;
     currentPeriodStart?: Date;
@@ -785,7 +788,7 @@ export class DatabaseStorage implements IStorage {
   }): Promise<CallRecoverySubscription> {
     const [sub] = await db.insert(callRecoverySubscriptions).values({
       orgId: data.orgId,
-      plan: data.plan as any,
+      plan: data.plan,
       status: "active",
       stripeSubscriptionId: data.stripeSubscriptionId || null,
       stripeCustomerId: data.stripeCustomerId || null,
