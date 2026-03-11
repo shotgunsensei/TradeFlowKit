@@ -235,6 +235,22 @@ export const invoiceItems = pgTable("invoice_items", {
     .default("0"),
 });
 
+export const callRecoverySubscriptions = pgTable("call_recovery_subscriptions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  orgId: varchar("org_id")
+    .notNull()
+    .references(() => orgs.id),
+  plan: callRecoveryPlanEnum("plan").notNull(),
+  status: text("status").notNull().default("active"),
+  stripeSubscriptionId: text("stripe_subscription_id"),
+  stripeCustomerId: text("stripe_customer_id"),
+  currentPeriodStart: timestamp("current_period_start").notNull().defaultNow(),
+  currentPeriodEnd: timestamp("current_period_end"),
+  usageCount: integer("usage_count").notNull().default(0),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
 export const missedCalls = pgTable("missed_calls", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   orgId: varchar("org_id")
@@ -262,6 +278,18 @@ export const aiMessages = pgTable("ai_messages", {
   content: text("content").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
+
+export const insertCallRecoverySubscriptionSchema = createInsertSchema(callRecoverySubscriptions).pick({
+  orgId: true,
+  plan: true,
+  stripeSubscriptionId: true,
+  stripeCustomerId: true,
+  currentPeriodStart: true,
+  currentPeriodEnd: true,
+});
+
+export type CallRecoverySubscription = typeof callRecoverySubscriptions.$inferSelect;
+export type InsertCallRecoverySubscription = z.infer<typeof insertCallRecoverySubscriptionSchema>;
 
 export const insertMissedCallSchema = createInsertSchema(missedCalls).pick({
   callerPhone: true,

@@ -14,6 +14,7 @@ import {
   invoiceItems,
   missedCalls,
   aiMessages,
+  callRecoverySubscriptions,
   type User,
   type InsertUser,
   type Org,
@@ -31,6 +32,7 @@ import {
   type InviteCode,
   type MissedCall,
   type AiMessage,
+  type CallRecoverySubscription,
 } from "@shared/schema";
 import { randomBytes } from "crypto";
 
@@ -67,12 +69,12 @@ export interface IStorage {
   getJobs(orgId: string): Promise<(Job & { customerName?: string })[]>;
   getJob(orgId: string, id: string): Promise<(Job & { customerName?: string }) | undefined>;
   getCustomerJobs(orgId: string, customerId: string): Promise<Job[]>;
-  createJob(orgId: string, data: InsertJob, createdBy: string): Promise<Job>;
+  createJob(orgId: string, data: InsertJob, createdBy: string | null): Promise<Job>;
   updateJob(orgId: string, id: string, data: Partial<Job>): Promise<Job | undefined>;
   deleteJob(orgId: string, id: string): Promise<void>;
 
   getJobEvents(orgId: string, jobId: string): Promise<JobEvent[]>;
-  createJobEvent(orgId: string, jobId: string, type: string, payload: any, createdBy: string): Promise<JobEvent>;
+  createJobEvent(orgId: string, jobId: string, type: string, payload: any, createdBy: string | null): Promise<JobEvent>;
 
   getQuotes(orgId: string): Promise<(Quote & { customerName?: string; total?: number })[]>;
   getQuote(orgId: string, id: string): Promise<(Quote & { items?: QuoteItem[]; customerName?: string }) | undefined>;
@@ -105,6 +107,18 @@ export interface IStorage {
 
   getOrgByCallRecoveryPhone(phone: string): Promise<Org | undefined>;
   findMissedCallByCallerPhone(phone: string): Promise<(MissedCall & { orgId: string }) | undefined>;
+
+  createCallRecoverySubscription(data: {
+    orgId: string;
+    plan: string;
+    stripeSubscriptionId?: string;
+    stripeCustomerId?: string;
+    currentPeriodStart?: Date;
+    currentPeriodEnd?: Date;
+  }): Promise<CallRecoverySubscription>;
+  getCallRecoverySubscription(orgId: string): Promise<CallRecoverySubscription | undefined>;
+  updateCallRecoverySubscription(id: string, data: Partial<CallRecoverySubscription>): Promise<CallRecoverySubscription | undefined>;
+  incrementCallRecoveryUsage(orgId: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -159,6 +173,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteOrg(id: string): Promise<void> {
+    await db.delete(callRecoverySubscriptions).where(eq(callRecoverySubscriptions.orgId, id));
     const orgMissedCalls = await db.select({ id: missedCalls.id }).from(missedCalls).where(eq(missedCalls.orgId, id));
     for (const mc of orgMissedCalls) {
       await db.delete(aiMessages).where(eq(aiMessages.missedCallId, mc.id));
@@ -310,7 +325,7 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(jobs.createdAt));
   }
 
-  async createJob(orgId: string, data: InsertJob, createdBy: string): Promise<Job> {
+  async createJob(orgId: string, data: InsertJob, createdBy: string | null): Promise<Job> {
     const [j] = await db
       .insert(jobs)
       .values({ ...data, orgId, createdBy })
@@ -351,7 +366,7 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(jobEvents.createdAt));
   }
 
-  async createJobEvent(orgId: string, jobId: string, type: string, payload: any, createdBy: string): Promise<JobEvent> {
+  async createJobEvent(orgId: string, jobId: string, type: string, payload: any, createdBy: string | null): Promise<JobEvent> {
     const [e] = await db
       .insert(jobEvents)
       .values({ orgId, jobId, type, payload, createdBy: createdBy || null })
@@ -758,6 +773,54 @@ export class DatabaseStorage implements IStorage {
       ))
       .orderBy(desc(missedCalls.createdAt));
     return mc;
+  }
+
+  async createCallRecoverySubscription(data: {
+    orgId: string;
+    plan: string;
+    stripeSubscriptionId?: string;
+    stripeCustomerId?: string;
+    currentPeriodStart?: Date;
+    currentPeriodEnd?: Date;
+  }): Promise<CallRecoverySubscription> {
+    const [sub] = await db.insert(callRecoverySubscriptions).values({
+      orgId: data.orgId,
+      plan: data.plan as any,
+      status: "active",
+      stripeSubscriptionId: data.stripeSubscriptionId || null,
+      stripeCustomerId: data.stripeCustomerId || null,
+      currentPeriodStart: data.currentPeriodStart || new Date(),
+      currentPeriodEnd: data.currentPeriodEnd || null,
+      usageCount: 0,
+    }).returning();
+    return sub;
+  }
+
+  async getCallRecoverySubscription(orgId: string): Promise<CallRecoverySubscription | undefined> {
+    const [sub] = await db.select().from(callRecoverySubscriptions)
+      .where(and(
+        eq(callRecoverySubscriptions.orgId, orgId),
+        eq(callRecoverySubscriptions.status, "active")
+      ))
+      .orderBy(desc(callRecoverySubscriptions.createdAt));
+    return sub;
+  }
+
+  async updateCallRecoverySubscription(id: string, data: Partial<CallRecoverySubscription>): Promise<CallRecoverySubscription | undefined> {
+    const [sub] = await db.update(callRecoverySubscriptions)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(callRecoverySubscriptions.id, id))
+      .returning();
+    return sub;
+  }
+
+  async incrementCallRecoveryUsage(orgId: string): Promise<void> {
+    await db.update(callRecoverySubscriptions)
+      .set({ usageCount: sql`${callRecoverySubscriptions.usageCount} + 1`, updatedAt: new Date() })
+      .where(and(
+        eq(callRecoverySubscriptions.orgId, orgId),
+        eq(callRecoverySubscriptions.status, "active")
+      ));
   }
 }
 

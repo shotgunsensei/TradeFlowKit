@@ -868,12 +868,8 @@ export async function registerRoutes(
       const plan = org.callRecoveryPlan;
       const limits = plan ? CALL_RECOVERY_PLAN_LIMITS[plan] : null;
 
-      let usage = 0;
-      if (plan) {
-        const now = new Date();
-        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-        usage = await storage.getMissedCallCount(org.id, startOfMonth);
-      }
+      const crSub = await storage.getCallRecoverySubscription(org.id);
+      const usage = crSub ? crSub.usageCount : 0;
 
       res.json({
         plan,
@@ -882,6 +878,7 @@ export async function registerRoutes(
         limits,
         usage,
         stripeSubscriptionId: org.callRecoveryStripeSubId,
+        subscription: crSub || null,
       });
     } catch (err: any) {
       res.status(500).send(err.message);
@@ -1032,9 +1029,8 @@ export async function registerRoutes(
 
       const limits = CALL_RECOVERY_PLAN_LIMITS[org.callRecoveryPlan];
       if (limits && limits.recoveriesPerMonth !== -1) {
-        const now = new Date();
-        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-        const currentUsage = await storage.getMissedCallCount(org.id, startOfMonth);
+        const crSub = await storage.getCallRecoverySubscription(org.id);
+        const currentUsage = crSub ? crSub.usageCount : 0;
         if (currentUsage >= limits.recoveriesPerMonth) {
           console.log(`Call recovery limit reached for org ${org.id}`);
           return res.status(429).send("Monthly recovery limit reached");
@@ -1050,6 +1046,8 @@ export async function registerRoutes(
         callerPhone: From,
         twilioCallSid: CallSid,
       });
+
+      await storage.incrementCallRecoveryUsage(org.id);
 
       const initialMessage = generateInitialMessage(org.name);
       await storage.createAiMessage(missedCall.id, "assistant", initialMessage);
@@ -1113,7 +1111,7 @@ export async function registerRoutes(
 
   app.post("/api/call-recovery/handle-subscription-change", async (req: Request, res: Response) => {
     try {
-      const { customerId, subscriptionId, status, callRecoveryPlan } = req.body;
+      const { customerId, subscriptionId, status, callRecoveryPlan, periodStart, periodEnd } = req.body;
       if (!customerId) return res.status(400).send("Customer ID required");
 
       const org = await storage.getOrgByStripeCustomerId(customerId);
@@ -1126,11 +1124,36 @@ export async function registerRoutes(
 
       if (callRecoveryPlan && (status === "active" || status === "trialing")) {
         updateData.callRecoveryPlan = callRecoveryPlan;
+
+        const existingSub = await storage.getCallRecoverySubscription(org.id);
+        if (existingSub) {
+          await storage.updateCallRecoverySubscription(existingSub.id, {
+            plan: callRecoveryPlan,
+            status: "active",
+            stripeSubscriptionId: subscriptionId,
+            currentPeriodStart: periodStart ? new Date(periodStart * 1000) : existingSub.currentPeriodStart,
+            currentPeriodEnd: periodEnd ? new Date(periodEnd * 1000) : existingSub.currentPeriodEnd,
+            usageCount: 0,
+          });
+        } else {
+          await storage.createCallRecoverySubscription({
+            orgId: org.id,
+            plan: callRecoveryPlan,
+            stripeSubscriptionId: subscriptionId,
+            stripeCustomerId: customerId,
+            currentPeriodStart: periodStart ? new Date(periodStart * 1000) : new Date(),
+            currentPeriodEnd: periodEnd ? new Date(periodEnd * 1000) : undefined,
+          });
+        }
       }
 
       if (status === "canceled" || status === "unpaid" || status === "past_due") {
         updateData.callRecoveryPlan = null;
         updateData.callRecoveryStatus = status;
+        const existingSub = await storage.getCallRecoverySubscription(org.id);
+        if (existingSub) {
+          await storage.updateCallRecoverySubscription(existingSub.id, { status: "canceled" });
+        }
       }
 
       await storage.updateOrg(org.id, updateData);
