@@ -186,11 +186,11 @@ export async function completeRecovery(
       customerId,
       status: "lead",
     },
-    null as unknown as string
+    null
   );
 
   await storage.updateMissedCall(missedCallId, {
-    status: "recovered" as any,
+    status: "recovered",
     serviceType,
     location,
     urgency,

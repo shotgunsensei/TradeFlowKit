@@ -5,7 +5,7 @@ import session from "express-session";
 import { pool } from "./db";
 import connectPgSimple from "connect-pg-simple";
 import crypto from "crypto";
-import { PLAN_LIMITS, CALL_RECOVERY_PLAN_LIMITS } from "@shared/schema";
+import { PLAN_LIMITS, CALL_RECOVERY_PLAN_LIMITS, type CallRecoveryPlan } from "@shared/schema";
 import { getUncachableStripeClient, getStripePublishableKey } from "./stripeClient";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
@@ -869,7 +869,10 @@ export async function registerRoutes(
       const limits = plan ? CALL_RECOVERY_PLAN_LIMITS[plan] : null;
 
       const crSub = await storage.getCallRecoverySubscription(org.id);
-      const usage = crSub ? crSub.usageCount : 0;
+      let usage = 0;
+      if (crSub) {
+        usage = await storage.getMissedCallCount(org.id, crSub.currentPeriodStart);
+      }
 
       res.json({
         plan,
@@ -879,6 +882,8 @@ export async function registerRoutes(
         usage,
         stripeSubscriptionId: org.callRecoveryStripeSubId,
         subscription: crSub || null,
+        periodStart: crSub?.currentPeriodStart || null,
+        periodEnd: crSub?.currentPeriodEnd || null,
       });
     } catch (err: any) {
       res.status(500).send(err.message);
@@ -972,7 +977,7 @@ export async function registerRoutes(
       }
 
       await storage.updateOrg(orgId, {
-        callRecoveryPlan: callRecoveryPlan as any,
+        callRecoveryPlan: callRecoveryPlan as CallRecoveryPlan,
         callRecoveryStatus: 'active',
         callRecoveryStripeSubId: session.subscription as string || null,
       });
@@ -980,7 +985,7 @@ export async function registerRoutes(
       const existingSub = await storage.getCallRecoverySubscription(orgId);
       if (existingSub) {
         await storage.updateCallRecoverySubscription(existingSub.id, {
-          plan: callRecoveryPlan as any,
+          plan: callRecoveryPlan as CallRecoveryPlan,
           status: 'active',
           stripeSubscriptionId: session.subscription as string,
           stripeCustomerId: session.customer as string,
@@ -1093,12 +1098,18 @@ export async function registerRoutes(
         return res.status(403).send("Call recovery not active for this organization");
       }
 
+      const crSub = await storage.getCallRecoverySubscription(org.id);
+      if (!crSub) {
+        console.log(`No call_recovery_subscriptions row for org ${org.id} — rejecting`);
+        return res.status(403).send("Call recovery subscription record not found");
+      }
+
       const limits = CALL_RECOVERY_PLAN_LIMITS[org.callRecoveryPlan];
       if (limits && limits.recoveriesPerMonth !== -1) {
-        const crSub = await storage.getCallRecoverySubscription(org.id);
-        const currentUsage = crSub ? crSub.usageCount : 0;
+        const periodStart = crSub.currentPeriodStart;
+        const currentUsage = await storage.getMissedCallCount(org.id, periodStart);
         if (currentUsage >= limits.recoveriesPerMonth) {
-          console.log(`Call recovery limit reached for org ${org.id}`);
+          console.log(`Call recovery limit reached for org ${org.id} (${currentUsage}/${limits.recoveriesPerMonth} since ${periodStart.toISOString()})`);
           return res.status(429).send("Monthly recovery limit reached");
         }
       }
@@ -1113,11 +1124,9 @@ export async function registerRoutes(
         twilioCallSid: CallSid,
       });
 
-      await storage.incrementCallRecoveryUsage(org.id);
-
       const initialMessage = generateInitialMessage(org.name);
       await storage.createAiMessage(missedCall.id, "assistant", initialMessage);
-      await storage.updateMissedCall(missedCall.id, { status: "in_progress" as any });
+      await storage.updateMissedCall(missedCall.id, { status: "in_progress" });
 
       const smsSent = await sendSMS(From, Called, initialMessage);
       if (!smsSent) {
@@ -1173,7 +1182,7 @@ export async function registerRoutes(
           );
         } catch (err: any) {
           console.error("Failed to complete recovery:", err.message);
-          await storage.updateMissedCall(missedCall.id, { status: "failed" as any });
+          await storage.updateMissedCall(missedCall.id, { status: "failed" });
         }
       }
 

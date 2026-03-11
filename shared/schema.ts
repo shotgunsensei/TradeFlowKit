@@ -52,6 +52,7 @@ export const invoiceStatusEnum = pgEnum("invoice_status", [
   "void",
 ]);
 
+export type CallRecoveryPlan = "starter" | "growth" | "pro";
 export const callRecoveryPlanEnum = pgEnum("call_recovery_plan", [
   "starter",
   "growth",
@@ -303,6 +304,7 @@ export const insertAiMessageSchema = createInsertSchema(aiMessages).pick({
   content: true,
 });
 
+export type MissedCallStatus = "new" | "in_progress" | "recovered" | "failed" | "expired";
 export type MissedCall = typeof missedCalls.$inferSelect;
 export type InsertMissedCall = z.infer<typeof insertMissedCallSchema>;
 export type AiMessage = typeof aiMessages.$inferSelect;

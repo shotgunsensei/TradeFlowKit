@@ -1,5 +1,6 @@
 import { getStripeSync } from './stripeClient';
 import { storage } from './storage';
+import { type CallRecoveryPlan } from '@shared/schema';
 
 export class WebhookHandlers {
   static async processWebhook(payload: Buffer, signature: string): Promise<void> {
@@ -45,7 +46,7 @@ export class WebhookHandlers {
       if (!org) return;
 
       await storage.updateOrg(orgId, {
-        callRecoveryPlan: callRecoveryPlan as any,
+        callRecoveryPlan: callRecoveryPlan as CallRecoveryPlan,
         callRecoveryStatus: 'active',
         callRecoveryStripeSubId: session.subscription || null,
       });
@@ -53,7 +54,7 @@ export class WebhookHandlers {
       const existingSub = await storage.getCallRecoverySubscription(orgId);
       if (existingSub) {
         await storage.updateCallRecoverySubscription(existingSub.id, {
-          plan: callRecoveryPlan as any,
+          plan: callRecoveryPlan as CallRecoveryPlan,
           status: 'active',
           stripeSubscriptionId: session.subscription,
           stripeCustomerId: session.customer,
@@ -83,7 +84,7 @@ export class WebhookHandlers {
       const isActive = status === 'active' || status === 'trialing';
 
       await storage.updateOrg(orgId, {
-        callRecoveryPlan: isActive ? callRecoveryPlan as any : null,
+        callRecoveryPlan: isActive ? callRecoveryPlan as CallRecoveryPlan : null,
         callRecoveryStatus: status,
         callRecoveryStripeSubId: isActive ? sub.id : null,
       });
@@ -97,7 +98,7 @@ export class WebhookHandlers {
 
         await storage.updateCallRecoverySubscription(existingSub.id, {
           status: isActive ? 'active' : 'canceled',
-          plan: isActive ? callRecoveryPlan as any : existingSub.plan,
+          plan: isActive ? callRecoveryPlan as CallRecoveryPlan : existingSub.plan,
           currentPeriodStart: periodStart,
           currentPeriodEnd: periodEnd,
           usageCount: isNewPeriod ? 0 : existingSub.usageCount,
