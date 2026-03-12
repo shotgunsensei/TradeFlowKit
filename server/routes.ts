@@ -528,6 +528,61 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/customers/import", requireAuth, requireOrg, async (req: Request, res: Response) => {
+    try {
+      const { customers: rows } = req.body;
+      if (!Array.isArray(rows) || rows.length === 0) {
+        return res.status(400).json({ error: "No customers provided" });
+      }
+
+      const orgId = req.session.orgId!;
+      const planCheck = await checkPlanLimit(orgId, "customers");
+      if (planCheck.limit !== -1) {
+        const remaining = planCheck.limit - planCheck.current;
+        if (remaining <= 0) {
+          return res.status(403).json({
+            error: `Customer limit reached (${planCheck.limit}). Upgrade your plan to add more customers.`,
+            limitReached: true,
+          });
+        }
+        if (rows.length > remaining) {
+          return res.status(403).json({
+            error: `Import would exceed your plan limit. You can add ${remaining} more customer(s) on your current plan.`,
+            limitReached: true,
+          });
+        }
+      }
+
+      let imported = 0;
+      const errors: { row: number; error: string }[] = [];
+
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const name = (row.name || "").trim();
+        if (!name) {
+          errors.push({ row: i + 2, error: "Name is required" });
+          continue;
+        }
+        try {
+          await storage.createCustomer(orgId, {
+            name,
+            phone: (row.phone || "").trim(),
+            email: (row.email || "").trim(),
+            address: (row.address || "").trim(),
+            notes: (row.notes || "").trim(),
+          });
+          imported++;
+        } catch (err: any) {
+          errors.push({ row: i + 2, error: err.message });
+        }
+      }
+
+      res.json({ imported, errors });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Jobs CRUD with plan limits
   app.get("/api/jobs", requireAuth, requireOrg, async (req: Request, res: Response) => {
     try {

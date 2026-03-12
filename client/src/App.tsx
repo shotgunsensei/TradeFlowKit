@@ -27,6 +27,7 @@ import PrivacyPage from "@/pages/privacy";
 import DeleteAccountPage from "@/pages/delete-account";
 import CallRecoveryPage from "@/pages/call-recovery";
 import SmsConsentPage from "@/pages/sms-consent";
+import GuidePage from "@/pages/guide";
 import { Skeleton } from "@/components/ui/skeleton";
 
 function AppContent() {
@@ -49,6 +50,7 @@ function AppContent() {
       <Switch>
         <Route path="/privacy" component={PrivacyPage} />
         <Route path="/sms-consent" component={SmsConsentPage} />
+        <Route path="/guide" component={GuidePage} />
         <Route path="/delete-account" component={DeleteAccountPage} />
         <Route><AuthPage /></Route>
       </Switch>
@@ -87,6 +89,7 @@ function AppContent() {
             <Route path="/subscription" component={SubscriptionPage} />
             <Route path="/call-recovery" component={CallRecoveryPage} />
             <Route path="/admin" component={AdminPage} />
+            <Route path="/guide" component={GuidePage} />
             <Route path="/privacy" component={PrivacyPage} />
             <Route path="/sms-consent" component={SmsConsentPage} />
             <Route path="/delete-account" component={DeleteAccountPage} />
