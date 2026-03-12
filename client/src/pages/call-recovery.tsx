@@ -656,14 +656,15 @@ function DashboardPage({
                 <CardTitle className="text-base">Setup Instructions</CardTitle>
                 <CardDescription>How to forward missed calls to the AI</CardDescription>
               </CardHeader>
-              <CardContent>
+              <CardContent className="space-y-4">
                 <ol className="space-y-3 text-sm">
                   {[
                     { step: "1", text: "Get a Twilio phone number from twilio.com — choose a local number for your area." },
-                    { step: "2", text: "In Twilio Console, configure the number's webhook URL to point to your TradeFlow missed-call endpoint." },
-                    { step: "3", text: "Enter that Twilio number above and save it." },
-                    { step: "4", text: "On your mobile carrier or phone system, set up call forwarding for unanswered calls to forward to your Twilio number." },
-                    { step: "5", text: "Test by calling your business number and letting it go unanswered. The caller should receive an AI SMS within seconds." },
+                    { step: "2", text: "In Twilio Console, complete the A2P 10DLC registration for your brand and messaging campaign. Use the SMS Consent Policy link below as your opt-in documentation URL." },
+                    { step: "3", text: "Configure the Twilio number's Voice webhook (for missed calls) and Messaging webhook (for SMS replies) to the URLs shown below." },
+                    { step: "4", text: "Enter that Twilio number above and save it." },
+                    { step: "5", text: "On your mobile carrier or phone system, set up call forwarding for unanswered calls to your Twilio number." },
+                    { step: "6", text: "Test by calling your business number and letting it go unanswered. The caller should receive an AI SMS within seconds." },
                   ].map((item) => (
                     <li key={item.step} className="flex gap-3">
                       <span className="flex-shrink-0 flex items-center justify-center h-5 w-5 rounded-full bg-primary/10 text-primary text-xs font-semibold">
@@ -673,11 +674,42 @@ function DashboardPage({
                     </li>
                   ))}
                 </ol>
-                <div className="mt-4 p-3 rounded-lg bg-muted/40 text-xs text-muted-foreground">
-                  <strong className="text-foreground">Webhook URL:</strong>{" "}
-                  <code className="text-primary">
-                    {window.location.origin}/api/call-recovery/webhook/missed-call
-                  </code>
+
+                <div className="p-3 rounded-lg bg-muted/40 text-xs space-y-1.5">
+                  <div>
+                    <strong className="text-foreground">Missed-call webhook URL:</strong>{" "}
+                    <code className="text-primary break-all">
+                      {window.location.origin}/api/call-recovery/webhook/missed-call
+                    </code>
+                  </div>
+                  <div>
+                    <strong className="text-foreground">SMS reply webhook URL:</strong>{" "}
+                    <code className="text-primary break-all">
+                      {window.location.origin}/api/call-recovery/webhook/sms
+                    </code>
+                  </div>
+                </div>
+
+                <div className="p-3 rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-900 text-xs space-y-1.5" data-testid="card-sms-compliance">
+                  <p className="font-semibold text-amber-900 dark:text-amber-300 flex items-center gap-1.5">
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    Twilio Business Messaging Compliance
+                  </p>
+                  <p className="text-amber-800 dark:text-amber-400">
+                    Twilio requires proof of consumer consent for A2P 10DLC registration. Use the link below as
+                    your <strong>opt-in documentation URL</strong> when completing your campaign registration in the
+                    Twilio Console.
+                  </p>
+                  <a
+                    href="/sms-consent"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 font-medium text-amber-900 dark:text-amber-300 underline underline-offset-2 hover:opacity-80"
+                    data-testid="link-sms-consent"
+                  >
+                    <ExternalLink className="h-3 w-3" />
+                    {window.location.origin}/sms-consent
+                  </a>
                 </div>
               </CardContent>
             </Card>
