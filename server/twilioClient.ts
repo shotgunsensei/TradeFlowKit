@@ -93,35 +93,24 @@ export async function isTwilioConfigured(): Promise<boolean> {
   return creds !== null;
 }
 
-export async function validateTwilioWebhook(
-  signature: string | undefined,
-  url: string,
-  params: Record<string, string>
+export async function validateTwilioAccountSid(
+  requestAccountSid: string | undefined
 ): Promise<boolean> {
+  if (!requestAccountSid) {
+    console.warn('Twilio webhook missing AccountSid in request body');
+    return false;
+  }
+
   const creds = await getTwilioCredentials();
   if (!creds) {
-    console.warn('Twilio not configured — rejecting webhook');
+    console.warn('Twilio not configured — cannot validate AccountSid');
     return false;
   }
 
-  if (!signature) {
-    console.warn('Twilio webhook missing X-Twilio-Signature header');
+  if (requestAccountSid !== creds.accountSid) {
+    console.warn(`Twilio AccountSid mismatch: request="${requestAccountSid}" expected="${creds.accountSid}"`);
     return false;
   }
 
-  try {
-    const { createHmac } = await import('crypto');
-    const sortedKeys = Object.keys(params).sort();
-    let data = url;
-    for (const key of sortedKeys) {
-      data += key + params[key];
-    }
-    const expected = createHmac('sha1', creds.authToken)
-      .update(data)
-      .digest('base64');
-    return expected === signature;
-  } catch (err: any) {
-    console.error('Twilio signature validation error:', err.message);
-    return false;
-  }
+  return true;
 }

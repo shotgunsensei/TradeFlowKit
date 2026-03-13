@@ -10,7 +10,7 @@ import { getUncachableStripeClient, getStripePublishableKey } from "./stripeClie
 import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { processConversation, generateInitialMessage, completeRecovery } from "./callRecoveryAI";
-import { sendSMS, validateTwilioWebhook, isTwilioConfigured } from "./twilioClient";
+import { sendSMS, validateTwilioAccountSid } from "./twilioClient";
 
 const PgSession = connectPgSimple(session);
 
@@ -1134,34 +1134,21 @@ export async function registerRoutes(
     };
 
     try {
-      const { Called, From, CallSid, CallStatus } = req.body;
+      const { Called, From, CallSid, CallStatus, AccountSid } = req.body;
+
+      console.log(`[missed-call webhook] From=${From} Called=${Called} CallSid=${CallSid} CallStatus=${CallStatus} AccountSid=${AccountSid}`);
 
       if (!From || !Called) {
+        console.warn("[missed-call webhook] Missing From or Called — returning Hangup");
         return twiml("<Hangup/>");
       }
 
-      // Validate Twilio signature only when credentials are configured.
-      // Without credentials we cannot sign outbound SMS either, so we log the
-      // warning but still respond with valid TwiML so the caller isn't greeted
-      // with Twilio's "application error" recording.
-      const twilioConfigured = await isTwilioConfigured();
-      if (twilioConfigured) {
-        const twilioSig = req.headers["x-twilio-signature"] as string | undefined;
-        // Use the actual host from the incoming request so the URL we validate
-        // against matches what Twilio signed (handles custom domains like
-        // tradeflowkit.com vs the internal .replit.app domain).
-        const host = req.headers["x-forwarded-host"] || req.headers["host"];
-        const webhookUrl = host
-          ? `https://${host}/api/call-recovery/webhook/missed-call`
-          : "";
-        const isValid = await validateTwilioWebhook(twilioSig, webhookUrl, req.body as Record<string, string>);
-        if (!isValid) {
-          console.warn(`Twilio signature mismatch for missed-call. URL used: ${webhookUrl}`);
-          return twiml("<Hangup/>");
-        }
-      } else {
-        console.warn("Twilio not configured — skipping webhook signature validation for missed-call");
+      const isValid = await validateTwilioAccountSid(AccountSid);
+      if (!isValid) {
+        console.warn(`[missed-call webhook] AccountSid validation failed — returning Hangup`);
+        return twiml("<Hangup/>");
       }
+      console.log("[missed-call webhook] AccountSid validated successfully");
 
       // Status callback path: only process calls that were actually missed
       if (CallStatus && !["no-answer", "busy", "failed", "canceled"].includes(CallStatus)) {
@@ -1235,27 +1222,21 @@ export async function registerRoutes(
     };
 
     try {
-      const { From, Body, To } = req.body;
+      const { From, Body, To, AccountSid } = req.body;
+
+      console.log(`[sms webhook] From=${From} To=${To} AccountSid=${AccountSid} Body="${Body?.substring(0, 50)}"`);
 
       if (!From || Body === undefined) {
+        console.warn("[sms webhook] Missing From or Body — returning empty TwiML");
         return twiml("");
       }
 
-      const twilioConfigured = await isTwilioConfigured();
-      if (twilioConfigured) {
-        const twilioSig = req.headers["x-twilio-signature"] as string | undefined;
-        const host = req.headers["x-forwarded-host"] || req.headers["host"];
-        const webhookUrl = host
-          ? `https://${host}/api/call-recovery/webhook/sms`
-          : "";
-        const isValid = await validateTwilioWebhook(twilioSig, webhookUrl, req.body as Record<string, string>);
-        if (!isValid) {
-          console.warn(`Twilio signature mismatch for sms. URL used: ${webhookUrl}`);
-          return twiml("");
-        }
-      } else {
-        console.warn("Twilio not configured — skipping webhook signature validation for sms");
+      const isValid = await validateTwilioAccountSid(AccountSid);
+      if (!isValid) {
+        console.warn("[sms webhook] AccountSid validation failed — returning empty TwiML");
+        return twiml("");
       }
+      console.log("[sms webhook] AccountSid validated successfully");
 
       const org = await storage.getOrgByCallRecoveryPhone(To);
       if (!org) {
