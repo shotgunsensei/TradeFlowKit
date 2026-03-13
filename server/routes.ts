@@ -1222,9 +1222,9 @@ export async function registerRoutes(
     };
 
     try {
-      const { From, Body, To, AccountSid } = req.body;
+      const { From, Body, To, AccountSid, SmsSid } = req.body;
 
-      console.log(`[sms webhook] From=${From} To=${To} AccountSid=${AccountSid} Body="${Body?.substring(0, 50)}"`);
+      console.log(`[sms webhook] From=${From} To=${To} SmsSid=${SmsSid} AccountSid=${AccountSid} Body="${Body?.substring(0, 50)}"`);
 
       if (!From || Body === undefined) {
         console.warn("[sms webhook] Missing From or Body — returning empty TwiML");
