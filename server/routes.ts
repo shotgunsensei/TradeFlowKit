@@ -1165,10 +1165,16 @@ export async function registerRoutes(
         return twiml("<Hangup/>");
       }
 
-      const crSub = await storage.getCallRecoverySubscription(org.id);
+      let crSub = await storage.getCallRecoverySubscription(org.id);
       if (!crSub) {
-        console.log(`No call_recovery_subscriptions row for org ${org.id} — rejecting`);
-        return twiml("<Hangup/>");
+        // Org was manually activated (e.g. by super admin) without going through
+        // Stripe — auto-create the subscription row so the webhook can proceed.
+        console.log(`No call_recovery_subscriptions row for org ${org.id} — auto-creating for plan ${org.callRecoveryPlan}`);
+        crSub = await storage.createCallRecoverySubscription({
+          orgId: org.id,
+          plan: org.callRecoveryPlan as CallRecoveryPlan,
+          currentPeriodStart: new Date(),
+        });
       }
 
       const limits = CALL_RECOVERY_PLAN_LIMITS[org.callRecoveryPlan];
