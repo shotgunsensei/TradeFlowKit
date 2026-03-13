@@ -1183,7 +1183,10 @@ export async function registerRoutes(
 
       const existing = await storage.getMissedCallByPhone(org.id, From);
       if (existing) {
-        return twiml("<Say voice=\"alice\">We received your call and will follow up with you shortly.</Say><Hangup/>");
+        if (!CallStatus || CallStatus === "ringing") {
+          return twiml("<Say voice=\"alice\">We received your call and will follow up with you shortly.</Say><Hangup/>");
+        }
+        return twiml("");
       }
 
       const missedCall = await storage.createMissedCall(org.id, {
