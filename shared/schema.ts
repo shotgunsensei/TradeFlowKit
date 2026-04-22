@@ -97,6 +97,7 @@ export const orgs = pgTable("orgs", {
   stripeSubscriptionId: text("stripe_subscription_id"),
   subscriptionStatus: text("subscription_status"),
   currentPeriodEnd: timestamp("current_period_end"),
+  cancelAtPeriodEnd: boolean("cancel_at_period_end").default(false).notNull(),
   callRecoveryPlan: callRecoveryPlanEnum("call_recovery_plan"),
   callRecoveryStripeSubId: text("call_recovery_stripe_sub_id"),
   callRecoverySubscriptionId: varchar("call_recovery_subscription_id"),

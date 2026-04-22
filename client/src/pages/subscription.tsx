@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Check, X, CreditCard, ExternalLink, Users, Briefcase, FileText, Receipt, Crown } from "lucide-react";
+import { Check, X, CreditCard, ExternalLink, Users, Briefcase, FileText, Receipt, Crown, AlertTriangle } from "lucide-react";
 
 interface StripePlan {
   product_id: string;
@@ -236,7 +236,7 @@ export default function SubscriptionPage() {
                 )}
               </CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-3">
               {currentPlan === "free" ? (
                 <p className="text-sm text-muted-foreground">
                   You are on the free plan. Upgrade to unlock more features and higher limits.
@@ -248,6 +248,17 @@ export default function SubscriptionPage() {
                     <> Current period ends on {new Date(org.currentPeriodEnd).toLocaleDateString()}.</>
                   )}
                 </p>
+              )}
+              {org.cancelAtPeriodEnd && org.currentPeriodEnd && (
+                <div className="flex items-start gap-2 rounded-md border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/20 px-3 py-2.5" data-testid="cancel-at-period-end-notice">
+                  <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                  <p className="text-sm text-amber-800 dark:text-amber-300">
+                    Your plan is set to cancel on{" "}
+                    <strong>{new Date(org.currentPeriodEnd).toLocaleDateString()}</strong>.
+                    You'll remain on your current plan until then.
+                    Reactivate anytime via Manage Billing.
+                  </p>
+                </div>
               )}
             </CardContent>
           </Card>

@@ -51,24 +51,33 @@ router.post("/api/stripe/create-checkout", requireAuth, requireOrg, async (req: 
 
     let customerId = org.stripeCustomerId;
     if (!customerId) {
-      const customer = await stripe.customers.create({
-        name: org.name,
-        metadata: { orgId: org.id },
-      });
+      const customer = await stripe.customers.create(
+        { name: org.name, metadata: { orgId: org.id } },
+        { idempotencyKey: `create-customer-${org.id}` }
+      );
       customerId = customer.id;
       await storage.updateOrg(org.id, { stripeCustomerId: customerId });
     }
 
     const baseUrl = `${req.protocol}://${req.get("host")}`;
-    const session = await stripe.checkout.sessions.create({
-      customer: customerId,
-      payment_method_types: ["card"],
-      line_items: [{ price: priceId, quantity: 1 }],
-      mode: "subscription",
-      success_url: `${baseUrl}/subscription?subscription=success`,
-      cancel_url: `${baseUrl}/subscription?subscription=cancelled`,
-      metadata: { orgId: org.id, plan },
-    });
+    const idempotencyKey = `checkout-${org.id}-${priceId}-${Date.now()}`;
+
+    const session = await stripe.checkout.sessions.create(
+      {
+        customer: customerId,
+        payment_method_types: ["card"],
+        line_items: [{ price: priceId, quantity: 1 }],
+        mode: "subscription",
+        // Pass plan metadata to the subscription so subscription events can determine the plan
+        subscription_data: {
+          metadata: { orgId: org.id, plan },
+        },
+        success_url: `${baseUrl}/subscription?subscription=success`,
+        cancel_url: `${baseUrl}/subscription?subscription=cancelled`,
+        metadata: { orgId: org.id, plan },
+      },
+      { idempotencyKey }
+    );
 
     res.json({ url: session.url });
   } catch (err: any) {
@@ -89,38 +98,6 @@ router.post("/api/stripe/create-portal", requireAuth, requireOrg, async (req: Re
     });
 
     res.json({ url: portalSession.url });
-  } catch (err: any) {
-    res.status(500).send(err.message);
-  }
-});
-
-router.post("/api/stripe/handle-subscription-change", async (req: Request, res: Response) => {
-  try {
-    const { customerId, subscriptionId, status, plan, currentPeriodEnd } = req.body;
-    if (!customerId) return res.status(400).send("Customer ID required");
-
-    const org = await storage.getOrgByStripeCustomerId(customerId);
-    if (!org) return res.status(404).send("Organization not found for this customer");
-
-    const updateData: Record<string, unknown> = {
-      stripeSubscriptionId: subscriptionId || null,
-      subscriptionStatus: status || null,
-    };
-
-    if (currentPeriodEnd) {
-      updateData.currentPeriodEnd = new Date(currentPeriodEnd * 1000);
-    }
-
-    if (plan && (status === "active" || status === "trialing")) {
-      updateData.plan = plan;
-    }
-
-    if (status === "canceled" || status === "unpaid" || status === "past_due") {
-      updateData.plan = "free";
-    }
-
-    await storage.updateOrg(org.id, updateData);
-    res.json({ ok: true });
   } catch (err: any) {
     res.status(500).send(err.message);
   }
