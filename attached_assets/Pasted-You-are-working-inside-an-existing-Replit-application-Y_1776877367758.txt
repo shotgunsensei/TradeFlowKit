@@ -1,0 +1,241 @@
+You are working inside an existing Replit application. Your task is to fully implement a production-ready Stripe billing system for this app without breaking the current architecture, stack, auth, or deployment model.
+
+MISSION
+Audit the current codebase, detect the framework and backend pattern already in use, and then implement a complete live-ready billing system using Stripe that is secure, production-capable, and actually deployable on Replit.
+
+Do not produce a mockup, pseudo-integration, placeholder-only implementation, or partially wired billing UI. Make the real code changes needed so this application can be connected to live Stripe products/prices and used in production after secrets are added.
+
+PRIMARY OBJECTIVE
+Implement a billing architecture that supports:
+1. recurring subscriptions
+2. one-time purchases where applicable
+3. a customer billing portal
+4. webhook-driven entitlement/state synchronization
+5. proper production/deployment configuration
+6. clean rollback-safe integration with the current app
+
+WORKFLOW
+1. First inspect the existing app:
+   - detect framework, runtime, routing structure, auth system, DB layer, ORM, deployment entrypoints, environment variable conventions, and existing pricing/billing code
+   - identify whether the app is subscription SaaS, one-time purchase, credits/usage model, or mixed
+   - identify the authenticated user model and the best place to store Stripe customer/subscription references
+
+2. Then implement the billing system in the current stack, preserving project conventions:
+   - use existing folder structure and code style
+   - do not rewrite the app unnecessarily
+   - do not break current auth/session flows
+   - do not expose secret keys client-side
+   - do not hardcode Stripe secrets, webhook secrets, or live price IDs anywhere in source files
+
+REQUIRED BILLING ARCHITECTURE
+
+A. CONFIGURATION LAYER
+Create a central billing config module that defines plans/products in one place.
+It must support:
+- internal plan key
+- display name
+- billing type: subscription | one_time
+- Stripe price ID from environment variables
+- feature flags / entitlements
+- active/inactive visibility
+- optional trial configuration
+- optional usage/credits metadata
+
+This config must drive both server billing logic and frontend pricing display so plans cannot drift.
+
+B. REQUIRED ENVIRONMENT VARIABLES
+Create runtime validation for required billing env vars.
+Use descriptive names like:
+- STRIPE_SECRET_KEY
+- STRIPE_PUBLISHABLE_KEY
+- STRIPE_WEBHOOK_SECRET
+- APP_BASE_URL
+- STRIPE_PORTAL_RETURN_URL
+- STRIPE_SUCCESS_URL
+- STRIPE_CANCEL_URL
+- STRIPE_PRICE_ID_<PLANKEY>
+- optional tax/config vars only if actually used
+
+If the app uses multiple environments, support test and production safely.
+Never silently fall back to fake values.
+If required env vars are missing, fail clearly with actionable errors.
+
+C. SERVER ENDPOINTS
+Implement secure server endpoints for:
+1. create checkout session
+2. create customer portal session
+3. stripe webhook receiver
+4. optional billing status endpoint for authenticated users
+5. optional current plan / entitlements endpoint if needed by the UI
+
+Requirements:
+- checkout session creation must occur server-side
+- use the existing authenticated user identity
+- reuse existing Stripe customer if present; create one if not
+- persist stripe_customer_id in the database/user profile if missing
+- attach internal identifiers using metadata where appropriate
+- use idempotency keys on Stripe POST requests
+- success and cancel redirects must route back into the app properly
+- do not trust the success page for fulfillment or access control
+
+D. DATABASE / USER MODEL INTEGRATION
+Integrate Stripe with the app’s real user/account model.
+If needed, create migration(s) to store:
+- stripe_customer_id
+- billing_email
+- subscription_status
+- subscription_price_id
+- subscription_product_key
+- current_period_end
+- cancel_at_period_end
+- last_stripe_event_id_processed
+- entitlement state / plan tier if the app uses gated features
+
+If the app already has a membership/account model, merge cleanly instead of duplicating.
+
+E. WEBHOOK IMPLEMENTATION
+Implement a proper Stripe webhook endpoint using raw request body verification.
+Do not skip signature verification.
+Do not parse/transform the raw body before verification.
+
+Handle at minimum the event types relevant to a SaaS/subscription app:
+- checkout.session.completed
+- invoice.paid
+- invoice.payment_failed
+- customer.subscription.created
+- customer.subscription.updated
+- customer.subscription.deleted
+
+Also handle one-time payment completion if the app supports one-time purchases.
+
+Webhook requirements:
+- verify Stripe signature correctly
+- log event IDs
+- make processing idempotent
+- persist/update billing state in DB
+- drive entitlements/access from webhook-confirmed state
+- safely ignore unneeded event types
+- return correct HTTP responses
+- include structured logging for failures
+- prevent duplicate processing of the same Stripe event
+
+F. ACCESS CONTROL / ENTITLEMENTS
+Connect billing state to actual app access.
+If the app has premium features, implement plan-based gating cleanly.
+Do not rely on frontend-only checks.
+Backend/API access must respect entitlements where appropriate.
+
+If the app is multi-tier:
+- define feature entitlements by plan
+- surface current plan and feature availability in the UI
+- ensure downgrade/cancel behavior is handled cleanly
+
+G. CUSTOMER PORTAL
+Implement Stripe Customer Portal session generation for authenticated users so they can:
+- manage payment methods
+- manage subscriptions
+- view billing details
+- cancel where allowed by the configured portal
+
+Create a Billing / Subscription management area in the app if one does not already exist.
+
+H. FRONTEND BILLING UX
+Create or finish the following UI:
+- pricing/plans page
+- current subscription status display
+- upgrade/downgrade buttons
+- manage billing button
+- purchase success/cancel screens or states
+- error handling for failed checkout/session creation
+
+Requirements:
+- plans shown in UI must come from central config
+- do not show inactive plans
+- disable broken purchase buttons if required env/config is missing
+- keep UI consistent with the application brand and design system
+- mobile responsive
+- clean, production-grade, not generic boilerplate junk
+
+I. REPLIT DEPLOYMENT READINESS
+Make this work properly on Replit deployments:
+- use Replit secrets / environment variables
+- make sure the deployed app can access required billing env vars
+- do not assume local-only behavior
+- ensure webhook route path is compatible with deployment
+- ensure production URLs are generated correctly from deployment base URL or configured base URL
+- document exactly what secret names must be added in Replit for production
+
+If the app has a separate build and runtime step, ensure the billing setup works in that deployment model.
+
+J. STRIPE PRODUCT / PRICE MAPPING STRATEGY
+Do not hardcode actual live values.
+Use environment variables for Stripe Price IDs.
+Assume products/prices are created in Stripe Dashboard and linked through env vars.
+
+Create a clear billing mapping file and admin documentation showing:
+- internal plan key
+- env var name expected
+- Stripe object type expected
+- whether the plan is subscription or one-time
+- which features it unlocks
+
+K. OPTIONAL BUT PREFERRED
+If compatible with the current app, support:
+- trial-ready structure
+- coupon / promo code support through Checkout
+- Stripe Tax toggle structure if tax is relevant
+- seat/usage model scaffolding if the app architecture suggests it
+- webhook replay safety tooling
+- internal billing audit logs for troubleshooting
+
+NON-NEGOTIABLE TECHNICAL RULES
+- Secret key stays server-side only
+- Publishable key may be exposed only in the intended client-safe way
+- Webhooks must use signature verification
+- Fulfillment/entitlement changes must be webhook-driven
+- Use idempotency keys on Stripe POST requests
+- No fake sample price IDs in runtime code
+- No TODO stubs where billing logic should exist
+- No mock premium access shortcuts
+- No “coming soon” placeholders for required billing components
+- No duplicate customers created for the same user unless there is a real reason
+- Do not create dead code paths that are never wired into the app
+
+IMPLEMENTATION DETAILS TO DECIDE INTELLIGENTLY
+Use the existing app context to decide:
+- whether checkout mode should be subscription, payment, or both
+- whether a pricing page should be public or auth-gated
+- whether success/cancel routes should be pages, dialogs, or dashboard states
+- how to persist entitlements in the current data model
+- how to map current auth user IDs to Stripe customers safely
+
+DELIVERABLES REQUIRED
+After implementation, provide:
+
+1. A summary of what was added/changed
+2. A list of files created/modified
+3. Exact environment variables required
+4. Exact Stripe Dashboard setup still needed by a human
+5. Exact webhook endpoint URL path to register in Stripe
+6. Any DB migration steps performed
+7. How the app determines active plan/entitlements
+8. A go-live checklist
+9. A test checklist for both test mode and production mode
+10. Any assumptions made about the business model
+
+ACCEPTANCE CRITERIA
+The work is only complete if all of the following are true:
+- an authenticated user can start checkout successfully
+- a Stripe customer is created/reused correctly
+- successful payment/subscription updates app billing state through webhook processing
+- the user can open the billing portal from inside the app
+- premium access or paid entitlements actually change based on subscription/payment state
+- all required secrets are documented
+- deployment is compatible with Replit production
+- no secret keys are exposed client-side
+- billing code is clean, maintainable, and integrated into the real app
+
+FINAL INSTRUCTION
+Do the implementation, not just planning.
+When uncertain, inspect the existing codebase and choose the most production-safe option that fits the current architecture.
+Prefer secure, simple, maintainable Stripe Checkout + Customer Portal + verified webhook patterns over fragile custom payment flows unless the codebase already has a strong reason to do otherwise.
