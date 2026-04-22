@@ -92,10 +92,13 @@ router.post("/api/stripe/create-portal", requireAuth, requireOrg, async (req: Re
 
     const stripe = await getUncachableStripeClient();
     const baseUrl = `${req.protocol}://${req.get("host")}`;
-    const portalSession = await stripe.billingPortal.sessions.create({
-      customer: org.stripeCustomerId,
-      return_url: `${baseUrl}/subscription`,
-    });
+    const portalSession = await stripe.billingPortal.sessions.create(
+      {
+        customer: org.stripeCustomerId,
+        return_url: `${baseUrl}/subscription`,
+      },
+      { idempotencyKey: `portal-${org.id}-${Date.now()}` }
+    );
 
     res.json({ url: portalSession.url });
   } catch (err: any) {
