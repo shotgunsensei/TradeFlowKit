@@ -110,6 +110,8 @@ export const orgs = pgTable("orgs", {
   logoUrl: text("logo_url"),
   website: text("website"),
   businessHours: text("business_hours"),
+  stripeConnectAccountId: varchar("stripe_connect_account_id"),
+  stripeConnectOnboarded: boolean("stripe_connect_onboarded").default(false),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -230,6 +232,8 @@ export const invoices = pgTable("invoices", {
   dueDate: timestamp("due_date"),
   sentAt: timestamp("sent_at"),
   paidAt: timestamp("paid_at"),
+  paidViaStripe: boolean("paid_via_stripe").default(false),
+  stripePaymentIntentId: varchar("stripe_payment_intent_id"),
   notes: text("notes").default(""),
   paymentNotes: text("payment_notes").default(""),
   publicToken: text("public_token").default(sql`gen_random_uuid()`),

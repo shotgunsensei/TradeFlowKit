@@ -5,6 +5,7 @@ import { PageHeader } from "@/components/page-header";
 import { MobileActionBar } from "@/components/mobile-action-bar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog,
@@ -29,9 +30,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ArrowLeft, Edit, Trash2, Printer, Mail, CheckCircle2 } from "lucide-react";
+import { ArrowLeft, Edit, Trash2, Printer, Mail, CheckCircle2, Link2, CreditCard, Check, Zap } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/lib/auth";
 import { calcLineItemsTotal, calcTotalWithTaxDiscount } from "@shared/schema";
 import { format } from "date-fns";
 import type { Invoice, InvoiceItem, Customer, Org } from "@shared/schema";
@@ -42,8 +44,10 @@ export default function InvoiceDetail() {
   const { id } = useParams<{ id: string }>();
   const [, navigate] = useLocation();
   const { toast } = useToast();
+  const { org: authOrg } = useAuth();
   const [showMarkPaid, setShowMarkPaid] = useState(false);
   const [paymentNotes, setPaymentNotes] = useState("");
+  const [copyingLink, setCopyingLink] = useState(false);
 
   const { data: invoice, isLoading } = useQuery<Invoice & { items?: InvoiceItem[]; customerName?: string; customer?: Customer; org?: Org }>({
     queryKey: ["/api/invoices", id],
@@ -75,6 +79,21 @@ export default function InvoiceDetail() {
   });
 
   const handlePrint = () => window.print();
+
+  const handleCopyPaymentLink = async () => {
+    setCopyingLink(true);
+    try {
+      const replitDomains = (window as any).__REPLIT_DOMAINS__ as string | undefined;
+      const origin = window.location.origin;
+      const link = `${origin}/invoices/${id}/pay`;
+      await navigator.clipboard.writeText(link);
+      toast({ title: "Payment link copied!", description: "Share this link with your customer." });
+    } catch {
+      toast({ title: "Failed to copy link", variant: "destructive" });
+    } finally {
+      setTimeout(() => setCopyingLink(false), 2000);
+    }
+  };
 
   const handleEmail = () => {
     if (!invoice) return;
@@ -111,6 +130,7 @@ export default function InvoiceDetail() {
   const customer = invoice.customer;
   const org = invoice.org;
   const isPaid = invoice.status === "paid";
+  const hasStripeConnect = !!(authOrg as any)?.stripeConnectAccountId && !!(authOrg as any)?.stripeConnectOnboarded;
 
   return (
     <div className="flex flex-col h-full">
@@ -139,6 +159,17 @@ export default function InvoiceDetail() {
             >
               Download PDF
             </PdfDownloadButton>
+            {!isPaid && hasStripeConnect && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleCopyPaymentLink}
+                data-testid="button-send-payment-link"
+              >
+                {copyingLink ? <Check className="h-4 w-4 mr-1 text-green-600" /> : <Link2 className="h-4 w-4 mr-1" />}
+                {copyingLink ? "Copied!" : "Send Payment Link"}
+              </Button>
+            )}
             <Button variant="outline" size="sm" onClick={handlePrint} data-testid="button-print-invoice">
               <Printer className="h-4 w-4 mr-1" /> Print
             </Button>
@@ -176,6 +207,14 @@ export default function InvoiceDetail() {
               </SelectContent>
             </Select>
           </div>
+          {(invoice as any).paidViaStripe && (
+            <div>
+              <Badge className="gap-1.5 bg-blue-600 text-white" data-testid="badge-paid-via-card">
+                <CreditCard className="h-3 w-3" />
+                Paid via card
+              </Badge>
+            </div>
+          )}
           {invoice.dueDate && (
             <div>
               <p className="text-xs text-muted-foreground mb-1">Due Date</p>
@@ -193,6 +232,23 @@ export default function InvoiceDetail() {
             </div>
           )}
         </div>
+
+        {!isPaid && !hasStripeConnect && (
+          <div className="mb-4 rounded-lg border border-blue-200 bg-blue-50 dark:bg-blue-950/20 dark:border-blue-800 p-3 flex items-start gap-3 print:hidden" data-testid="card-stripe-nudge">
+            <Zap className="h-4 w-4 text-blue-600 shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <p className="text-sm font-medium text-blue-800 dark:text-blue-300">Accept card payments</p>
+              <p className="text-xs text-blue-700/70 dark:text-blue-400/70 mt-0.5">
+                Connect a Stripe account to let customers pay this invoice online.
+              </p>
+            </div>
+            <a href="/settings?tab=payments">
+              <Button size="sm" variant="outline" className="text-blue-700 border-blue-300 hover:bg-blue-100 dark:text-blue-300 dark:border-blue-600 dark:hover:bg-blue-900/30 h-7 text-xs">
+                Connect Stripe
+              </Button>
+            </a>
+          </div>
+        )}
 
         <div className="hidden print:block mb-8 border-b pb-6">
           <div className="flex justify-between items-start">

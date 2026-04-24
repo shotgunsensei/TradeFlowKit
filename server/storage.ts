@@ -87,6 +87,7 @@ export interface IStorage {
 
   getInvoices(orgId: string): Promise<(Invoice & { customerName?: string; total?: number })[]>;
   getInvoice(orgId: string, id: string): Promise<(Invoice & { items?: InvoiceItem[]; customerName?: string }) | undefined>;
+  getInvoicePublic(id: string): Promise<(Invoice & { items?: InvoiceItem[]; customerName?: string; customer?: Customer; org?: Org }) | undefined>;
   getCustomerInvoices(orgId: string, customerId: string): Promise<Invoice[]>;
   createInvoice(orgId: string, data: any, createdBy: string): Promise<Invoice>;
   updateInvoice(orgId: string, id: string, data: any): Promise<Invoice | undefined>;
@@ -549,6 +550,22 @@ export class DatabaseStorage implements IStorage {
       customer = c;
     }
     return { ...inv, items, customerName, customer };
+  }
+
+  async getInvoicePublic(id: string): Promise<(Invoice & { items?: InvoiceItem[]; customerName?: string; customer?: Customer; org?: Org }) | undefined> {
+    const [inv] = await db.select().from(invoices).where(eq(invoices.id, id));
+    if (!inv) return undefined;
+
+    const items = await db.select().from(invoiceItems).where(eq(invoiceItems.invoiceId, id));
+    let customerName: string | undefined;
+    let customer: Customer | undefined;
+    if (inv.customerId) {
+      const [c] = await db.select().from(customers).where(eq(customers.id, inv.customerId));
+      customerName = c?.name;
+      customer = c;
+    }
+    const org = await this.getOrg(inv.orgId);
+    return { ...inv, items, customerName, customer, org: org ?? undefined };
   }
 
   async getCustomerInvoices(orgId: string, customerId: string): Promise<Invoice[]> {

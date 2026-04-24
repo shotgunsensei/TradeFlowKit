@@ -46,6 +46,12 @@ export class WebhookHandlers {
       return;
     }
 
+    // ── Invoice payment events ──────────────────────────────────────────────
+    if (type === 'checkout.session.completed' && obj?.metadata?.feature === 'invoice_payment') {
+      await WebhookHandlers.handleInvoicePaymentCheckout(obj);
+      return;
+    }
+
     // ── Main plan subscription events ───────────────────────────────────────
     if (type === 'checkout.session.completed') {
       await WebhookHandlers.handleMainPlanCheckout(obj);
@@ -177,6 +183,28 @@ export class WebhookHandlers {
       console.log(`[billing] payment failed for org ${org.id}`);
     } catch (err: any) {
       console.error('[billing] handleMainPlanPaymentFailed error:', err.message);
+    }
+  }
+
+  // ── Invoice payment handlers ──────────────────────────────────────────────
+
+  private static async handleInvoicePaymentCheckout(session: any): Promise<void> {
+    try {
+      const { invoiceId, orgId } = session.metadata || {};
+      if (!invoiceId || !orgId) return;
+
+      const paymentIntentId = session.payment_intent || undefined;
+
+      await storage.updateInvoice(orgId, invoiceId, {
+        status: 'paid',
+        paidAt: new Date(),
+        paidViaStripe: true,
+        stripePaymentIntentId: paymentIntentId || null,
+      });
+
+      console.log(`[invoice-payment] invoice ${invoiceId} marked paid via Stripe`);
+    } catch (err: any) {
+      console.error('[invoice-payment] handleInvoicePaymentCheckout error:', err.message);
     }
   }
 

@@ -1,6 +1,8 @@
 import { Router, type Request, type Response } from "express";
 import { storage } from "../storage";
 import { requireAuth, requireOrg, checkPlanLimit } from "../middleware";
+import { getUncachableStripeClient } from "../stripeClient";
+import { calcLineItemsTotal, calcTotalWithTaxDiscount } from "@shared/schema";
 
 const router = Router();
 
@@ -129,6 +131,96 @@ router.delete("/api/invoices/:id", requireAuth, requireOrg, async (req: Request,
     res.json({ ok: true });
   } catch (err: any) {
     res.status(500).send(err.message);
+  }
+});
+
+router.get("/api/invoices/:id/public", async (req: Request, res: Response) => {
+  try {
+    const inv = await storage.getInvoicePublic(req.params.id as string);
+    if (!inv) return res.status(404).json({ error: "Invoice not found" });
+
+    const { org, ...invoiceFields } = inv;
+    const safeOrg = org ? {
+      name: org.name,
+      address: org.address,
+      phone: org.phone,
+      email: org.email,
+      logoUrl: org.logoUrl,
+      stripeConnectAccountId: org.stripeConnectAccountId,
+      stripeConnectOnboarded: org.stripeConnectOnboarded,
+    } : undefined;
+
+    res.json({ ...invoiceFields, org: safeOrg });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post("/api/invoices/:id/payment-link", async (req: Request, res: Response) => {
+  try {
+    const inv = await storage.getInvoicePublic(req.params.id as string);
+    if (!inv) return res.status(404).json({ error: "Invoice not found" });
+
+    const org = inv.org;
+    if (!org) return res.status(404).json({ error: "Organization not found" });
+
+    if (!org.stripeConnectAccountId || !org.stripeConnectOnboarded) {
+      return res.status(400).json({ error: "This business has not connected a Stripe account yet." });
+    }
+
+    if (inv.status === "paid") {
+      return res.status(400).json({ error: "This invoice is already paid." });
+    }
+
+    const items = inv.items || [];
+    const subtotal = calcLineItemsTotal(items);
+    const totals = calcTotalWithTaxDiscount(subtotal, inv.taxRate || "0", inv.discount || "0");
+    const totalCents = Math.round(totals.total * 100);
+
+    if (totalCents <= 0) {
+      return res.status(400).json({ error: "Invoice total must be greater than zero." });
+    }
+
+    const replitDomains = process.env.REPLIT_DOMAINS;
+    const appUrl = replitDomains
+      ? `https://${replitDomains.split(",")[0]}`
+      : `http://localhost:${process.env.PORT || 5000}`;
+
+    const stripe = await getUncachableStripeClient();
+    const session = await stripe.checkout.sessions.create({
+      mode: "payment",
+      payment_method_types: ["card"],
+      line_items: [
+        {
+          price_data: {
+            currency: "usd",
+            product_data: {
+              name: `Invoice #${inv.id.slice(0, 8).toUpperCase()} — ${org.name}`,
+            },
+            unit_amount: totalCents,
+          },
+          quantity: 1,
+        },
+      ],
+      metadata: {
+        invoiceId: inv.id,
+        orgId: org.id,
+        feature: "invoice_payment",
+      },
+      success_url: `${appUrl}/invoices/${inv.id}/pay?paid=true`,
+      cancel_url: `${appUrl}/invoices/${inv.id}/pay`,
+      payment_intent_data: {
+        on_behalf_of: org.stripeConnectAccountId,
+        transfer_data: {
+          destination: org.stripeConnectAccountId,
+        },
+      },
+    });
+
+    res.json({ url: session.url });
+  } catch (err: any) {
+    console.error("[payment-link] error:", err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 

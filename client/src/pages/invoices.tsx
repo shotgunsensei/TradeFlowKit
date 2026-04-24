@@ -14,7 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, Receipt, Search, Filter, Download, AlertTriangle } from "lucide-react";
+import { Plus, Receipt, Search, Filter, Download, AlertTriangle, CreditCard } from "lucide-react";
 import { format, differenceInDays } from "date-fns";
 import type { Invoice, Customer } from "@shared/schema";
 
@@ -92,7 +92,12 @@ export default function InvoicesPage() {
       header: "Status",
       render: (inv: Invoice & { total?: number }) => (
         <div className="space-y-1">
-          <StatusBadge status={inv.status} type="invoice" />
+          <div className="flex items-center gap-1.5">
+            <StatusBadge status={inv.status} type="invoice" />
+            {(inv as any).paidViaStripe && (
+              <CreditCard className="h-3.5 w-3.5 text-blue-500" title="Paid via card" />
+            )}
+          </div>
           <AgingBadge dueDate={inv.dueDate} status={inv.status} />
         </div>
       ),

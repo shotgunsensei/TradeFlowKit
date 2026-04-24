@@ -21,6 +21,7 @@ import QuoteView from "@/pages/quote-view";
 import InvoicesPage from "@/pages/invoices";
 import InvoiceForm from "@/pages/invoice-form";
 import InvoiceDetail from "@/pages/invoice-detail";
+import InvoicePayPage from "@/pages/invoice-pay";
 import SettingsPage from "@/pages/settings";
 import SubscriptionPage from "@/pages/subscription";
 import AdminPage from "@/pages/admin";
@@ -55,6 +56,7 @@ function AppContent() {
         <Route path="/guide" component={GuidePage} />
         <Route path="/delete-account" component={DeleteAccountPage} />
         <Route path="/quotes/:id/view" component={QuoteView} />
+        <Route path="/invoices/:id/pay" component={InvoicePayPage} />
         <Route><AuthPage /></Route>
       </Switch>
     );
@@ -88,6 +90,7 @@ function AppContent() {
             <Route path="/quotes/:id" component={QuoteDetail} />
             <Route path="/invoices" component={InvoicesPage} />
             <Route path="/invoices/new" component={InvoiceForm} />
+            <Route path="/invoices/:id/pay" component={InvoicePayPage} />
             <Route path="/invoices/:id/edit" component={InvoiceForm} />
             <Route path="/invoices/:id" component={InvoiceDetail} />
             <Route path="/settings" component={SettingsPage} />
