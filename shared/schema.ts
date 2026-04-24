@@ -112,6 +112,9 @@ export const orgs = pgTable("orgs", {
   businessHours: text("business_hours"),
   stripeConnectAccountId: varchar("stripe_connect_account_id"),
   stripeConnectOnboarded: boolean("stripe_connect_onboarded").default(false),
+  reviewRequestEnabled: boolean("review_request_enabled").default(false).notNull(),
+  reviewRequestUrl: varchar("review_request_url"),
+  reviewRequestTemplate: text("review_request_template"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -290,6 +293,20 @@ export const missedCalls = pgTable("missed_calls", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+export const reviewRequests = pgTable("review_requests", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  orgId: varchar("org_id")
+    .notNull()
+    .references(() => orgs.id),
+  jobId: varchar("job_id")
+    .notNull()
+    .references(() => jobs.id),
+  customerId: varchar("customer_id").references(() => customers.id),
+  sentAt: timestamp("sent_at").defaultNow().notNull(),
+  phoneNumber: text("phone_number").notNull(),
+  reviewUrl: text("review_url").notNull(),
+});
+
 export const aiMessages = pgTable("ai_messages", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   missedCallId: varchar("missed_call_id")
@@ -299,6 +316,10 @@ export const aiMessages = pgTable("ai_messages", {
   content: text("content").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
+
+export const insertReviewRequestSchema = createInsertSchema(reviewRequests).omit({ id: true, sentAt: true });
+export type ReviewRequest = typeof reviewRequests.$inferSelect;
+export type InsertReviewRequest = z.infer<typeof insertReviewRequestSchema>;
 
 export const insertCallRecoverySubscriptionSchema = createInsertSchema(callRecoverySubscriptions).pick({
   orgId: true,

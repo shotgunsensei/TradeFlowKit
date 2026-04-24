@@ -37,12 +37,14 @@ import {
   CheckCircle2,
   Circle,
   RefreshCw,
+  Star,
 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { format, formatDistanceToNow } from "date-fns";
 import { JOB_STATUS_LABELS, JOB_PRIORITY_LABELS } from "@shared/schema";
-import type { Job, Customer, JobEvent } from "@shared/schema";
+import type { Job, Customer, JobEvent, ReviewRequest } from "@shared/schema";
 
 const EVENT_ICONS: Record<string, React.ReactNode> = {
   created: <Circle className="h-3.5 w-3.5 text-blue-500" />,
@@ -89,6 +91,16 @@ export default function JobDetail() {
     queryKey: ["/api/customers"],
   });
 
+  const { data: reviewRequest } = useQuery<ReviewRequest | null>({
+    queryKey: ["/api/review-requests/job", id],
+    queryFn: async () => {
+      const res = await fetch(`/api/review-requests/job/${id}`, { credentials: "include" });
+      if (!res.ok) return null;
+      return res.json();
+    },
+    enabled: !!id,
+  });
+
   const updateMutation = useMutation({
     mutationFn: async (data: any) => {
       await apiRequest("PATCH", `/api/jobs/${id}`, data);
@@ -124,6 +136,8 @@ export default function JobDetail() {
       queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
       queryClient.invalidateQueries({ queryKey: ["/api/jobs", id, "events"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/review-requests/job", id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/review-requests/stats"] });
       toast({ title: "Status updated" });
     },
   });
@@ -209,6 +223,19 @@ export default function JobDetail() {
                       </SelectContent>
                     </Select>
                   </div>
+                  {reviewRequest && (
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-1">Review</p>
+                      <Badge
+                        variant="outline"
+                        className="bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-800 gap-1"
+                        data-testid="badge-review-requested"
+                      >
+                        <Star className="h-3 w-3" />
+                        Review Requested
+                      </Badge>
+                    </div>
+                  )}
                   <div>
                     <p className="text-xs text-muted-foreground mb-1">Priority</p>
                     <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium gap-1 ${PRIORITY_STYLES[job.priority || "normal"]}`}>

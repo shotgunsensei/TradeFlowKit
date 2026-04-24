@@ -93,6 +93,11 @@ export async function isTwilioConfigured(): Promise<boolean> {
   return creds !== null;
 }
 
+export async function getTwilioPhoneNumber(): Promise<string | undefined> {
+  const creds = await getTwilioCredentials();
+  return creds?.phoneNumber;
+}
+
 export async function validateTwilioAccountSid(
   requestAccountSid: string | undefined
 ): Promise<boolean> {

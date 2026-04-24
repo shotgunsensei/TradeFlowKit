@@ -1,4 +1,4 @@
-import { eq, and, desc, sql, inArray, count, ilike, or } from "drizzle-orm";
+import { eq, and, desc, sql, inArray, count, ilike, or, gte, lt } from "drizzle-orm";
 import { db } from "./db";
 import {
   users,
@@ -15,6 +15,7 @@ import {
   missedCalls,
   aiMessages,
   callRecoverySubscriptions,
+  reviewRequests,
   type CallRecoveryPlan,
   type User,
   type InsertUser,
@@ -34,6 +35,7 @@ import {
   type MissedCall,
   type AiMessage,
   type CallRecoverySubscription,
+  type ReviewRequest,
 } from "@shared/schema";
 import { randomBytes } from "crypto";
 
@@ -123,6 +125,10 @@ export interface IStorage {
   getCallRecoverySubscription(orgId: string): Promise<CallRecoverySubscription | undefined>;
   updateCallRecoverySubscription(id: string, data: Partial<CallRecoverySubscription>): Promise<CallRecoverySubscription | undefined>;
   incrementCallRecoveryUsage(orgId: string): Promise<void>;
+
+  createReviewRequest(data: { orgId: string; jobId: string; customerId: string | null; phoneNumber: string; reviewUrl: string }): Promise<ReviewRequest>;
+  getReviewRequestByJobId(orgId: string, jobId: string): Promise<ReviewRequest | undefined>;
+  getReviewRequestCountThisMonth(orgId: string): Promise<number>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1030,6 +1036,38 @@ export class DatabaseStorage implements IStorage {
         eq(callRecoverySubscriptions.orgId, orgId),
         eq(callRecoverySubscriptions.status, "active")
       ));
+  }
+
+  async createReviewRequest(data: { orgId: string; jobId: string; customerId: string | null; phoneNumber: string; reviewUrl: string }): Promise<ReviewRequest> {
+    const [rr] = await db.insert(reviewRequests).values({
+      orgId: data.orgId,
+      jobId: data.jobId,
+      customerId: data.customerId,
+      phoneNumber: data.phoneNumber,
+      reviewUrl: data.reviewUrl,
+    }).returning();
+    return rr;
+  }
+
+  async getReviewRequestByJobId(orgId: string, jobId: string): Promise<ReviewRequest | undefined> {
+    const [rr] = await db.select().from(reviewRequests).where(
+      and(eq(reviewRequests.orgId, orgId), eq(reviewRequests.jobId, jobId))
+    );
+    return rr;
+  }
+
+  async getReviewRequestCountThisMonth(orgId: string): Promise<number> {
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const startOfNextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    const [result] = await db.select({ count: count() }).from(reviewRequests).where(
+      and(
+        eq(reviewRequests.orgId, orgId),
+        gte(reviewRequests.sentAt, startOfMonth),
+        lt(reviewRequests.sentAt, startOfNextMonth)
+      )
+    );
+    return result?.count ?? 0;
   }
 }
 

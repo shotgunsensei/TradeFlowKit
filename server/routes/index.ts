@@ -17,6 +17,7 @@ import adminRouter from "./admin";
 import wellKnownRouter from "./wellKnown";
 import analyticsRouter from "./analytics";
 import stripeConnectRouter from "./stripeConnect";
+import reviewRequestsRouter from "./reviewRequests";
 
 declare module "express-session" {
   interface SessionData {
@@ -69,6 +70,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.use(callRecoveryRouter);
   app.use(analyticsRouter);
   app.use(stripeConnectRouter);
+  app.use(reviewRequestsRouter);
   app.use(adminRouter);
 
   return httpServer;

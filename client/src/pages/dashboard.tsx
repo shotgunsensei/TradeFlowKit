@@ -19,6 +19,7 @@ import {
   CalendarCheck,
   CheckCircle2,
   ChevronRight,
+  Star,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { Link } from "wouter";
@@ -153,6 +154,11 @@ export default function Dashboard() {
     enabled: !!org,
   });
 
+  const { data: reviewStats } = useQuery<{ countThisMonth: number }>({
+    queryKey: ["/api/review-requests/stats"],
+    enabled: !!org,
+  });
+
   if (isLoading) {
     return (
       <div className="flex flex-col h-full">
@@ -253,6 +259,19 @@ export default function Dashboard() {
               )}
             </div>
           </div>
+
+          {reviewStats !== undefined && (
+            <Link href="/settings">
+              <div className="rounded-xl border bg-card p-4 hover-elevate cursor-pointer col-span-1" data-testid="kpi-review-requests">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs text-muted-foreground font-medium">Reviews Sent</span>
+                  <Star className="h-4 w-4 text-amber-500" />
+                </div>
+                <p className="text-2xl font-bold">{reviewStats.countThisMonth}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">this month</p>
+              </div>
+            </Link>
+          )}
         </div>
 
         {stats.isEmpty && <EmptyState />}

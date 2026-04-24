@@ -13,6 +13,8 @@ import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/lib/auth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 import {
   Building2,
   User,
@@ -29,6 +31,7 @@ import {
   Zap,
   CheckCircle2,
   XCircle,
+  Star,
 } from "lucide-react";
 import { PLAN_LABELS, PLAN_LIMITS } from "@shared/schema";
 import type { InviteCode } from "@shared/schema";
@@ -81,6 +84,11 @@ export default function SettingsPage() {
   const [newInviteRole, setNewInviteRole] = useState("tech");
   const [portalLoading, setPortalLoading] = useState(false);
   const [connectLoading, setConnectLoading] = useState(false);
+  const [reviewEnabled, setReviewEnabled] = useState<boolean>(org?.reviewRequestEnabled ?? false);
+  const [reviewUrl, setReviewUrl] = useState<string>(org?.reviewRequestUrl ?? "");
+  const [reviewTemplate, setReviewTemplate] = useState<string>(
+    org?.reviewRequestTemplate ?? "Hi {customer}, thanks for choosing {business}! We'd love your feedback. Please leave us a review: {google_link}"
+  );
 
   const searchParams = new URLSearchParams(search);
   const defaultTab = searchParams.get("tab") || "profile";
@@ -129,6 +137,19 @@ export default function SettingsPage() {
     onSuccess: () => {
       refreshAuth();
       toast({ title: "Organization updated" });
+    },
+  });
+
+  const saveAutomationsMutation = useMutation({
+    mutationFn: async (data: any) => {
+      await apiRequest("PATCH", `/api/orgs/${org?.id}`, data);
+    },
+    onSuccess: () => {
+      refreshAuth();
+      toast({ title: "Automation settings saved" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Error", description: err.message || "Failed to save", variant: "destructive" });
     },
   });
 
@@ -293,6 +314,10 @@ export default function SettingsPage() {
             <TabsTrigger value="team" data-testid="tab-team">
               <Users className="h-3.5 w-3.5 mr-1.5" />
               Team
+            </TabsTrigger>
+            <TabsTrigger value="automations" data-testid="tab-automations">
+              <Zap className="h-3.5 w-3.5 mr-1.5" />
+              Automations
             </TabsTrigger>
             <TabsTrigger value="billing" data-testid="tab-billing">
               <CreditCard className="h-3.5 w-3.5 mr-1.5" />
@@ -548,6 +573,109 @@ export default function SettingsPage() {
                 )}
               </CardContent>
             </Card>
+          </TabsContent>
+
+          <TabsContent value="automations" className="mt-6 space-y-6">
+            {(plan === "free") ? (
+              <Card>
+                <CardContent className="pt-6">
+                  <div className="flex flex-col items-center text-center gap-3 py-4">
+                    <div className="h-12 w-12 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
+                      <Zap className="h-6 w-6 text-amber-600" />
+                    </div>
+                    <div>
+                      <p className="font-medium">Upgrade to unlock Automations</p>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        Automations are available on the Individual plan and above.
+                      </p>
+                    </div>
+                    <a href="/subscription">
+                      <Button size="sm" data-testid="button-upgrade-automations">
+                        <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
+                        Upgrade Plan
+                      </Button>
+                    </a>
+                  </div>
+                </CardContent>
+              </Card>
+            ) : (
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center gap-2">
+                    <Star className="h-4 w-4 text-amber-500" />
+                    <CardTitle className="text-base">Review Request</CardTitle>
+                  </div>
+                  <CardDescription>
+                    Automatically send an SMS asking customers to leave a review when a job is marked as Done or Paid.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-5">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium">Enable Review Requests</p>
+                      <p className="text-xs text-muted-foreground">Send SMS automatically on job completion</p>
+                    </div>
+                    <Switch
+                      checked={reviewEnabled}
+                      onCheckedChange={setReviewEnabled}
+                      data-testid="switch-review-enabled"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Review Link URL</Label>
+                    <Input
+                      value={reviewUrl}
+                      onChange={(e) => setReviewUrl(e.target.value)}
+                      placeholder="https://g.page/r/your-business-review"
+                      data-testid="input-review-url"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Your Google review link, Yelp page, or any review URL
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>SMS Template</Label>
+                    <Textarea
+                      value={reviewTemplate}
+                      onChange={(e) => setReviewTemplate(e.target.value)}
+                      rows={4}
+                      data-testid="textarea-review-template"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Use <code className="bg-muted px-1 rounded text-xs">{"{customer}"}</code>,{" "}
+                      <code className="bg-muted px-1 rounded text-xs">{"{business}"}</code>,{" "}
+                      <code className="bg-muted px-1 rounded text-xs">{"{google_link}"}</code> as placeholders.
+                    </p>
+                  </div>
+
+                  {reviewUrl && (
+                    <div className="rounded-md border bg-muted/40 p-3 space-y-1">
+                      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">SMS Preview</p>
+                      <p className="text-sm">
+                        {reviewTemplate
+                          .replace("{customer}", "John Smith")
+                          .replace("{business}", org?.name || "Your Business")
+                          .replace("{google_link}", reviewUrl)}
+                      </p>
+                    </div>
+                  )}
+
+                  <Button
+                    onClick={() => saveAutomationsMutation.mutate({
+                      reviewRequestEnabled: reviewEnabled,
+                      reviewRequestUrl: reviewUrl,
+                      reviewRequestTemplate: reviewTemplate,
+                    })}
+                    disabled={saveAutomationsMutation.isPending}
+                    data-testid="button-save-automations"
+                  >
+                    {saveAutomationsMutation.isPending ? "Saving..." : "Save Automation Settings"}
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
           </TabsContent>
 
           <TabsContent value="billing" className="mt-6 space-y-6">
