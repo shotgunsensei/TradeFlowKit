@@ -16,6 +16,8 @@ import {
   aiMessages,
   callRecoverySubscriptions,
   reviewRequests,
+  orgAutomations,
+  reminderLog,
   type CallRecoveryPlan,
   type User,
   type InsertUser,
@@ -36,6 +38,8 @@ import {
   type AiMessage,
   type CallRecoverySubscription,
   type ReviewRequest,
+  type OrgAutomations,
+  type ReminderLog,
 } from "@shared/schema";
 import { randomBytes } from "crypto";
 
@@ -129,6 +133,14 @@ export interface IStorage {
   createReviewRequest(data: { orgId: string; jobId: string; customerId: string | null; phoneNumber: string; reviewUrl: string }): Promise<ReviewRequest>;
   getReviewRequestByJobId(orgId: string, jobId: string): Promise<ReviewRequest | undefined>;
   getReviewRequestCountThisMonth(orgId: string): Promise<number>;
+
+  getOrgAutomations(orgId: string): Promise<OrgAutomations | undefined>;
+  upsertOrgAutomations(orgId: string, data: Partial<OrgAutomations>): Promise<OrgAutomations>;
+
+  createReminderLog(data: { orgId: string; targetType: string; targetId: string; phoneNumber: string; message: string }): Promise<ReminderLog>;
+  getReminderLogs(orgId: string, targetType?: string, targetId?: string): Promise<ReminderLog[]>;
+  getRecentReminderLog(orgId: string, targetType: string, targetId: string, since: Date): Promise<ReminderLog | undefined>;
+  getAllOrgsWithAutomations(): Promise<(OrgAutomations & { org: Org })[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -198,6 +210,9 @@ export class DatabaseStorage implements IStorage {
     await db.delete(jobEvents).where(eq(jobEvents.orgId, id));
     await db.delete(jobs).where(eq(jobs.orgId, id));
     await db.delete(customers).where(eq(customers.orgId, id));
+    await db.delete(orgAutomations).where(eq(orgAutomations.orgId, id));
+    await db.delete(reminderLog).where(eq(reminderLog.orgId, id));
+    await db.delete(reviewRequests).where(eq(reviewRequests.orgId, id));
     await db.delete(orgs).where(eq(orgs.id, id));
   }
 
@@ -487,6 +502,12 @@ export class DatabaseStorage implements IStorage {
     const { items: itemsData, ...quoteData } = data;
     if (quoteData.expiresAt && typeof quoteData.expiresAt === "string") {
       quoteData.expiresAt = new Date(quoteData.expiresAt);
+    }
+    if (quoteData.status === "sent") {
+      const existing = await db.select().from(quotes).where(and(eq(quotes.orgId, orgId), eq(quotes.id, id))).limit(1);
+      if (existing[0] && existing[0].status !== "sent" && !existing[0].sentAt) {
+        quoteData.sentAt = new Date();
+      }
     }
     const [q] = await db
       .update(quotes)
@@ -894,6 +915,9 @@ export class DatabaseStorage implements IStorage {
           await tx.delete(jobEvents).where(eq(jobEvents.orgId, mem.orgId));
           await tx.delete(jobs).where(eq(jobs.orgId, mem.orgId));
           await tx.delete(customers).where(eq(customers.orgId, mem.orgId));
+          await tx.delete(orgAutomations).where(eq(orgAutomations.orgId, mem.orgId));
+          await tx.delete(reminderLog).where(eq(reminderLog.orgId, mem.orgId));
+          await tx.delete(reviewRequests).where(eq(reviewRequests.orgId, mem.orgId));
           await tx.delete(orgs).where(eq(orgs.id, mem.orgId));
         } else {
           await tx.delete(memberships).where(and(eq(memberships.orgId, mem.orgId), eq(memberships.userId, userId)));
@@ -1068,6 +1092,61 @@ export class DatabaseStorage implements IStorage {
       )
     );
     return result?.count ?? 0;
+  }
+
+  async getOrgAutomations(orgId: string): Promise<OrgAutomations | undefined> {
+    const [row] = await db.select().from(orgAutomations).where(eq(orgAutomations.orgId, orgId));
+    return row;
+  }
+
+  async upsertOrgAutomations(orgId: string, data: Partial<OrgAutomations>): Promise<OrgAutomations> {
+    const existing = await this.getOrgAutomations(orgId);
+    if (existing) {
+      const [row] = await db.update(orgAutomations)
+        .set({ ...data, updatedAt: new Date() })
+        .where(eq(orgAutomations.orgId, orgId))
+        .returning();
+      return row;
+    } else {
+      const [row] = await db.insert(orgAutomations)
+        .values({ orgId, ...data })
+        .returning();
+      return row;
+    }
+  }
+
+  async createReminderLog(data: { orgId: string; targetType: string; targetId: string; phoneNumber: string; message: string }): Promise<ReminderLog> {
+    const [row] = await db.insert(reminderLog).values(data).returning();
+    return row;
+  }
+
+  async getReminderLogs(orgId: string, targetType?: string, targetId?: string): Promise<ReminderLog[]> {
+    const conditions = [eq(reminderLog.orgId, orgId)];
+    if (targetType) conditions.push(eq(reminderLog.targetType, targetType));
+    if (targetId) conditions.push(eq(reminderLog.targetId, targetId));
+    return db.select().from(reminderLog)
+      .where(and(...conditions))
+      .orderBy(desc(reminderLog.sentAt));
+  }
+
+  async getRecentReminderLog(orgId: string, targetType: string, targetId: string, since: Date): Promise<ReminderLog | undefined> {
+    const [row] = await db.select().from(reminderLog)
+      .where(and(
+        eq(reminderLog.orgId, orgId),
+        eq(reminderLog.targetType, targetType),
+        eq(reminderLog.targetId, targetId),
+        gte(reminderLog.sentAt, since)
+      ))
+      .orderBy(desc(reminderLog.sentAt))
+      .limit(1);
+    return row;
+  }
+
+  async getAllOrgsWithAutomations(): Promise<(OrgAutomations & { org: Org })[]> {
+    const rows = await db.select()
+      .from(orgAutomations)
+      .innerJoin(orgs, eq(orgAutomations.orgId, orgs.id));
+    return rows.map(r => ({ ...r.org_automations, org: r.orgs }));
   }
 }
 

@@ -30,13 +30,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ArrowLeft, Edit, Trash2, Printer, Mail, CheckCircle2, Link2, CreditCard, Check, Zap } from "lucide-react";
+import { ArrowLeft, Edit, Trash2, Printer, Mail, CheckCircle2, MessageSquare, Link2, CreditCard, Check, Zap } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
 import { calcLineItemsTotal, calcTotalWithTaxDiscount } from "@shared/schema";
 import { format } from "date-fns";
-import type { Invoice, InvoiceItem, Customer, Org } from "@shared/schema";
+import type { Invoice, InvoiceItem, Customer, Org, ReminderLog } from "@shared/schema";
 import { InvoicePdf } from "@/components/pdf/InvoicePdf";
 import { PdfDownloadButton } from "@/components/pdf/PdfDownloadButton";
 
@@ -51,6 +51,12 @@ export default function InvoiceDetail() {
 
   const { data: invoice, isLoading } = useQuery<Invoice & { items?: InvoiceItem[]; customerName?: string; customer?: Customer; org?: Org }>({
     queryKey: ["/api/invoices", id],
+  });
+
+  const { data: reminderLogs = [] } = useQuery<ReminderLog[]>({
+    queryKey: ["/api/reminder-logs", "invoice", id],
+    queryFn: () => fetch(`/api/reminder-logs?targetType=invoice&targetId=${id}`, { credentials: "include" }).then(r => r.json()),
+    enabled: !!id,
   });
 
   const statusMutation = useMutation({
@@ -369,6 +375,29 @@ export default function InvoiceDetail() {
             </CardHeader>
             <CardContent>
               <p className="text-sm text-muted-foreground">{invoice.notes}</p>
+            </CardContent>
+          </Card>
+        )}
+
+        {reminderLogs.length > 0 && (
+          <Card className="mt-4 print:hidden" data-testid="card-reminder-history">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <MessageSquare className="h-4 w-4 text-muted-foreground" />
+                SMS Reminder History
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                {reminderLogs.map((log) => (
+                  <div key={log.id} className="text-sm border-l-2 border-muted pl-3" data-testid={`reminder-log-${log.id}`}>
+                    <p className="text-muted-foreground text-xs mb-0.5">
+                      {format(new Date(log.sentAt), "MMM d, yyyy 'at' h:mm a")} · {log.phoneNumber}
+                    </p>
+                    <p className="text-foreground">{log.message}</p>
+                  </div>
+                ))}
+              </div>
             </CardContent>
           </Card>
         )}

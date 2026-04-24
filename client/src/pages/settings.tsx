@@ -10,6 +10,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useAuth } from "@/lib/auth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -32,9 +34,11 @@ import {
   CheckCircle2,
   XCircle,
   Star,
+  Bell,
+  Info,
 } from "lucide-react";
 import { PLAN_LABELS, PLAN_LIMITS } from "@shared/schema";
-import type { InviteCode } from "@shared/schema";
+import type { InviteCode, OrgAutomations } from "@shared/schema";
 
 interface Member {
   id: string;
@@ -76,6 +80,9 @@ function UsageBar({ label, used, limit }: { label: string; used: number; limit: 
   );
 }
 
+const INVOICE_REMINDER_DAY_OPTIONS = [3, 7, 14];
+const QUOTE_FOLLOWUP_DAY_OPTIONS = [3, 5, 7];
+
 export default function SettingsPage() {
   const { user, org, refreshAuth } = useAuth();
   const { toast } = useToast();
@@ -108,6 +115,34 @@ export default function SettingsPage() {
   const { data: inviteCodes = [] } = useQuery<InviteCode[]>({
     queryKey: ["/api/invite-codes"],
     enabled: !!org,
+  });
+
+  const { data: automations } = useQuery<OrgAutomations>({
+    queryKey: ["/api/automations"],
+    enabled: !!org,
+  });
+
+  const [invoiceReminderEnabled, setInvoiceReminderEnabled] = useState<boolean | null>(null);
+  const [invoiceReminderDays, setInvoiceReminderDays] = useState<number[] | null>(null);
+  const [quoteFollowUpEnabled, setQuoteFollowUpEnabled] = useState<boolean | null>(null);
+  const [quoteFollowUpDays, setQuoteFollowUpDays] = useState<number[] | null>(null);
+
+  const effectiveInvoiceReminder = invoiceReminderEnabled ?? automations?.invoiceReminder ?? false;
+  const effectiveInvoiceReminderDays = invoiceReminderDays ?? automations?.invoiceReminderDays ?? [3, 7, 14];
+  const effectiveQuoteFollowUp = quoteFollowUpEnabled ?? automations?.quoteFollowUp ?? false;
+  const effectiveQuoteFollowUpDays = quoteFollowUpDays ?? automations?.quoteFollowUpDays ?? [3, 5, 7];
+
+  const saveAutomationsMutation = useMutation({
+    mutationFn: async (data: any) => {
+      await apiRequest("POST", "/api/automations", data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/automations"] });
+      toast({ title: "Automation settings saved" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Error", description: err.message || "Failed to save automation settings", variant: "destructive" });
+    },
   });
 
   const { data: members = [], isLoading: membersLoading } = useQuery<Member[]>({
@@ -316,7 +351,7 @@ export default function SettingsPage() {
               Team
             </TabsTrigger>
             <TabsTrigger value="automations" data-testid="tab-automations">
-              <Zap className="h-3.5 w-3.5 mr-1.5" />
+              <Bell className="h-3.5 w-3.5 mr-1.5" />
               Automations
             </TabsTrigger>
             <TabsTrigger value="billing" data-testid="tab-billing">
@@ -576,6 +611,144 @@ export default function SettingsPage() {
           </TabsContent>
 
           <TabsContent value="automations" className="mt-6 space-y-6">
+            {/* SMS Reminders Section */}
+            {plan !== "small_business" && plan !== "enterprise" ? (
+              <Card>
+                <CardContent className="pt-6">
+                  <div className="flex items-start gap-3 text-sm">
+                    <Info className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
+                    <div>
+                      <p className="font-medium">Small Business plan required</p>
+                      <p className="text-muted-foreground mt-1">Automated SMS reminders are available on the Small Business plan and above. Upgrade your plan to enable this feature.</p>
+                      <a href="/subscription" className="mt-3 inline-block">
+                        <Button variant="outline" size="sm" className="mt-2" data-testid="button-upgrade-for-automations">
+                          <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
+                          Upgrade Plan
+                        </Button>
+                      </a>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ) : (
+              <>
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">Overdue Invoice Reminders</CardTitle>
+                    <CardDescription>Automatically send an SMS to customers when an invoice becomes overdue</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <Label htmlFor="switch-invoice-reminder" className="font-medium">Enable invoice reminders</Label>
+                      <Switch
+                        id="switch-invoice-reminder"
+                        checked={effectiveInvoiceReminder}
+                        onCheckedChange={(checked) => setInvoiceReminderEnabled(checked)}
+                        data-testid="switch-invoice-reminder"
+                      />
+                    </div>
+                    {effectiveInvoiceReminder && (
+                      <div className="space-y-2">
+                        <Label className="text-sm text-muted-foreground">Send reminder when invoice is overdue by:</Label>
+                        <div className="flex flex-wrap gap-3" data-testid="invoice-reminder-days">
+                          {INVOICE_REMINDER_DAY_OPTIONS.map((day) => (
+                            <div key={day} className="flex items-center gap-1.5">
+                              <Checkbox
+                                id={`inv-day-${day}`}
+                                checked={effectiveInvoiceReminderDays.includes(day)}
+                                onCheckedChange={(checked) => {
+                                  if (checked) {
+                                    setInvoiceReminderDays([...effectiveInvoiceReminderDays, day].sort((a, b) => a - b));
+                                  } else {
+                                    setInvoiceReminderDays(effectiveInvoiceReminderDays.filter(d => d !== day));
+                                  }
+                                }}
+                                data-testid={`checkbox-inv-day-${day}`}
+                              />
+                              <Label htmlFor={`inv-day-${day}`} className="text-sm font-normal cursor-pointer">{day} days</Label>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">Quote Follow-ups</CardTitle>
+                    <CardDescription>Automatically follow up with customers who haven't responded to a sent quote</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <Label htmlFor="switch-quote-followup" className="font-medium">Enable quote follow-ups</Label>
+                      <Switch
+                        id="switch-quote-followup"
+                        checked={effectiveQuoteFollowUp}
+                        onCheckedChange={(checked) => setQuoteFollowUpEnabled(checked)}
+                        data-testid="switch-quote-followup"
+                      />
+                    </div>
+                    {effectiveQuoteFollowUp && (
+                      <div className="space-y-2">
+                        <Label className="text-sm text-muted-foreground">Send follow-up after quote has been sent for:</Label>
+                        <div className="flex flex-wrap gap-3" data-testid="quote-followup-days">
+                          {QUOTE_FOLLOWUP_DAY_OPTIONS.map((day) => (
+                            <div key={day} className="flex items-center gap-1.5">
+                              <Checkbox
+                                id={`qt-day-${day}`}
+                                checked={effectiveQuoteFollowUpDays.includes(day)}
+                                onCheckedChange={(checked) => {
+                                  if (checked) {
+                                    setQuoteFollowUpDays([...effectiveQuoteFollowUpDays, day].sort((a, b) => a - b));
+                                  } else {
+                                    setQuoteFollowUpDays(effectiveQuoteFollowUpDays.filter(d => d !== day));
+                                  }
+                                }}
+                                data-testid={`checkbox-qt-day-${day}`}
+                              />
+                              <Label htmlFor={`qt-day-${day}`} className="text-sm font-normal cursor-pointer">{day} days</Label>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+
+                <div className="flex items-center gap-3">
+                  <Button
+                    onClick={() => saveAutomationsMutation.mutate({
+                      invoiceReminder: effectiveInvoiceReminder,
+                      invoiceReminderDays: effectiveInvoiceReminderDays,
+                      quoteFollowUp: effectiveQuoteFollowUp,
+                      quoteFollowUpDays: effectiveQuoteFollowUpDays,
+                    })}
+                    disabled={saveAutomationsMutation.isPending}
+                    data-testid="button-save-automations"
+                  >
+                    {saveAutomationsMutation.isPending ? "Saving..." : "Save Automation Settings"}
+                  </Button>
+                </div>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base text-muted-foreground flex items-center gap-2">
+                      <Info className="h-4 w-4" />
+                      How it works
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="text-sm text-muted-foreground space-y-2">
+                    <p>SMS reminders are sent automatically via Twilio to the customer's phone number on file.</p>
+                    <p>Customers can reply <strong>STOP</strong> at any time to opt out of future reminders.</p>
+                    <p>Each reminder is logged and visible in the reminder history on the invoice and quote records.</p>
+                    <p>Reminders run every 30 minutes — only one reminder is sent per day per invoice/quote.</p>
+                  </CardContent>
+                </Card>
+              </>
+            )}
+
+            {/* Review Requests Section */}
             {(plan === "free") ? (
               <Card>
                 <CardContent className="pt-6">
@@ -584,9 +757,9 @@ export default function SettingsPage() {
                       <Zap className="h-6 w-6 text-amber-600" />
                     </div>
                     <div>
-                      <p className="font-medium">Upgrade to unlock Automations</p>
+                      <p className="font-medium">Upgrade to unlock Review Requests</p>
                       <p className="text-sm text-muted-foreground mt-1">
-                        Automations are available on the Individual plan and above.
+                        Review requests are available on the Individual plan and above.
                       </p>
                     </div>
                     <a href="/subscription">
@@ -676,53 +849,6 @@ export default function SettingsPage() {
                 </CardContent>
               </Card>
             )}
-          </TabsContent>
-
-          <TabsContent value="billing" className="mt-6 space-y-6">
-            <Card>
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <CardTitle className="text-base">Current Plan</CardTitle>
-                    <CardDescription>Your TradeFlow subscription</CardDescription>
-                  </div>
-                  <Badge variant="outline" className="text-sm font-medium capitalize">
-                    {PLAN_LABELS[plan] || plan}
-                  </Badge>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-3">
-                  <UsageBar label="Customers" used={counts.customers} limit={limits.customers} />
-                  <UsageBar label="Jobs" used={counts.jobs} limit={limits.jobs} />
-                  <UsageBar label="Quotes" used={counts.quotes} limit={limits.quotes} />
-                  <UsageBar label="Invoices" used={counts.invoices} limit={limits.invoices} />
-                  <UsageBar label="Team Members" used={counts.members} limit={limits.teamMembers} />
-                </div>
-                {plan === "free" && (
-                  <div className="pt-2">
-                    <a href="/subscription">
-                      <Button variant="outline" size="sm" data-testid="button-upgrade-plan">
-                        <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
-                        Upgrade Plan
-                      </Button>
-                    </a>
-                  </div>
-                )}
-                {org?.stripeSubscriptionId && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleManageBilling}
-                    disabled={portalLoading}
-                    data-testid="button-manage-billing"
-                  >
-                    <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
-                    {portalLoading ? "Opening..." : "Manage Billing"}
-                  </Button>
-                )}
-              </CardContent>
-            </Card>
           </TabsContent>
 
           <TabsContent value="payments" className="mt-6 space-y-4">

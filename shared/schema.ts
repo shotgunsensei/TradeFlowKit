@@ -202,6 +202,7 @@ export const quotes = pgTable("quotes", {
   discount: numeric("discount", { precision: 10, scale: 2 }).default("0"),
   notes: text("notes").default(""),
   expiresAt: timestamp("expires_at"),
+  sentAt: timestamp("sent_at"),
   publicToken: text("public_token").default(sql`gen_random_uuid()`),
   createdBy: varchar("created_by").references(() => users.id),
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -520,6 +521,39 @@ export const CALL_RECOVERY_PLAN_PRICES: Record<string, number> = {
   growth: 79,
   pro: 149,
 };
+
+export const orgAutomations = pgTable("org_automations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  orgId: varchar("org_id")
+    .notNull()
+    .unique()
+    .references(() => orgs.id),
+  invoiceReminder: boolean("invoice_reminder").notNull().default(false),
+  invoiceReminderDays: integer("invoice_reminder_days").array().notNull().default(sql`'{3,7,14}'::int[]`),
+  quoteFollowUp: boolean("quote_follow_up").notNull().default(false),
+  quoteFollowUpDays: integer("quote_follow_up_days").array().notNull().default(sql`'{3,5,7}'::int[]`),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const reminderLog = pgTable("reminder_log", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  orgId: varchar("org_id")
+    .notNull()
+    .references(() => orgs.id),
+  targetType: text("target_type").notNull(),
+  targetId: varchar("target_id").notNull(),
+  sentAt: timestamp("sent_at").defaultNow().notNull(),
+  phoneNumber: text("phone_number").notNull(),
+  message: text("message").notNull(),
+});
+
+export const insertOrgAutomationsSchema = createInsertSchema(orgAutomations).omit({ id: true, updatedAt: true });
+export type OrgAutomations = typeof orgAutomations.$inferSelect;
+export type InsertOrgAutomations = z.infer<typeof insertOrgAutomationsSchema>;
+
+export const insertReminderLogSchema = createInsertSchema(reminderLog).omit({ id: true, sentAt: true });
+export type ReminderLog = typeof reminderLog.$inferSelect;
+export type InsertReminderLog = z.infer<typeof insertReminderLogSchema>;
 
 export const CALL_RECOVERY_PLAN_LIMITS: Record<string, { recoveriesPerMonth: number; analytics: boolean }> = {
   starter: { recoveriesPerMonth: 50, analytics: false },

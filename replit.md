@@ -14,7 +14,11 @@ The application follows a monolithic full-stack architecture with a React fronte
 - Quote creation with line items, tax, and discounts
 - Invoice generation with line items, tax, and discounts
 - Dashboard with business metrics
-- Settings for profile, organization, team member management, billing usage, and password change
+- Settings for profile, organization, team member management, billing usage, password change, and automations (SMS reminders)
+- Automated SMS follow-up reminders: overdue invoice reminders and pending quote follow-ups via Twilio, configurable per org (Small Business+ feature), runs every 30 minutes via background worker
+  - Settings at /settings#automations: toggles + day selectors for each reminder type
+  - All sent reminders logged to reminder_log table; retrievable via GET /api/reminder-logs
+  - STOP keyword opt-out honored by Twilio
 - Business Analytics page (/analytics) with recharts: quote acceptance rate + 30-day rate, invoice collection rate + avg days to payment, job completion rate + busiest day of week, customer repeat ratio + growth trends
 - Call Recovery AI admin controls: enable/disable auto-response, custom message template ({business}/{phone}/{name} placeholders), quiet hours configuration — settings enforced in webhook
 - Call Recovery recovery funnel visualization (Missed→Contacted→Responded→Recovered), MoM comparison, Mark as Recovered action per conversation

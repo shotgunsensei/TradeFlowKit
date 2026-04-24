@@ -178,6 +178,9 @@ app.use((req, res, next) => {
 
   await registerRoutes(httpServer, app);
 
+  const { startReminderWorker } = await import("./reminderWorker");
+  startReminderWorker();
+
   app.use((err: unknown, _req: Request, res: Response, next: NextFunction) => {
     if (res.headersSent) {
       return next(err);
