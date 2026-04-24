@@ -38,12 +38,15 @@ import {
   Circle,
   RefreshCw,
   Star,
+  History,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/lib/auth";
 import { format, formatDistanceToNow } from "date-fns";
-import { JOB_STATUS_LABELS, JOB_PRIORITY_LABELS } from "@shared/schema";
+import { JOB_STATUS_LABELS, JOB_PRIORITY_LABELS, RECURRING_FREQUENCY_LABELS } from "@shared/schema";
+import { Switch } from "@/components/ui/switch";
 import type { Job, Customer, JobEvent, ReviewRequest } from "@shared/schema";
 
 const EVENT_ICONS: Record<string, React.ReactNode> = {
@@ -75,8 +78,12 @@ export default function JobDetail() {
   const { id } = useParams<{ id: string }>();
   const [, navigate] = useLocation();
   const { toast } = useToast();
+  const { org } = useAuth();
+  const canUseRecurring = org?.plan === "small_business" || org?.plan === "enterprise";
   const [showEdit, setShowEdit] = useState(false);
   const [showStatusChange, setShowStatusChange] = useState(false);
+  const [editIsRecurring, setEditIsRecurring] = useState(false);
+  const [editRecurringFrequency, setEditRecurringFrequency] = useState("monthly");
 
   const { data: job, isLoading } = useQuery<Job & { customerName?: string }>({
     queryKey: ["/api/jobs", id],
@@ -166,7 +173,15 @@ export default function JobDetail() {
       scheduledStart: fd.get("scheduledStart") || null,
       scheduledEnd: fd.get("scheduledEnd") || null,
       internalNotes: fd.get("internalNotes") || "",
+      isRecurring: canUseRecurring ? editIsRecurring : job?.isRecurring ?? false,
+      recurringFrequency: canUseRecurring && editIsRecurring ? editRecurringFrequency : null,
     });
+  };
+
+  const openEditDialog = () => {
+    setEditIsRecurring(job?.isRecurring ?? false);
+    setEditRecurringFrequency(job?.recurringFrequency || "monthly");
+    setShowEdit(true);
   };
 
   return (
@@ -188,7 +203,7 @@ export default function JobDetail() {
               <Receipt className="h-4 w-4 mr-1" />
               Invoice
             </Button>
-            <Button variant="outline" size="sm" onClick={() => setShowEdit(true)} data-testid="button-edit-job">
+            <Button variant="outline" size="sm" onClick={openEditDialog} data-testid="button-edit-job">
               <Edit className="h-4 w-4 mr-1" />
               Edit
             </Button>
@@ -243,6 +258,15 @@ export default function JobDetail() {
                       {JOB_PRIORITY_LABELS[job.priority || "normal"]}
                     </span>
                   </div>
+                  {job.isRecurring && (
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-1">Recurring</p>
+                      <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 px-2.5 py-1 text-xs font-medium" data-testid="badge-recurring-detail">
+                        <RefreshCw className="h-3 w-3" />
+                        {job.recurringFrequency ? RECURRING_FREQUENCY_LABELS[job.recurringFrequency] || "Recurring" : "Recurring"}
+                      </span>
+                    </div>
+                  )}
                   {job.scheduledStart && (
                     <div>
                       <p className="text-xs text-muted-foreground mb-1">Scheduled</p>
@@ -358,6 +382,36 @@ export default function JobDetail() {
                 </CardContent>
               </Card>
             )}
+
+            {(job.isRecurring || job.parentJobId || job.recurringSeriesId) && (
+              <Card data-testid="card-recurring-series">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <History className="h-4 w-4 text-muted-foreground" />
+                    Recurring Series
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  <p className="text-xs text-muted-foreground">
+                    This job is part of a recurring series scheduled{" "}
+                    <span className="font-medium text-foreground">
+                      {job.recurringFrequency ? RECURRING_FREQUENCY_LABELS[job.recurringFrequency] : ""}
+                    </span>.
+                  </p>
+                  {job.parentJobId && (
+                    <Link href={`/jobs/${job.parentJobId}`}>
+                      <p className="text-xs text-primary hover:underline cursor-pointer flex items-center gap-1">
+                        <ArrowLeft className="h-3 w-3" />
+                        View previous job
+                      </p>
+                    </Link>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    Mark this job as <span className="font-medium text-foreground">Done</span> or <span className="font-medium text-foreground">Invoiced</span> to auto-schedule the next visit.
+                  </p>
+                </CardContent>
+              </Card>
+            )}
           </div>
         </div>
       </div>
@@ -373,7 +427,7 @@ export default function JobDetail() {
           {
             label: "Edit",
             icon: <Edit className="h-3.5 w-3.5" />,
-            onClick: () => setShowEdit(true),
+            onClick: openEditDialog,
             testId: "mobile-action-edit",
           },
           {
@@ -455,6 +509,36 @@ export default function JobDetail() {
               <Label>Internal Notes</Label>
               <Textarea name="internalNotes" defaultValue={job.internalNotes || ""} rows={2} />
             </div>
+            {canUseRecurring && (
+              <div className="space-y-3 rounded-lg border p-3 bg-muted/30">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <Label className="text-sm font-medium">Recurring Job</Label>
+                    <p className="text-xs text-muted-foreground">Auto-schedule the next visit when done</p>
+                  </div>
+                  <Switch
+                    checked={editIsRecurring}
+                    onCheckedChange={setEditIsRecurring}
+                    data-testid="switch-edit-recurring"
+                  />
+                </div>
+                {editIsRecurring && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Frequency</Label>
+                    <Select value={editRecurringFrequency} onValueChange={setEditRecurringFrequency}>
+                      <SelectTrigger data-testid="select-edit-recurring-frequency">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {Object.entries(RECURRING_FREQUENCY_LABELS).map(([value, label]) => (
+                          <SelectItem key={value} value={value}>{label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+              </div>
+            )}
             <div className="flex justify-end gap-2">
               <Button type="button" variant="outline" onClick={() => setShowEdit(false)}>Cancel</Button>
               <Button type="submit" disabled={updateMutation.isPending} data-testid="button-update-job">

@@ -10,11 +10,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ChevronDown, Calendar, User, AlertTriangle, ArrowRight, Users } from "lucide-react";
+import { ChevronDown, Calendar, User, AlertTriangle, ArrowRight, Users, RefreshCw } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
-import { JOB_STATUS_LABELS, JOB_STATUS_COLORS } from "@shared/schema";
+import { JOB_STATUS_LABELS, JOB_STATUS_COLORS, RECURRING_FREQUENCY_LABELS } from "@shared/schema";
 import type { Job } from "@shared/schema";
 
 const STATUS_ORDER = [
@@ -111,6 +111,15 @@ function JobCard({ job, members }: JobCardProps) {
         <div className="flex items-center gap-1 text-xs text-muted-foreground">
           <User className="h-3 w-3" />
           <span className="truncate">{job.customerName}</span>
+        </div>
+      )}
+
+      {job.isRecurring && (
+        <div className="flex items-center gap-1" data-testid={`badge-recurring-${job.id}`}>
+          <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 px-1.5 py-0.5 text-[10px] font-medium">
+            <RefreshCw className="h-2.5 w-2.5" />
+            {job.recurringFrequency ? RECURRING_FREQUENCY_LABELS[job.recurringFrequency] || "Recurring" : "Recurring"}
+          </span>
         </div>
       )}
 

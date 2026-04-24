@@ -74,7 +74,7 @@ export interface IStorage {
   updateCustomer(orgId: string, id: string, data: Partial<Customer>): Promise<Customer | undefined>;
   deleteCustomer(orgId: string, id: string): Promise<void>;
 
-  getJobs(orgId: string): Promise<(Job & { customerName?: string })[]>;
+  getJobs(orgId: string, recurringOnly?: boolean): Promise<(Job & { customerName?: string })[]>;
   getJob(orgId: string, id: string): Promise<(Job & { customerName?: string }) | undefined>;
   getCustomerJobs(orgId: string, customerId: string): Promise<Job[]>;
   createJob(orgId: string, data: InsertJob, createdBy: string | null): Promise<Job>;
@@ -320,11 +320,14 @@ export class DatabaseStorage implements IStorage {
     await db.delete(customers).where(and(eq(customers.orgId, orgId), eq(customers.id, id)));
   }
 
-  async getJobs(orgId: string): Promise<(Job & { customerName?: string })[]> {
+  async getJobs(orgId: string, recurringOnly?: boolean): Promise<(Job & { customerName?: string })[]> {
+    const whereClause = recurringOnly
+      ? and(eq(jobs.orgId, orgId), eq(jobs.isRecurring, true))
+      : eq(jobs.orgId, orgId);
     const allJobs = await db
       .select()
       .from(jobs)
-      .where(eq(jobs.orgId, orgId))
+      .where(whereClause)
       .orderBy(desc(jobs.createdAt));
 
     const customerIds = [...new Set(allJobs.filter((j) => j.customerId).map((j) => j.customerId!))];

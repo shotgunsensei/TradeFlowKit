@@ -2,12 +2,42 @@ import { Router, type Request, type Response } from "express";
 import { storage } from "../storage";
 import { requireAuth, requireOrg, checkPlanLimit } from "../middleware";
 import { sendSMS, isTwilioConfigured, getTwilioPhoneNumber } from "../twilioClient";
+import { randomUUID } from "crypto";
 
 const router = Router();
 
+const TERMINAL_STATUSES = new Set(["done", "invoiced", "paid", "canceled"]);
+
+function canUseRecurring(plan: string): boolean {
+  return plan === "small_business" || plan === "enterprise";
+}
+
+function calcNextScheduledStart(current: Date, frequency: string): Date {
+  const next = new Date(current);
+  switch (frequency) {
+    case "weekly":
+      next.setDate(next.getDate() + 7);
+      break;
+    case "biweekly":
+      next.setDate(next.getDate() + 14);
+      break;
+    case "monthly":
+      next.setMonth(next.getMonth() + 1);
+      break;
+    case "quarterly":
+      next.setMonth(next.getMonth() + 3);
+      break;
+    case "annually":
+      next.setFullYear(next.getFullYear() + 1);
+      break;
+  }
+  return next;
+}
+
 router.get("/api/jobs", requireAuth, requireOrg, async (req: Request, res: Response) => {
   try {
-    const result = await storage.getJobs(req.session.orgId!);
+    const recurringOnly = req.query.recurring === "true";
+    const result = await storage.getJobs(req.session.orgId!, recurringOnly);
     res.json(result);
   } catch (err: any) {
     res.status(500).send(err.message);
@@ -33,6 +63,19 @@ router.get("/api/jobs/:id/events", requireAuth, requireOrg, async (req: Request,
   }
 });
 
+router.get("/api/jobs/:id/series", requireAuth, requireOrg, async (req: Request, res: Response) => {
+  try {
+    const job = await storage.getJob(req.session.orgId!, req.params.id as string);
+    if (!job) return res.status(404).send("Job not found");
+    if (!job.recurringSeriesId) return res.json([]);
+    const allJobs = await storage.getJobs(req.session.orgId!);
+    const series = allJobs.filter((j) => j.recurringSeriesId === job.recurringSeriesId);
+    res.json(series);
+  } catch (err: any) {
+    res.status(500).send(err.message);
+  }
+});
+
 router.post("/api/jobs", requireAuth, requireOrg, async (req: Request, res: Response) => {
   try {
     const planCheck = await checkPlanLimit(req.session.orgId!, "jobs");
@@ -49,6 +92,17 @@ router.post("/api/jobs", requireAuth, requireOrg, async (req: Request, res: Resp
     data.customerId = data.customerId || null;
     data.scheduledStart = data.scheduledStart ? new Date(data.scheduledStart) : null;
     data.scheduledEnd = data.scheduledEnd ? new Date(data.scheduledEnd) : null;
+
+    const org = await storage.getOrg(req.session.orgId!);
+    if (!org || !canUseRecurring(org.plan)) {
+      data.isRecurring = false;
+      data.recurringFrequency = null;
+      data.parentJobId = null;
+      data.recurringSeriesId = null;
+    } else if (data.isRecurring && !data.recurringSeriesId) {
+      data.recurringSeriesId = randomUUID();
+    }
+
     const j = await storage.createJob(req.session.orgId!, data, req.session.userId!);
     res.json(j);
   } catch (err: any) {
@@ -69,16 +123,23 @@ router.patch("/api/jobs/:id", requireAuth, requireOrg, async (req: Request, res:
     if ("scheduledStart" in data) data.scheduledStart = data.scheduledStart ? new Date(data.scheduledStart) : null;
     if ("scheduledEnd" in data) data.scheduledEnd = data.scheduledEnd ? new Date(data.scheduledEnd) : null;
     if ("customerId" in data) data.customerId = data.customerId || null;
+
+    const org = await storage.getOrg(orgId);
+    if (!org || !canUseRecurring(org.plan)) {
+      delete data.isRecurring;
+      delete data.recurringFrequency;
+      delete data.parentJobId;
+      delete data.recurringSeriesId;
+    }
+
     const j = await storage.updateJob(orgId, jobId, data);
     if (!j) return res.status(404).send("Job not found");
 
     const newStatus = data.status;
-    const triggerStatuses = ["done", "paid"];
-    const isStatusTrigger = newStatus && triggerStatuses.includes(newStatus) && oldStatus !== newStatus;
+    const wasAlreadyTerminal = TERMINAL_STATUSES.has(oldStatus);
 
-    if (isStatusTrigger) {
+    if (newStatus && ["done", "paid"].includes(newStatus) && oldStatus !== newStatus) {
       try {
-        const org = await storage.getOrg(orgId);
         const orgPlan = org?.plan || "free";
         const planAllowed = ["individual", "small_business", "enterprise"].includes(orgPlan);
 
@@ -120,6 +181,47 @@ router.patch("/api/jobs/:id", requireAuth, requireOrg, async (req: Request, res:
         }
       } catch (reviewErr: any) {
         console.error("Review request error (non-fatal):", reviewErr.message);
+      }
+    }
+
+    if (newStatus && (newStatus === "done" || newStatus === "invoiced") && !wasAlreadyTerminal) {
+      if (j.isRecurring && j.recurringFrequency) {
+        try {
+          if (org && canUseRecurring(org.plan)) {
+            const baseStart = j.scheduledStart ? new Date(j.scheduledStart) : new Date();
+            const nextStart = calcNextScheduledStart(baseStart, j.recurringFrequency);
+            let nextEnd: Date | null = null;
+            if (j.scheduledEnd) {
+              const duration = new Date(j.scheduledEnd).getTime() - baseStart.getTime();
+              nextEnd = new Date(nextStart.getTime() + duration);
+            }
+            const seriesId = j.recurringSeriesId || randomUUID();
+            await storage.createJob(
+              orgId,
+              {
+                customerId: j.customerId,
+                title: j.title,
+                description: j.description || "",
+                status: "scheduled",
+                priority: j.priority,
+                scheduledStart: nextStart,
+                scheduledEnd: nextEnd,
+                assignedUserIds: j.assignedUserIds || [],
+                internalNotes: j.internalNotes || "",
+                isRecurring: true,
+                recurringFrequency: j.recurringFrequency,
+                parentJobId: j.id,
+                recurringSeriesId: seriesId,
+              },
+              req.session.userId!
+            );
+            if (!j.recurringSeriesId) {
+              await storage.updateJob(orgId, j.id, { recurringSeriesId: seriesId });
+            }
+          }
+        } catch (recurringErr: any) {
+          console.error("Recurring job creation error (non-fatal):", recurringErr.message);
+        }
       }
     }
 

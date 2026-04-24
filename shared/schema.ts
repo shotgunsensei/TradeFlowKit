@@ -172,6 +172,10 @@ export const jobs = pgTable("jobs", {
     .default(sql`'{}'::text[]`),
   priority: jobPriorityEnum("priority").notNull().default("normal"),
   internalNotes: text("internal_notes").default(""),
+  isRecurring: boolean("is_recurring").default(false).notNull(),
+  recurringFrequency: varchar("recurring_frequency"),
+  parentJobId: varchar("parent_job_id"),
+  recurringSeriesId: varchar("recurring_series_id"),
   createdBy: varchar("created_by").references(() => users.id),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
@@ -392,7 +396,19 @@ export const insertJobSchema = createInsertSchema(jobs).pick({
   scheduledEnd: true,
   assignedUserIds: true,
   internalNotes: true,
+  isRecurring: true,
+  recurringFrequency: true,
+  parentJobId: true,
+  recurringSeriesId: true,
 });
+
+export const RECURRING_FREQUENCY_LABELS: Record<string, string> = {
+  weekly: "Weekly",
+  biweekly: "Bi-weekly",
+  monthly: "Monthly",
+  quarterly: "Quarterly",
+  annually: "Annually",
+};
 
 export const insertQuoteSchema = createInsertSchema(quotes).pick({
   customerId: true,

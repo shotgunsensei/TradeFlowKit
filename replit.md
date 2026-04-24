@@ -25,6 +25,7 @@ The application follows a monolithic full-stack architecture with a React fronte
 - Organization profile fields: logo URL (with preview), website, business hours text field
 - Note: Invoice aging report shows overdue-only buckets (labeled "Aging Report (overdue only)"); current/no-due-date buckets not charted but included in aging API response
 - Note: Team membership API is at /api/memberships (not /api/orgs/:id/members)
+- Recurring Jobs: optional recurring schedule on any job (weekly/biweekly/monthly/quarterly/annually); auto-creates next job when current is marked Done or Invoiced; gated to Small Business+ plans; recurring badge on kanban cards, list view, and detail page; "Recurring only" filter on jobs list
 - Subscription management with 4 plan tiers (Free, Individual $20/mo, Small Business $100/mo, Enterprise $200/mo)
 - Stripe payment integration for subscription checkout and billing portal
 - Plan limit enforcement (resource limits on Free tier, team size limits per plan)

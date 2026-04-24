@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
 import {
   Dialog,
   DialogContent,
@@ -24,11 +25,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, Wrench, Search, Filter, LayoutGrid, List } from "lucide-react";
+import { Plus, Wrench, Search, Filter, LayoutGrid, List, RefreshCw } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/lib/auth";
 import { format } from "date-fns";
-import { JOB_STATUS_LABELS, JOB_PRIORITY_LABELS } from "@shared/schema";
+import { JOB_STATUS_LABELS, JOB_PRIORITY_LABELS, RECURRING_FREQUENCY_LABELS } from "@shared/schema";
 import type { Job, Customer } from "@shared/schema";
 
 const PRIORITY_BADGE: Record<string, string> = {
@@ -43,8 +45,13 @@ export default function JobsPage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [customerFilter, setCustomerFilter] = useState("all");
+  const [recurringFilter, setRecurringFilter] = useState(false);
+  const [isRecurring, setIsRecurring] = useState(false);
+  const [recurringFrequency, setRecurringFrequency] = useState("monthly");
   const [view, setView] = useState<"kanban" | "list">("kanban");
   const { toast } = useToast();
+  const { org } = useAuth();
+  const canUseRecurring = org?.plan === "small_business" || org?.plan === "enterprise";
 
   const { data: jobs = [], isLoading } = useQuery<(Job & { customerName?: string })[]>({
     queryKey: ["/api/jobs"],
@@ -79,7 +86,8 @@ export default function JobsPage() {
       (j.customerName || "").toLowerCase().includes(search.toLowerCase());
     const matchesStatus = statusFilter === "all" || j.status === statusFilter;
     const matchesCustomer = customerFilter === "all" || j.customerId === customerFilter;
-    return matchesSearch && matchesStatus && matchesCustomer;
+    const matchesRecurring = !recurringFilter || j.isRecurring;
+    return matchesSearch && matchesStatus && matchesCustomer && matchesRecurring;
   });
 
   const getInitials = (name: string) =>
@@ -91,7 +99,15 @@ export default function JobsPage() {
       header: "Title",
       render: (j: Job & { customerName?: string }) => (
         <div>
-          <p className="font-medium">{j.title}</p>
+          <div className="flex items-center gap-1.5">
+            <p className="font-medium">{j.title}</p>
+            {j.isRecurring && (
+              <span className="inline-flex items-center gap-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 px-1.5 py-0.5 text-[10px] font-medium" data-testid={`badge-recurring-list-${j.id}`}>
+                <RefreshCw className="h-2.5 w-2.5" />
+                {j.recurringFrequency ? RECURRING_FREQUENCY_LABELS[j.recurringFrequency] || "Recurring" : "Recurring"}
+              </span>
+            )}
+          </div>
           <p className="text-xs text-muted-foreground">{j.customerName || "No customer"}</p>
         </div>
       ),
@@ -176,6 +192,8 @@ export default function JobsPage() {
       scheduledStart: fd.get("scheduledStart") || null,
       scheduledEnd: fd.get("scheduledEnd") || null,
       internalNotes: fd.get("internalNotes") || "",
+      isRecurring: canUseRecurring ? isRecurring : false,
+      recurringFrequency: canUseRecurring && isRecurring ? recurringFrequency : null,
     });
   };
 
@@ -227,6 +245,16 @@ export default function JobsPage() {
               ))}
             </SelectContent>
           </Select>
+          {canUseRecurring && (
+            <button
+              onClick={() => setRecurringFilter(!recurringFilter)}
+              className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors ${recurringFilter ? "bg-blue-600 text-white border-blue-600" : "border-input bg-background hover:bg-muted"}`}
+              data-testid="button-recurring-filter"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              Recurring
+            </button>
+          )}
           <span className="text-sm text-muted-foreground">{filtered.length} job{filtered.length !== 1 ? "s" : ""}</span>
           <div className="ml-auto flex items-center border rounded-md overflow-hidden">
             <button
@@ -355,6 +383,36 @@ export default function JobsPage() {
               <Label>Internal Notes</Label>
               <Textarea name="internalNotes" data-testid="input-job-notes" placeholder="Notes for your team..." rows={2} />
             </div>
+            {canUseRecurring && (
+              <div className="space-y-3 rounded-lg border p-3 bg-muted/30">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <Label className="text-sm font-medium">Recurring Job</Label>
+                    <p className="text-xs text-muted-foreground">Auto-schedule the next visit when this job is done</p>
+                  </div>
+                  <Switch
+                    checked={isRecurring}
+                    onCheckedChange={setIsRecurring}
+                    data-testid="switch-recurring"
+                  />
+                </div>
+                {isRecurring && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Frequency</Label>
+                    <Select value={recurringFrequency} onValueChange={setRecurringFrequency}>
+                      <SelectTrigger data-testid="select-recurring-frequency">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {Object.entries(RECURRING_FREQUENCY_LABELS).map(([value, label]) => (
+                          <SelectItem key={value} value={value}>{label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+              </div>
+            )}
             <div className="flex justify-end gap-2">
               <Button type="button" variant="outline" onClick={() => setShowCreate(false)}>Cancel</Button>
               <Button type="submit" disabled={createMutation.isPending} data-testid="button-save-job">
