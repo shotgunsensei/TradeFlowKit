@@ -35,6 +35,8 @@ import { useToast } from "@/hooks/use-toast";
 import { calcLineItemsTotal, calcTotalWithTaxDiscount } from "@shared/schema";
 import { format } from "date-fns";
 import type { Invoice, InvoiceItem, Customer, Org } from "@shared/schema";
+import { InvoicePdf } from "@/components/pdf/InvoicePdf";
+import { PdfDownloadButton } from "@/components/pdf/PdfDownloadButton";
 
 export default function InvoiceDetail() {
   const { id } = useParams<{ id: string }>();
@@ -131,6 +133,12 @@ export default function InvoiceDetail() {
                 Mark as Paid
               </Button>
             )}
+            <PdfDownloadButton
+              filename={`Invoice-${invoice.id.slice(0, 8).toUpperCase()}.pdf`}
+              testId="button-download-pdf-invoice"
+            >
+              Download PDF
+            </PdfDownloadButton>
             <Button variant="outline" size="sm" onClick={handlePrint} data-testid="button-print-invoice">
               <Printer className="h-4 w-4 mr-1" /> Print
             </Button>
@@ -369,6 +377,8 @@ export default function InvoiceDetail() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <InvoicePdf invoice={invoice} />
     </div>
   );
 }

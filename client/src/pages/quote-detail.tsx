@@ -27,6 +27,8 @@ import { useToast } from "@/hooks/use-toast";
 import { calcLineItemsTotal, calcTotalWithTaxDiscount } from "@shared/schema";
 import { format, differenceInDays } from "date-fns";
 import type { Quote, QuoteItem, Customer, Org } from "@shared/schema";
+import { QuotePdf } from "@/components/pdf/QuotePdf";
+import { PdfDownloadButton } from "@/components/pdf/PdfDownloadButton";
 
 const STATUS_STEPS = ["draft", "sent", "accepted"] as const;
 
@@ -190,6 +192,12 @@ export default function QuoteDetail() {
             >
               <Copy className="h-4 w-4 mr-1" /> Copy Link
             </Button>
+            <PdfDownloadButton
+              filename={`Quote-${quote.id.slice(0, 8).toUpperCase()}.pdf`}
+              testId="button-download-pdf-quote"
+            >
+              Download PDF
+            </PdfDownloadButton>
             <Button variant="outline" size="sm" onClick={handlePrint} data-testid="button-print-quote">
               <Printer className="h-4 w-4 mr-1" /> Print
             </Button>
@@ -402,6 +410,8 @@ export default function QuoteDetail() {
           },
         ]}
       />
+
+      <QuotePdf quote={quote} />
     </div>
   );
 }

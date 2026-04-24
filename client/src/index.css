@@ -308,4 +308,27 @@
     padding: 0 !important;
     width: 100% !important;
   }
+
+  body.pdf-mode * {
+    visibility: hidden !important;
+  }
+  body.pdf-mode #pdf-print-root {
+    visibility: visible !important;
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100% !important;
+    background: white !important;
+    z-index: 99999 !important;
+  }
+  body.pdf-mode #pdf-print-root * {
+    visibility: visible !important;
+  }
+}
+
+#pdf-print-root {
+  display: none;
+}
+body.pdf-mode #pdf-print-root {
+  display: block;
 }
