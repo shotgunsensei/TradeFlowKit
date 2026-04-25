@@ -16,7 +16,6 @@ import { useAuth } from "@/lib/auth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Textarea } from "@/components/ui/textarea";
-import { Switch } from "@/components/ui/switch";
 import {
   Building2,
   User,
@@ -175,18 +174,6 @@ export default function SettingsPage() {
     },
   });
 
-  const saveAutomationsMutation = useMutation({
-    mutationFn: async (data: any) => {
-      await apiRequest("PATCH", `/api/orgs/${org?.id}`, data);
-    },
-    onSuccess: () => {
-      refreshAuth();
-      toast({ title: "Automation settings saved" });
-    },
-    onError: (err: any) => {
-      toast({ title: "Error", description: err.message || "Failed to save", variant: "destructive" });
-    },
-  });
 
   const changePasswordMutation = useMutation({
     mutationFn: async (data: { currentPassword: string; newPassword: string }) => {

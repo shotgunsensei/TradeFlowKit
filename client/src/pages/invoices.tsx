@@ -95,7 +95,7 @@ export default function InvoicesPage() {
           <div className="flex items-center gap-1.5">
             <StatusBadge status={inv.status} type="invoice" />
             {(inv as any).paidViaStripe && (
-              <CreditCard className="h-3.5 w-3.5 text-blue-500" title="Paid via card" />
+              <CreditCard className="h-3.5 w-3.5 text-blue-500" aria-label="Paid via card" />
             )}
           </div>
           <AgingBadge dueDate={inv.dueDate} status={inv.status} />
