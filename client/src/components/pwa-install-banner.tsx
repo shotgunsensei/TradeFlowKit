@@ -35,15 +35,15 @@ export function PwaInstallBanner() {
 
   return (
     <div
-      className="flex items-center gap-3 rounded-xl border border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/30 px-4 py-3"
+      className="flex items-center gap-3 rounded-xl border border-primary/30 bg-primary/5 dark:border-primary/40 dark:bg-primary/10 px-4 py-3"
       data-testid="pwa-install-banner"
     >
-      <Smartphone className="h-5 w-5 shrink-0 text-blue-600 dark:text-blue-400" />
+      <Smartphone className="h-5 w-5 shrink-0 text-primary" />
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-blue-900 dark:text-blue-100">
-          Add TradeFlow to your home screen
+        <p className="text-sm font-medium text-foreground">
+          Add TradeFlowKit to your home screen
         </p>
-        <p className="text-xs text-blue-700 dark:text-blue-300 mt-0.5">
+        <p className="text-xs text-muted-foreground mt-0.5">
           Install the app for quick access from your phone or desktop
         </p>
       </div>
@@ -55,7 +55,7 @@ export function PwaInstallBanner() {
               <Button
                 size="sm"
                 variant="default"
-                className="bg-blue-600 hover:bg-blue-700 text-white text-xs h-8"
+                className="text-xs h-8"
                 data-testid="button-pwa-install"
               >
                 How to install
@@ -65,15 +65,15 @@ export function PwaInstallBanner() {
               <p className="text-sm font-semibold mb-3">Add to Home Screen</p>
               <ol className="space-y-2.5 text-sm text-muted-foreground">
                 <li className="flex items-start gap-2">
-                  <Share className="h-4 w-4 mt-0.5 shrink-0 text-blue-600" />
+                  <Share className="h-4 w-4 mt-0.5 shrink-0 text-primary" />
                   <span>Tap the <strong>Share</strong> button at the bottom of Safari</span>
                 </li>
                 <li className="flex items-start gap-2">
-                  <PlusSquare className="h-4 w-4 mt-0.5 shrink-0 text-blue-600" />
+                  <PlusSquare className="h-4 w-4 mt-0.5 shrink-0 text-primary" />
                   <span>Scroll down and tap <strong>Add to Home Screen</strong></span>
                 </li>
                 <li className="flex items-start gap-2">
-                  <Smartphone className="h-4 w-4 mt-0.5 shrink-0 text-blue-600" />
+                  <Smartphone className="h-4 w-4 mt-0.5 shrink-0 text-primary" />
                   <span>Tap <strong>Add</strong> to confirm — the app icon will appear on your home screen</span>
                 </li>
               </ol>
@@ -83,7 +83,7 @@ export function PwaInstallBanner() {
           <Button
             size="sm"
             variant="default"
-            className="bg-blue-600 hover:bg-blue-700 text-white text-xs h-8"
+            className="text-xs h-8"
             onClick={promptInstall}
             data-testid="button-pwa-install"
           >
@@ -93,7 +93,7 @@ export function PwaInstallBanner() {
 
         <button
           onClick={handleDismiss}
-          className="text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 transition-colors p-1 rounded"
+          className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded"
           aria-label="Dismiss"
           data-testid="button-pwa-dismiss"
         >

@@ -1,10 +1,22 @@
+import { errMsg } from "../errors";
 import { Router, type Request, type Response } from "express";
+import { z } from "zod";
 import { storage } from "../storage";
 import { requireAuth, requireOrg, checkPlanLimit } from "../middleware";
 import { sendSMS, isTwilioConfigured, getTwilioPhoneNumber } from "../twilioClient";
 import { randomUUID } from "crypto";
+import { logger as rootLogger } from "../logger";
+
+const log = rootLogger.child({ component: "jobs-route" });
 
 const router = Router();
+
+const JOB_STATUSES = ["lead", "quoted", "scheduled", "in_progress", "done", "invoiced", "paid", "canceled"] as const;
+const bulkIdsSchema = z.object({ ids: z.array(z.string().min(1)).min(1).max(1000) });
+const bulkStatusSchema = z.object({
+  ids: z.array(z.string().min(1)).min(1).max(1000),
+  status: z.enum(JOB_STATUSES),
+});
 
 const TERMINAL_STATUSES = new Set(["done", "invoiced", "paid", "canceled"]);
 
@@ -39,8 +51,8 @@ router.get("/api/jobs", requireAuth, requireOrg, async (req: Request, res: Respo
     const recurringOnly = req.query.recurring === "true";
     const result = await storage.getJobs(req.session.orgId!, recurringOnly);
     res.json(result);
-  } catch (err: any) {
-    res.status(500).send(err.message);
+  } catch (err) {
+    res.status(500).send(errMsg(err));
   }
 });
 
@@ -49,8 +61,8 @@ router.get("/api/jobs/:id", requireAuth, requireOrg, async (req: Request, res: R
     const j = await storage.getJob(req.session.orgId!, req.params.id as string);
     if (!j) return res.status(404).send("Job not found");
     res.json(j);
-  } catch (err: any) {
-    res.status(500).send(err.message);
+  } catch (err) {
+    res.status(500).send(errMsg(err));
   }
 });
 
@@ -58,8 +70,8 @@ router.get("/api/jobs/:id/events", requireAuth, requireOrg, async (req: Request,
   try {
     const events = await storage.getJobEvents(req.session.orgId!, req.params.id as string);
     res.json(events);
-  } catch (err: any) {
-    res.status(500).send(err.message);
+  } catch (err) {
+    res.status(500).send(errMsg(err));
   }
 });
 
@@ -71,8 +83,8 @@ router.get("/api/jobs/:id/series", requireAuth, requireOrg, async (req: Request,
     const allJobs = await storage.getJobs(req.session.orgId!);
     const series = allJobs.filter((j) => j.recurringSeriesId === job.recurringSeriesId);
     res.json(series);
-  } catch (err: any) {
-    res.status(500).send(err.message);
+  } catch (err) {
+    res.status(500).send(errMsg(err));
   }
 });
 
@@ -105,8 +117,8 @@ router.post("/api/jobs", requireAuth, requireOrg, async (req: Request, res: Resp
 
     const j = await storage.createJob(req.session.orgId!, data, req.session.userId!);
     res.json(j);
-  } catch (err: any) {
-    res.status(500).send(err.message);
+  } catch (err) {
+    res.status(500).send(errMsg(err));
   }
 });
 
@@ -161,10 +173,10 @@ router.patch("/api/jobs/:id", requireAuth, requireOrg, async (req: Request, res:
               if (fromPhone) {
                 smsSent = await sendSMS(phone, fromPhone, message);
                 if (!smsSent) {
-                  console.warn(`[ReviewRequest] SMS failed to send to ${phone} for job ${jobId}`);
+                  log.warn({ phone, jobId }, "Review request SMS failed to send");
                 }
               } else {
-                console.log(`[ReviewRequest] Twilio not configured — SMS not sent. Would have sent to ${phone}: ${message}`);
+                log.info({ phone, jobId }, "Twilio not configured — review request SMS not sent");
               }
 
               if (smsSent) {
@@ -179,8 +191,8 @@ router.patch("/api/jobs/:id", requireAuth, requireOrg, async (req: Request, res:
             }
           }
         }
-      } catch (reviewErr: any) {
-        console.error("Review request error (non-fatal):", reviewErr.message);
+      } catch (reviewErr) {
+        log.error({ err: reviewErr, msg: errMsg(reviewErr), jobId }, "Review request error (non-fatal)");
       }
     }
 
@@ -219,15 +231,15 @@ router.patch("/api/jobs/:id", requireAuth, requireOrg, async (req: Request, res:
               await storage.updateJob(orgId, j.id, { recurringSeriesId: seriesId });
             }
           }
-        } catch (recurringErr: any) {
-          console.error("Recurring job creation error (non-fatal):", recurringErr.message);
+        } catch (recurringErr) {
+          log.error({ err: recurringErr, msg: errMsg(recurringErr), jobId }, "Recurring job creation error (non-fatal)");
         }
       }
     }
 
     res.json(j);
-  } catch (err: any) {
-    res.status(500).send(err.message);
+  } catch (err) {
+    res.status(500).send(errMsg(err));
   }
 });
 
@@ -235,8 +247,137 @@ router.delete("/api/jobs/:id", requireAuth, requireOrg, async (req: Request, res
   try {
     await storage.deleteJob(req.session.orgId!, req.params.id as string);
     res.json({ ok: true });
+  } catch (err) {
+    res.status(500).send(errMsg(err));
+  }
+});
+
+const importJobRowSchema = z.object({
+  title: z.string().trim().min(1, "Title is required"),
+  customerName: z.string().trim().optional().default(""),
+  description: z.string().optional().default(""),
+  status: z.enum(JOB_STATUSES).optional(),
+  priority: z.enum(["low", "normal", "urgent"]).optional(),
+  scheduledStart: z.string().optional().default(""),
+  scheduledEnd: z.string().optional().default(""),
+  internalNotes: z.string().optional().default(""),
+});
+
+function parseImportDate(value: string): Date | null {
+  const v = (value || "").trim();
+  if (!v) return null;
+  const d = new Date(v);
+  if (isNaN(d.getTime())) return null;
+  return d;
+}
+
+router.post("/api/jobs/import", requireAuth, requireOrg, async (req: Request, res: Response) => {
+  try {
+    const orgId = req.session.orgId!;
+    const rows = req.body?.jobs;
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return res.status(400).json({ error: "No jobs provided" });
+    }
+    if (rows.length > 1000) {
+      return res.status(400).json({ error: "Maximum 1000 rows per import" });
+    }
+
+    const planCheck = await checkPlanLimit(orgId, "jobs");
+    if (planCheck.limit !== -1) {
+      const remaining = planCheck.limit - planCheck.current;
+      if (remaining <= 0) {
+        return res.status(403).json({
+          error: `Job limit reached (${planCheck.limit}). Upgrade your plan to add more jobs.`,
+          limitReached: true,
+        });
+      }
+      if (rows.length > remaining) {
+        return res.status(403).json({
+          error: `Import would exceed your plan limit. You can add ${remaining} more job(s) on your current plan.`,
+          limitReached: true,
+        });
+      }
+    }
+
+    const customers = await storage.getCustomers(orgId);
+    const customerByName = new Map<string, string>();
+    for (const c of customers) {
+      customerByName.set(c.name.trim().toLowerCase(), c.id);
+    }
+
+    let imported = 0;
+    const errors: { row: number; error: string }[] = [];
+
+    for (let i = 0; i < rows.length; i++) {
+      const parsed = importJobRowSchema.safeParse(rows[i] ?? {});
+      if (!parsed.success) {
+        errors.push({ row: i + 2, error: parsed.error.errors[0]?.message || "Invalid row" });
+        continue;
+      }
+      const r = parsed.data;
+      const customerKey = (r.customerName || "").trim().toLowerCase();
+      const customerId = customerKey ? customerByName.get(customerKey) || null : null;
+      if (customerKey && !customerId) {
+        errors.push({ row: i + 2, error: `Customer "${r.customerName}" not found` });
+        continue;
+      }
+
+      try {
+        await storage.createJob(
+          orgId,
+          {
+            customerId,
+            title: r.title,
+            description: r.description || "",
+            status: r.status || "lead",
+            priority: r.priority || "normal",
+            scheduledStart: parseImportDate(r.scheduledStart),
+            scheduledEnd: parseImportDate(r.scheduledEnd),
+            assignedUserIds: [],
+            internalNotes: r.internalNotes || "",
+            isRecurring: false,
+            recurringFrequency: null,
+            parentJobId: null,
+            recurringSeriesId: null,
+          } as any,
+          req.session.userId!,
+        );
+        imported++;
+      } catch (err: any) {
+        errors.push({ row: i + 2, error: err.message });
+      }
+    }
+
+    res.json({ imported, skipped: 0, errors });
   } catch (err: any) {
-    res.status(500).send(err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post("/api/jobs/bulk-delete", requireAuth, requireOrg, async (req: Request, res: Response) => {
+  try {
+    const parsed = bulkIdsSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: "Invalid ids" });
+    const updated = await storage.bulkDeleteJobs(req.session.orgId!, parsed.data.ids);
+    res.json({ updated });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post("/api/jobs/bulk-status", requireAuth, requireOrg, async (req: Request, res: Response) => {
+  try {
+    const parsed = bulkStatusSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: "Invalid request" });
+    const updated = await storage.bulkUpdateJobStatus(
+      req.session.orgId!,
+      parsed.data.ids,
+      parsed.data.status,
+      req.session.userId ?? null,
+    );
+    res.json({ updated });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
 });
 

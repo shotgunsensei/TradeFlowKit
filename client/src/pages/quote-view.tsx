@@ -105,11 +105,22 @@ export default function QuoteView() {
               <p className="text-gray-500 text-sm mt-1">#{quote.id.slice(0, 8).toUpperCase()}</p>
             </div>
             {org && (
-              <div className="text-right text-sm">
-                <p className="font-semibold text-gray-900 dark:text-gray-100">{org.name}</p>
-                {org.address && <p className="text-gray-500">{org.address}</p>}
-                {org.phone && <p className="text-gray-500">{org.phone}</p>}
-                {org.email && <p className="text-gray-500">{org.email}</p>}
+              <div className="text-right text-sm flex flex-col items-end gap-2">
+                {org.logoUrl && (
+                  <img
+                    src={org.logoUrl}
+                    alt={org.name}
+                    className="max-h-14 max-w-[180px] object-contain"
+                    data-testid="img-quote-view-logo"
+                    onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                  />
+                )}
+                <div>
+                  <p className="font-semibold text-gray-900 dark:text-gray-100">{org.name}</p>
+                  {org.address && <p className="text-gray-500">{org.address}</p>}
+                  {org.phone && <p className="text-gray-500">{org.phone}</p>}
+                  {org.email && <p className="text-gray-500">{org.email}</p>}
+                </div>
               </div>
             )}
           </div>

@@ -1,0 +1,603 @@
+You are now acting as a senior full-stack product engineer, UX conversion specialist, SaaS growth strategist, QA engineer, SEO specialist, and brand systems architect.
+
+Your job is to perform a complete improvement, enhancement, polish, review, bug-fix, and second-pass enhancement cycle on this project.
+
+This project is part of the Shotgun Ninjas Productions digital product ecosystem.
+
+Portfolio sites/products:
+- TorqueShed.pro
+- TradeFlowKit.com
+- TechDeck.app
+- PulseDesk.support
+- ShotgunNinjas.com
+- ShotgunNinjaVillage.com
+- FaultlineLab.com
+
+Important:
+Do not merely make visual changes.
+Do not leave placeholder buttons.
+Do not break working features.
+Do not remove existing functionality unless it is clearly broken, redundant, or replaced with something better.
+Do not fake integrations as complete unless they are clearly marked as demo/mock mode.
+Do not create disconnected pages that are not linked in navigation.
+Do not stop after making only surface-level UI changes.
+
+Primary objective:
+Turn this app/site into a cleaner, more professional, more monetizable, more trustworthy, more usable, and more production-ready product that fits the Shotgun Ninjas ecosystem.
+
+Work in this exact sequence:
+
+PHASE 1: PROJECT AUDIT
+
+First, inspect the entire codebase.
+
+Map:
+- Current routes/pages
+- Current components
+- Current data models
+- Current auth flow
+- Current Stripe/payment flow if present
+- Current database/storage usage
+- Current environment variables
+- Current broken or unfinished features
+- Current placeholder content
+- Current dead buttons
+- Current console/runtime errors
+- Current mobile layout issues
+- Current SEO/meta issues
+- Current accessibility issues
+- Current brand inconsistencies
+
+Create an internal improvement plan before editing.
+
+Identify:
+- Highest-impact conversion improvements
+- Highest-impact UI/UX improvements
+- Highest-impact monetization improvements
+- Highest-impact trust/authority improvements
+- Highest-impact technical cleanup
+- Highest-risk bugs
+
+Then begin implementing fixes.
+
+PHASE 2: BRAND SYSTEM ALIGNMENT
+
+Apply the Shotgun Ninjas ecosystem design language:
+
+General visual direction:
+- Premium dark interface
+- Red, black, charcoal, white, and subtle metallic accents
+- Sharp, modern, confident visual style
+- Clean SaaS/product UI, not cluttered gamer UI
+- Professional enough for business users
+- Distinct enough to feel like Shotgun Ninjas
+
+Use:
+- Strong hero sections
+- Clear CTAs
+- Card-based layouts
+- Better spacing
+- Consistent buttons
+- Better typography hierarchy
+- Clear feature sections
+- Better pricing presentation
+- Better dashboard structure
+- Better empty states
+- Better loading states
+- Better error states
+- Better mobile responsiveness
+
+Avoid:
+- Generic AI SaaS look
+- Too many neon effects
+- unreadable gradients
+- random icon usage
+- weak CTA copy
+- cluttered dashboards
+- unfinished demo feel
+
+PHASE 3: PRODUCT-SPECIFIC POSITIONING
+
+Apply the correct positioning based on which project this is.
+
+If this project is TorqueShed.pro:
+Position it as an automotive diagnostic, repair case, tool, part, and mechanic community platform.
+Core promise:
+“Diagnose smarter. Track repairs. Find parts, tools, and real-world fixes faster.”
+
+Improve:
+- Torque Assist diagnostic workflow
+- Repair case creation
+- Vehicle profile flow
+- Symptom intake
+- Diagnostic tree
+- Suggested tools/parts
+- Community repair discussion
+- Marketplace touchpoints
+- Subscription upsells
+- PDF repair plan export if present
+- Garage dashboard
+- Maintenance history
+- Shop-facing credibility features
+
+Monetization focus:
+Free, DIY Pro, Garage Pro, Shop Pro.
+Make tier benefits obvious and enforce feature locks.
+
+If this project is TradeFlowKit.com:
+Position it as a business operations and revenue-flow command center.
+Core promise:
+“Turn scattered leads, quotes, invoices, jobs, and follow-ups into one clear revenue pipeline.”
+
+Improve:
+- Lead intake
+- Quote-to-payment workflow
+- Pipeline board
+- Client/job tracking
+- Follow-up reminders
+- Revenue dashboard
+- Automation templates
+- Service business use cases
+- Small business onboarding
+- Subscription upsells
+- Example workflows for contractors, IT services, auto repair, cleaning, lawn care, fitness, consulting, and creative services
+
+Monetization focus:
+Monthly SaaS subscriptions for solo operators, small businesses, and teams.
+
+If this project is TechDeck.app:
+Position it as an IT operations cockpit for MSPs, power users, and technical teams.
+Core promise:
+“Centralize scripts, endpoint checks, documentation, automation, and technician workflows.”
+
+Improve:
+- Dashboard
+- Script library
+- Endpoint/tool cards
+- Automation launcher
+- Documentation vault
+- Technician checklist tools
+- MSP workflow templates
+- Troubleshooting runbooks
+- Client environment notes
+- System health views
+- Premium script packs
+- Admin/engineer-oriented UI
+
+Monetization focus:
+Free technician tools, Pro automation packs, MSP/team tier.
+
+If this project is PulseDesk.support:
+Position it as a healthcare operations coordination platform, not a basic helpdesk.
+Core promise:
+“Coordinate incidents, departments, escalation, workflows, and operational visibility across healthcare teams.”
+
+Important:
+Do not make it look like generic customer support software.
+
+Improve:
+- Department coordination dashboard
+- Incident/workflow tracking
+- Escalation paths
+- Task ownership
+- Status board
+- Operational risk visibility
+- Audit trail
+- Shift handoff
+- Healthcare-friendly language
+- Admin/team views
+- Executive visibility dashboard
+
+Monetization focus:
+Healthcare operations subscriptions, department/team licensing, implementation package.
+
+If this project is ShotgunNinjas.com:
+Position it as the main ecosystem hub for Shotgun Ninjas Productions.
+Core promise:
+“Music, software, security, creator tools, digital products, and experimental tech under one bold brand.”
+
+Improve:
+- Ecosystem overview
+- Product cards for all properties
+- Clear navigation to each product
+- Brand story
+- Featured projects
+- Music/creative section
+- Software/tools section
+- Merch/community section
+- Contact/booking section
+- Mailing list capture
+- Launch announcements
+- Strong main hero section
+
+Monetization focus:
+Traffic routing, email capture, product cross-sell, merch, digital products, services.
+
+If this project is ShotgunNinjaVillage.com:
+Position it as the community and entertainment hub.
+Core promise:
+“Enter the village: games, content, merch, community, events, and creator culture.”
+
+Improve:
+- Village-style product/content hub
+- Community sections
+- Game/pool hall promotion
+- Merch cards
+- User profiles if present
+- Events or announcements
+- Content feed
+- Gamified areas
+- Clear path to join/follow/buy
+- Strong visual identity with friendly red ninja energy
+
+Monetization focus:
+Merch, community memberships, games, creator drops, digital goods.
+
+If this project is FaultlineLab.com:
+Position it as an advanced diagnostic challenge, logic, investigation, and problem-solving platform.
+Core promise:
+“Train your mind against complex scenarios, technical puzzles, fault analysis, and high-pressure diagnostic challenges.”
+
+Improve:
+- Challenge library
+- Difficulty levels
+- Categories
+- Scoring/progress
+- Case files
+- Investigation UI
+- Leaderboard if present
+- Premium challenge packs
+- Technical/business/problem-solving scenarios
+- Better onboarding for users who do not immediately understand the concept
+
+Monetization focus:
+Premium challenges, team training, certification-style packs, business/IT diagnostic training.
+
+PHASE 4: CONVERSION IMPROVEMENTS
+
+Improve every major page for conversion.
+
+Landing page must include:
+- Clear headline
+- Clear subheadline
+- Primary CTA
+- Secondary CTA
+- Product screenshot/mock dashboard section
+- Problem section
+- Solution section
+- Feature grid
+- Use cases
+- Pricing preview or plan CTA
+- Trust section
+- FAQ
+- Final CTA
+- Footer
+
+Every CTA button must work.
+
+Improve copy so the user understands:
+- What this is
+- Who it is for
+- What problem it solves
+- Why it is different
+- What to do next
+- Why to upgrade or subscribe
+
+Add or improve:
+- “Get Started”
+- “View Pricing”
+- “Try Demo”
+- “Create First Project/Case/Workflow”
+- “Upgrade”
+- “Contact”
+- “Join Waitlist” if product is not ready for paid launch
+
+PHASE 5: MONETIZATION HARDENING
+
+Inspect current monetization.
+
+If Stripe exists:
+- Verify checkout routes
+- Verify billing portal route
+- Verify webhook route
+- Verify subscription model
+- Verify price ID mapping
+- Verify feature gating
+- Verify upgrade/downgrade UI
+- Verify account billing page
+- Verify usage limits
+- Verify locked feature messages
+
+If Stripe does not exist:
+Add a clean Stripe-ready structure with demo mode.
+
+Create environment placeholders:
+- STRIPE_SECRET_KEY
+- STRIPE_WEBHOOK_SECRET
+- NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
+- STRIPE_PRICE_ID_PRO
+- STRIPE_PRICE_ID_TEAM
+- STRIPE_PRICE_ID_BUSINESS
+- DATABASE_URL
+- NEXT_PUBLIC_APP_URL
+
+Add:
+- Pricing page
+- Checkout session route
+- Billing portal route
+- Webhook route
+- Subscription status model
+- Plan badges
+- Upgrade prompts
+- Locked feature UI
+- Demo billing fallback if keys are missing
+
+Do not claim live payments work unless real Stripe keys are configured.
+
+PHASE 6: DASHBOARD ENHANCEMENT
+
+Improve dashboard based on product type.
+
+Every dashboard should include:
+- Welcome/overview section
+- Usage/status cards
+- Recent activity
+- Quick action buttons
+- Recommended next steps
+- Upgrade or monetization banner when appropriate
+- Empty states for new users
+- Mobile-friendly layout
+
+Add product-specific dashboard widgets.
+
+TorqueShed:
+- Active repair cases
+- Vehicles
+- Torque Assist usage
+- Saved tools/parts
+- Recent community replies
+- Upgrade to diagnostic/export/shop features
+
+TradeFlowKit:
+- Leads
+- Quotes
+- Jobs
+- Invoices
+- Revenue flow
+- Follow-ups due
+- Automation suggestions
+
+TechDeck:
+- Scripts
+- Runbooks
+- Tools
+- Endpoint checks
+- Technician shortcuts
+- Automation packs
+
+PulseDesk:
+- Active incidents
+- Departments
+- Escalations
+- Tasks
+- Handoffs
+- Risk/status board
+
+ShotgunNinjas:
+- Product ecosystem
+- Latest launches
+- Featured tools
+- Music/content/merch links
+- Email capture
+
+ShotgunNinjaVillage:
+- Community areas
+- Games
+- Merch
+- Events
+- Featured content
+- Member actions
+
+FaultlineLab:
+- Challenges
+- Progress
+- Difficulty levels
+- Case files
+- Scores
+- Premium packs
+
+PHASE 7: FEATURE COMPLETION
+
+Find unfinished features and either:
+1. Complete them properly
+2. Convert them into clean demo-mode features
+3. Hide them from navigation until usable
+
+Do not leave broken flows.
+
+For every main feature:
+- Add create flow
+- Add read/view flow
+- Add edit flow if applicable
+- Add delete/archive flow if applicable
+- Add empty state
+- Add validation
+- Add error handling
+- Add loading state
+- Add success feedback
+- Add upgrade handling if locked
+
+PHASE 8: SEO AND TRUST POLISH
+
+Add or improve:
+- Page titles
+- Meta descriptions
+- OpenGraph tags
+- Favicons if present
+- robots.txt
+- sitemap if applicable
+- Clean footer
+- Terms page
+- Privacy page
+- Refund/subscription policy if monetized
+- Contact page
+- About section
+- Support section
+- Product-specific FAQ
+
+Add trust elements:
+- “Built by Shotgun Ninjas Productions”
+- Clear product purpose
+- Clear pricing
+- Clear support/contact path
+- Clear data/privacy messaging
+- No suspicious placeholder text
+
+PHASE 9: MOBILE AND ACCESSIBILITY REVIEW
+
+Test and fix:
+- Mobile navigation
+- Tablet layouts
+- Dashboard cards
+- Form usability
+- Pricing table
+- CTA visibility
+- Text contrast
+- Button sizes
+- Keyboard navigation
+- Focus states
+- Form labels
+- Error messages
+- Overflow issues
+- Long text wrapping
+
+PHASE 10: SECURITY AND PRODUCTION CLEANUP
+
+Review:
+- Environment variable usage
+- Secrets handling
+- API route validation
+- Auth guards
+- Admin route protection
+- Subscription feature checks
+- Input validation
+- Error handling
+- Logging
+- Database access patterns
+
+Fix:
+- Exposed secrets
+- Unsafe client-side-only permission checks where server checks are needed
+- Broken auth redirects
+- Broken admin protection
+- Unhandled promise errors
+- Console-breaking runtime errors
+
+PHASE 11: FIRST QA PASS
+
+Run every available command:
+- npm install or pnpm install
+- npm run lint if available
+- npm run typecheck if available
+- npm run build
+- npm run test if available
+- npm run dev or npm start
+
+Fix all errors.
+
+Manually verify:
+- Home page loads
+- Pricing page loads
+- Dashboard loads
+- Auth/demo flow works
+- Navigation works
+- Main create flow works
+- Main save flow works
+- Main edit/delete flow works if applicable
+- Billing UI works
+- Admin or settings pages load
+- Mobile layout works
+- No dead buttons
+- No missing imports
+- No runtime crashes
+
+PHASE 12: SECOND-PASS ENHANCEMENT
+
+After the first QA pass, perform a second enhancement pass.
+
+Look again for:
+- Weak copy
+- Weak CTAs
+- Confusing sections
+- Cluttered layouts
+- Missing onboarding
+- Missing monetization cues
+- Missing upgrade moments
+- Weak empty states
+- Weak feature explanations
+- Weak mobile polish
+- Broken edge cases
+
+Improve again.
+
+Add at least 5 meaningful enhancements beyond bug fixes, such as:
+- Better onboarding checklist
+- Better starter templates
+- Better sample/demo data
+- Better upgrade comparison
+- Better dashboard quick actions
+- Better export options
+- Better product-specific workflows
+- Better admin visibility
+- Better help tooltips
+- Better launch-ready content
+
+PHASE 13: DOCUMENTATION PACKAGE
+
+Create or update:
+- README.md
+- DEPLOYMENT.md
+- ENVIRONMENT_VARIABLES.md
+- TESTING_CHECKLIST.md
+- PRODUCT_ROADMAP.md
+- MONETIZATION_PLAN.md
+- CHANGELOG.md
+
+README must include:
+- What the product does
+- Who it is for
+- Tech stack
+- Local/Replit setup
+- Environment variables
+- Stripe setup
+- Database setup
+- Demo mode behavior
+- Deployment steps
+
+MONETIZATION_PLAN.md must include:
+- Target users
+- Pricing model
+- Upsell points
+- Launch strategy
+- First 10 customer acquisition ideas
+- Suggested next premium features
+
+PHASE 14: FINAL OUTPUT
+
+When finished, provide a final report in the chat with:
+
+1. What you improved
+2. What bugs you fixed
+3. What features you enhanced
+4. What monetization systems were added or improved
+5. What pages/routes exist now
+6. What environment variables are needed
+7. What commands were run
+8. Whether build passed
+9. Remaining limitations
+10. Next recommended upgrade
+
+Important final requirement:
+Do not stop until the app builds and renders successfully, or until you clearly explain the exact blocker, file, error message, and recommended fix.
+
+Begin now by auditing the current project, then implement the full improvement cycle.

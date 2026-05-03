@@ -1,3 +1,4 @@
+import { errMsg } from "../errors";
 import { Router, type Request, type Response } from "express";
 import { storage } from "../storage";
 import { requireAuth, requireOrg } from "../middleware";
@@ -7,6 +8,9 @@ import { sendSMS, validateTwilioAccountSid } from "../twilioClient";
 import { db } from "../db";
 import { sql } from "drizzle-orm";
 import { type CallRecoveryPlan, CALL_RECOVERY_PLAN_LIMITS } from "@shared/schema";
+import { logger as rootLogger } from "../logger";
+
+const log = rootLogger.child({ component: "call-recovery-route" });
 
 const router = Router();
 
@@ -41,8 +45,8 @@ router.get("/api/call-recovery/subscription", requireAuth, requireOrg, async (re
       periodStart: crSub?.currentPeriodStart || null,
       periodEnd: crSub?.currentPeriodEnd || null,
     });
-  } catch (err: any) {
-    res.status(500).send(err.message);
+  } catch (err) {
+    res.status(500).send(errMsg(err));
   }
 });
 
@@ -64,8 +68,8 @@ router.get("/api/call-recovery/plans", requireAuth, async (_req: Request, res: R
       ORDER BY pr.unit_amount ASC
     `);
     res.json(result.rows);
-  } catch (err: any) {
-    res.status(500).send(err.message);
+  } catch (err) {
+    res.status(500).send(errMsg(err));
   }
 });
 
@@ -104,8 +108,8 @@ router.post("/api/call-recovery/checkout", requireAuth, requireOrg, async (req: 
     });
 
     res.json({ url: session.url });
-  } catch (err: any) {
-    res.status(500).send(err.message);
+  } catch (err) {
+    res.status(500).send(errMsg(err));
   }
 });
 
@@ -165,8 +169,8 @@ router.get("/api/call-recovery/verify-checkout", requireAuth, requireOrg, async 
     });
 
     res.json({ ok: true, plan: callRecoveryPlan });
-  } catch (err: any) {
-    res.status(500).send(err.message);
+  } catch (err) {
+    res.status(500).send(errMsg(err));
   }
 });
 
@@ -183,8 +187,8 @@ router.post("/api/call-recovery/portal", requireAuth, requireOrg, async (req: Re
     });
 
     res.json({ url: portalSession.url });
-  } catch (err: any) {
-    res.status(500).send(err.message);
+  } catch (err) {
+    res.status(500).send(errMsg(err));
   }
 });
 
@@ -202,8 +206,8 @@ router.post("/api/call-recovery/configure", requireAuth, requireOrg, async (req:
 
     await storage.updateOrg(org.id, { callRecoveryPhone: phone });
     res.json({ ok: true, phone });
-  } catch (err: any) {
-    res.status(500).send(err.message);
+  } catch (err) {
+    res.status(500).send(errMsg(err));
   }
 });
 
@@ -213,8 +217,8 @@ router.get("/api/call-recovery/missed-calls", requireAuth, requireOrg, async (re
     const offset = parseInt(req.query.offset as string) || 0;
     const calls = await storage.getMissedCalls(req.session.orgId!, limit, offset);
     res.json(calls);
-  } catch (err: any) {
-    res.status(500).send(err.message);
+  } catch (err) {
+    res.status(500).send(errMsg(err));
   }
 });
 
@@ -230,8 +234,8 @@ router.get(
       }
       const messages = await storage.getAiMessages(req.params.id as string);
       res.json({ missedCall: mc, messages });
-    } catch (err: any) {
-      res.status(500).send(err.message);
+    } catch (err) {
+      res.status(500).send(errMsg(err));
     }
   }
 );
@@ -245,18 +249,16 @@ router.post("/api/call-recovery/webhook/missed-call", async (req: Request, res: 
   try {
     const { Called, From, CallSid, CallStatus, AccountSid } = req.body;
 
-    console.log(
-      `[missed-call webhook] From=${From} Called=${Called} CallSid=${CallSid} CallStatus=${CallStatus}`
-    );
+    log.info({ from: From, called: Called, callSid: CallSid, callStatus: CallStatus }, "missed-call webhook");
 
     if (!From || !Called) {
-      console.warn("[missed-call webhook] Missing From or Called — returning Hangup");
+      log.warn("Missing From or Called — returning Hangup");
       return twiml("<Hangup/>");
     }
 
     const isValid = await validateTwilioAccountSid(AccountSid);
     if (!isValid) {
-      console.warn("[missed-call webhook] AccountSid validation failed — returning Hangup");
+      log.warn("AccountSid validation failed — returning Hangup");
       return twiml("<Hangup/>");
     }
 
@@ -274,7 +276,7 @@ router.post("/api/call-recovery/webhook/missed-call", async (req: Request, res: 
 
     let crSub = await storage.getCallRecoverySubscription(org.id);
     if (!crSub) {
-      console.log(`No call_recovery_subscriptions row for org ${org.id} — auto-creating`);
+      log.info({ orgId: org.id }, "No call_recovery_subscriptions row — auto-creating");
       crSub = await storage.createCallRecoverySubscription({
         orgId: org.id,
         plan: org.callRecoveryPlan as CallRecoveryPlan,
@@ -291,12 +293,12 @@ router.post("/api/call-recovery/webhook/missed-call", async (req: Request, res: 
     }
 
     if (!org.callRecoveryEnabled) {
-      console.log(`[missed-call webhook] Call recovery disabled for org ${org.id} — not sending SMS`);
+      log.info({ orgId: org.id }, "Call recovery disabled — not sending SMS");
       return twiml("<Hangup/>");
     }
 
     if (isQuietHours(org.callRecoveryQuietStart, org.callRecoveryQuietEnd)) {
-      console.log(`[missed-call webhook] Quiet hours active for org ${org.id} — recording call but not sending SMS`);
+      log.info({ orgId: org.id }, "Quiet hours active — recording call but not sending SMS");
       const qCall = await storage.createMissedCall(org.id, { callerPhone: From, twilioCallSid: CallSid });
       await storage.incrementCallRecoveryUsage(org.id);
       await storage.updateMissedCall(qCall.id, { status: "failed" });
@@ -346,8 +348,8 @@ router.post("/api/call-recovery/webhook/missed-call", async (req: Request, res: 
       );
     }
     return twiml("");
-  } catch (err: any) {
-    console.error("Missed call webhook error:", err.message);
+  } catch (err) {
+    log.error({ err, msg: errMsg(err) }, "Missed call webhook error");
     res.set("Content-Type", "text/xml");
     return res.status(200).send('<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>');
   }
@@ -362,7 +364,6 @@ router.post("/api/call-recovery/webhook/sms", async (req: Request, res: Response
   try {
     const { From, Body, To, AccountSid, SmsSid } = req.body;
 
-    console.log(`[sms webhook] From=${From} To=${To} SmsSid=${SmsSid} Body="${Body?.substring(0, 50)}"`);
 
     if (!From || Body === undefined) {
       return twiml("");
@@ -385,15 +386,15 @@ router.post("/api/call-recovery/webhook/sms", async (req: Request, res: Response
     if (result.isComplete && result.serviceType && result.location && result.urgency) {
       try {
         await completeRecovery(missedCall.id, result.serviceType, result.location, result.urgency);
-      } catch (err: any) {
-        console.error("Failed to complete recovery:", err.message);
+      } catch (err) {
+        log.error({ err, msg: errMsg(err), missedCallId: missedCall.id }, "Failed to complete recovery");
         await storage.updateMissedCall(missedCall.id, { status: "failed" });
       }
     }
 
     return twiml("");
-  } catch (err: any) {
-    console.error("SMS webhook error:", err.message);
+  } catch (err) {
+    log.error({ err, msg: errMsg(err) }, "SMS webhook error");
     res.set("Content-Type", "text/xml");
     return res.status(200).send('<?xml version="1.0" encoding="UTF-8"?><Response/>');
   }
@@ -454,8 +455,8 @@ router.post("/api/call-recovery/handle-subscription-change", async (req: Request
 
     await storage.updateOrg(org.id, updateData);
     res.json({ ok: true });
-  } catch (err: any) {
-    res.status(500).send(err.message);
+  } catch (err) {
+    res.status(500).send(errMsg(err));
   }
 });
 
@@ -478,8 +479,8 @@ router.patch("/api/call-recovery/settings", requireAuth, requireOrg, async (req:
       quietStart: updated?.callRecoveryQuietStart,
       quietEnd: updated?.callRecoveryQuietEnd,
     });
-  } catch (err: any) {
-    res.status(500).send(err.message);
+  } catch (err) {
+    res.status(500).send(errMsg(err));
   }
 });
 
@@ -493,8 +494,8 @@ router.get("/api/call-recovery/settings", requireAuth, requireOrg, async (req: R
       quietStart: org.callRecoveryQuietStart,
       quietEnd: org.callRecoveryQuietEnd,
     });
-  } catch (err: any) {
-    res.status(500).send(err.message);
+  } catch (err) {
+    res.status(500).send(errMsg(err));
   }
 });
 
@@ -563,8 +564,8 @@ router.get("/api/call-recovery/stats", requireAuth, requireOrg, async (req: Requ
         recovered: recovered.length,
       },
     });
-  } catch (err: any) {
-    res.status(500).send(err.message);
+  } catch (err) {
+    res.status(500).send(errMsg(err));
   }
 });
 
@@ -579,8 +580,8 @@ router.patch("/api/call-recovery/missed-calls/:id/recover", requireAuth, require
     const updated = await storage.updateMissedCall(id as string, { status: "recovered" });
     if (!updated) return res.status(404).send("Missed call not found");
     res.json(updated);
-  } catch (err: any) {
-    res.status(500).send(err.message);
+  } catch (err) {
+    res.status(500).send(errMsg(err));
   }
 });
 

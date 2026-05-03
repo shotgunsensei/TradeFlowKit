@@ -9,6 +9,7 @@ import {
   jsonb,
   boolean,
   pgEnum,
+  index,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -54,6 +55,14 @@ export const invoiceStatusEnum = pgEnum("invoice_status", [
   "void",
 ]);
 
+export const recurringIntervalEnum = pgEnum("recurring_interval", [
+  "weekly",
+  "biweekly",
+  "monthly",
+  "quarterly",
+  "annually",
+]);
+
 export type CallRecoveryPlan = "starter" | "growth" | "pro";
 export const callRecoveryPlanEnum = pgEnum("call_recovery_plan", [
   "starter",
@@ -83,7 +92,38 @@ export const users = pgTable("users", {
   phone: text("phone").default(""),
   email: text("email").default(""),
   isSuperAdmin: boolean("is_super_admin").default(false).notNull(),
+  totpSecret: text("totp_secret"),
+  totpEnabledAt: timestamp("totp_enabled_at"),
 });
+
+export const userRecoveryCodes = pgTable("user_recovery_codes", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  codeHash: text("code_hash").notNull(),
+  usedAt: timestamp("used_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [
+  index("user_recovery_codes_user_idx").on(t.userId),
+]);
+
+export const auditLog = pgTable("audit_log", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  orgId: varchar("org_id").notNull().references(() => orgs.id),
+  userId: varchar("user_id").references(() => users.id),
+  action: text("action").notNull(),
+  entity: text("entity").notNull(),
+  entityId: varchar("entity_id"),
+  before: jsonb("before"),
+  after: jsonb("after"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [
+  index("audit_log_org_created_idx").on(t.orgId, t.createdAt),
+  index("audit_log_org_entity_idx").on(t.orgId, t.entity, t.entityId),
+  index("audit_log_org_user_idx").on(t.orgId, t.userId),
+]);
+
+export type UserRecoveryCode = typeof userRecoveryCodes.$inferSelect;
+export type AuditLogEntry = typeof auditLog.$inferSelect;
 
 export const orgs = pgTable("orgs", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -153,8 +193,12 @@ export const customers = pgTable("customers", {
   address: text("address").default(""),
   notes: text("notes").default(""),
   notesUpdatedAt: timestamp("notes_updated_at"),
+  smsOptOut: boolean("sms_opt_out").default(false).notNull(),
+  portalToken: text("portal_token").unique().default(sql`gen_random_uuid()`),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (t) => [
+  index("customers_org_created_idx").on(t.orgId, t.createdAt),
+]);
 
 export const jobs = pgTable("jobs", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -178,7 +222,12 @@ export const jobs = pgTable("jobs", {
   recurringSeriesId: varchar("recurring_series_id"),
   createdBy: varchar("created_by").references(() => users.id),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (t) => [
+  index("jobs_org_status_idx").on(t.orgId, t.status),
+  index("jobs_org_customer_idx").on(t.orgId, t.customerId),
+  index("jobs_org_scheduled_idx").on(t.orgId, t.scheduledStart),
+  index("jobs_org_created_idx").on(t.orgId, t.createdAt),
+]);
 
 export const jobEvents = pgTable("job_events", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -192,7 +241,9 @@ export const jobEvents = pgTable("job_events", {
   payload: jsonb("payload").default({}),
   createdBy: varchar("created_by").references(() => users.id),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (t) => [
+  index("job_events_org_job_idx").on(t.orgId, t.jobId),
+]);
 
 export const quotes = pgTable("quotes", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -210,7 +261,11 @@ export const quotes = pgTable("quotes", {
   publicToken: text("public_token").default(sql`gen_random_uuid()`),
   createdBy: varchar("created_by").references(() => users.id),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (t) => [
+  index("quotes_org_status_idx").on(t.orgId, t.status),
+  index("quotes_org_customer_idx").on(t.orgId, t.customerId),
+  index("quotes_org_created_idx").on(t.orgId, t.createdAt),
+]);
 
 export const quoteItems = pgTable("quote_items", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -225,7 +280,9 @@ export const quoteItems = pgTable("quote_items", {
   unitPrice: numeric("unit_price", { precision: 10, scale: 2 })
     .notNull()
     .default("0"),
-});
+}, (t) => [
+  index("quote_items_quote_idx").on(t.quoteId),
+]);
 
 export const invoices = pgTable("invoices", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -245,9 +302,19 @@ export const invoices = pgTable("invoices", {
   notes: text("notes").default(""),
   paymentNotes: text("payment_notes").default(""),
   publicToken: text("public_token").default(sql`gen_random_uuid()`),
+  recurringInterval: recurringIntervalEnum("recurring_interval"),
+  nextRunAt: timestamp("next_run_at"),
+  parentInvoiceId: varchar("parent_invoice_id"),
   createdBy: varchar("created_by").references(() => users.id),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (t) => [
+  index("invoices_org_status_idx").on(t.orgId, t.status),
+  index("invoices_recurring_next_run_idx").on(t.nextRunAt),
+  index("invoices_org_due_idx").on(t.orgId, t.dueDate),
+  index("invoices_org_customer_idx").on(t.orgId, t.customerId),
+  index("invoices_org_paid_idx").on(t.orgId, t.paidAt),
+  index("invoices_org_created_idx").on(t.orgId, t.createdAt),
+]);
 
 export const invoiceItems = pgTable("invoice_items", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -262,7 +329,9 @@ export const invoiceItems = pgTable("invoice_items", {
   unitPrice: numeric("unit_price", { precision: 10, scale: 2 })
     .notNull()
     .default("0"),
-});
+}, (t) => [
+  index("invoice_items_invoice_idx").on(t.invoiceId),
+]);
 
 export const callRecoverySubscriptions = pgTable("call_recovery_subscriptions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -296,7 +365,9 @@ export const missedCalls = pgTable("missed_calls", {
   twilioCallSid: text("twilio_call_sid"),
   completedAt: timestamp("completed_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (t) => [
+  index("missed_calls_org_status_created_idx").on(t.orgId, t.status, t.createdAt),
+]);
 
 export const reviewRequests = pgTable("review_requests", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -310,7 +381,10 @@ export const reviewRequests = pgTable("review_requests", {
   sentAt: timestamp("sent_at").defaultNow().notNull(),
   phoneNumber: text("phone_number").notNull(),
   reviewUrl: text("review_url").notNull(),
-});
+}, (t) => [
+  index("review_requests_org_sent_idx").on(t.orgId, t.sentAt),
+  index("review_requests_org_job_idx").on(t.orgId, t.jobId),
+]);
 
 export const aiMessages = pgTable("ai_messages", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -325,6 +399,10 @@ export const aiMessages = pgTable("ai_messages", {
 export const insertReviewRequestSchema = createInsertSchema(reviewRequests).omit({ id: true, sentAt: true });
 export type ReviewRequest = typeof reviewRequests.$inferSelect;
 export type InsertReviewRequest = z.infer<typeof insertReviewRequestSchema>;
+export type ReviewRequestWithDetails = ReviewRequest & {
+  jobTitle: string | null;
+  customerName: string | null;
+};
 
 export const insertCallRecoverySubscriptionSchema = createInsertSchema(callRecoverySubscriptions).pick({
   orgId: true,
@@ -384,6 +462,7 @@ export const insertCustomerSchema = createInsertSchema(customers).pick({
   email: true,
   address: true,
   notes: true,
+  smsOptOut: true,
 });
 
 export const insertJobSchema = createInsertSchema(jobs).pick({
@@ -435,7 +514,41 @@ export const insertInvoiceSchema = createInsertSchema(invoices).pick({
   discount: true,
   dueDate: true,
   notes: true,
+  recurringInterval: true,
+  nextRunAt: true,
 });
+
+export const RECURRING_INTERVAL_LABELS: Record<string, string> = {
+  weekly: "Weekly",
+  biweekly: "Bi-weekly",
+  monthly: "Monthly",
+  quarterly: "Quarterly",
+  annually: "Annually",
+};
+
+export type RecurringInterval = "weekly" | "biweekly" | "monthly" | "quarterly" | "annually";
+
+export function advanceRecurringDate(from: Date, interval: RecurringInterval): Date {
+  const d = new Date(from);
+  switch (interval) {
+    case "weekly":
+      d.setDate(d.getDate() + 7);
+      break;
+    case "biweekly":
+      d.setDate(d.getDate() + 14);
+      break;
+    case "monthly":
+      d.setMonth(d.getMonth() + 1);
+      break;
+    case "quarterly":
+      d.setMonth(d.getMonth() + 3);
+      break;
+    case "annually":
+      d.setFullYear(d.getFullYear() + 1);
+      break;
+  }
+  return d;
+}
 
 export const insertInvoiceItemSchema = createInsertSchema(invoiceItems).pick({
   invoiceId: true,
@@ -561,7 +674,11 @@ export const reminderLog = pgTable("reminder_log", {
   sentAt: timestamp("sent_at").defaultNow().notNull(),
   phoneNumber: text("phone_number").notNull(),
   message: text("message").notNull(),
-});
+  status: text("status").notNull().default("sent"),
+  error: text("error"),
+}, (t) => [
+  index("reminder_log_org_target_sent_idx").on(t.orgId, t.targetType, t.targetId, t.sentAt),
+]);
 
 export const insertOrgAutomationsSchema = createInsertSchema(orgAutomations).omit({ id: true, updatedAt: true });
 export type OrgAutomations = typeof orgAutomations.$inferSelect;
@@ -570,6 +687,14 @@ export type InsertOrgAutomations = z.infer<typeof insertOrgAutomationsSchema>;
 export const insertReminderLogSchema = createInsertSchema(reminderLog).omit({ id: true, sentAt: true });
 export type ReminderLog = typeof reminderLog.$inferSelect;
 export type InsertReminderLog = z.infer<typeof insertReminderLogSchema>;
+
+export const processedStripeEvents = pgTable("processed_stripe_events", {
+  eventId: text("event_id").primaryKey(),
+  type: text("type").notNull(),
+  processedAt: timestamp("processed_at").defaultNow().notNull(),
+});
+
+export type ProcessedStripeEvent = typeof processedStripeEvents.$inferSelect;
 
 export const CALL_RECOVERY_PLAN_LIMITS: Record<string, { recoveriesPerMonth: number; analytics: boolean }> = {
   starter: { recoveriesPerMonth: 50, analytics: false },

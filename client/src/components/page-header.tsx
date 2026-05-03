@@ -10,7 +10,7 @@ export function PageHeader({ title, description, actions }: PageHeaderProps) {
   return (
     <div className="flex items-center justify-between gap-4 border-b px-6 py-4">
       <div className="flex items-center gap-3">
-        <SidebarTrigger data-testid="button-sidebar-toggle" className="lg:hidden" />
+        <SidebarTrigger data-testid="button-sidebar-toggle" className="hidden md:inline-flex lg:hidden" />
         <div>
           <h1 className="text-lg font-semibold tracking-tight">{title}</h1>
           {description && (

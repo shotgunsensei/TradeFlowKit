@@ -27,6 +27,7 @@ interface AuthContextType {
   orgCounts: OrgCounts | null;
   isLoading: boolean;
   login: (username: string, password: string) => Promise<void>;
+  verify2fa: (payload: { code?: string; recoveryCode?: string }) => Promise<void>;
   register: (username: string, password: string, fullName: string) => Promise<void>;
   logout: () => Promise<void>;
   switchOrg: (orgId: string) => Promise<void>;
@@ -90,6 +91,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const err = await res.text();
       throw new Error(err || "Login failed");
     }
+    const data = await res.json().catch(() => ({}));
+    if (data?.requires2fa) {
+      const err: any = new Error("Two-factor verification required");
+      err.requires2fa = true;
+      throw err;
+    }
+    await refreshAuth();
+  };
+
+  const verify2fa = async (payload: { code?: string; recoveryCode?: string }) => {
+    const res = await fetch("/api/auth/login/2fa", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      credentials: "include",
+    });
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({ error: "Verification failed" }));
+      throw new Error(errBody.error || "Verification failed");
+    }
     await refreshAuth();
   };
 
@@ -131,7 +152,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ user, org, membership, orgs, planLimits, orgCounts, isLoading, login, register, logout, switchOrg, refreshAuth }}
+      value={{ user, org, membership, orgs, planLimits, orgCounts, isLoading, login, verify2fa, register, logout, switchOrg, refreshAuth }}
     >
       {children}
     </AuthContext.Provider>

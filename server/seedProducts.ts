@@ -1,4 +1,8 @@
+import { errMsg } from "./errors";
 import { getUncachableStripeClient } from './stripeClient';
+import { logger as rootLogger } from './logger';
+
+const log = rootLogger.child({ component: 'seed-products' });
 
 export async function seedStripeProducts() {
   try {
@@ -6,7 +10,7 @@ export async function seedStripeProducts() {
 
     const existingBase = await stripe.products.search({ query: "name:'TradeFlow Individual'" });
     if (existingBase.data.length === 0) {
-      console.log('Creating base TradeFlow Stripe products...');
+      log.info('Creating base TradeFlow Stripe products');
 
       const individual = await stripe.products.create({
         name: 'TradeFlow Individual',
@@ -47,14 +51,14 @@ export async function seedStripeProducts() {
         metadata: { plan: 'enterprise' },
       });
 
-      console.log('Base TradeFlow Stripe products created!');
+      log.info('Base TradeFlow Stripe products created');
     } else {
-      console.log('Stripe products already exist, skipping seed...');
+      log.info('Stripe products already exist, skipping seed');
     }
 
     const existingCrProducts = await stripe.products.search({ query: "name:'Call Recovery Starter'" });
     if (existingCrProducts.data.length === 0) {
-      console.log('Creating Call Recovery Stripe products...');
+      log.info('Creating Call Recovery Stripe products');
 
       const crStarter = await stripe.products.create({
         name: 'Call Recovery Starter',
@@ -95,11 +99,11 @@ export async function seedStripeProducts() {
         metadata: { feature: 'call_recovery', plan: 'pro' },
       });
 
-      console.log('Call Recovery Stripe products created successfully!');
+      log.info('Call Recovery Stripe products created successfully');
     } else {
-      console.log('Call Recovery Stripe products already exist, skipping...');
+      log.info('Call Recovery Stripe products already exist, skipping');
     }
-  } catch (err: any) {
-    console.error('Error seeding Stripe products:', err.message);
+  } catch (err) {
+    log.error({ err, msg: errMsg(err) }, 'Error seeding Stripe products');
   }
 }

@@ -8,6 +8,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Checkbox } from "@/components/ui/checkbox";
 import { ChevronUp, ChevronDown, ChevronsUpDown } from "lucide-react";
 
 interface Column<T> {
@@ -17,6 +18,14 @@ interface Column<T> {
   className?: string;
   mobileHide?: boolean;
   sortFn?: (a: T, b: T) => number;
+}
+
+interface SelectionConfig {
+  isSelected: (id: string) => boolean;
+  toggle: (id: string) => void;
+  toggleAll: () => void;
+  isAllSelected: boolean;
+  isSomeSelected: boolean;
 }
 
 interface DataTableProps<T> {
@@ -29,6 +38,7 @@ interface DataTableProps<T> {
   rowClassName?: (item: T) => string;
   activeFilters?: { label: string; value: string; onRemove: () => void }[];
   tableId?: string;
+  selection?: SelectionConfig;
 }
 
 function readSortState(tableId: string): { key: string; dir: "asc" | "desc" } | null {
@@ -63,6 +73,7 @@ export function DataTable<T extends { id: string }>({
   rowClassName,
   activeFilters,
   tableId,
+  selection,
 }: DataTableProps<T>) {
   const [sortKey, setSortKey] = useState<string | null>(() => {
     if (!tableId) return null;
@@ -138,6 +149,16 @@ export function DataTable<T extends { id: string }>({
         <Table>
           <TableHeader>
             <TableRow>
+              {selection && (
+                <TableHead className="w-10">
+                  <Checkbox
+                    checked={selection.isAllSelected ? true : selection.isSomeSelected ? "indeterminate" : false}
+                    onCheckedChange={() => selection.toggleAll()}
+                    aria-label="Select all"
+                    data-testid="checkbox-select-all"
+                  />
+                </TableHead>
+              )}
               {columns.map((col) => (
                 <TableHead
                   key={col.key}
@@ -176,9 +197,22 @@ export function DataTable<T extends { id: string }>({
               <TableRow
                 key={item.id}
                 data-testid={`${testIdPrefix}-${item.id}`}
-                className={`${onRowClick ? "cursor-pointer" : ""} ${rowClassName ? rowClassName(item) : ""}`}
+                className={`${onRowClick ? "cursor-pointer" : ""} ${selection?.isSelected(item.id) ? "bg-primary/5" : ""} ${rowClassName ? rowClassName(item) : ""}`}
                 onClick={() => onRowClick?.(item)}
               >
+                {selection && (
+                  <TableCell
+                    className="w-10"
+                    onClick={(e) => { e.stopPropagation(); }}
+                  >
+                    <Checkbox
+                      checked={selection.isSelected(item.id)}
+                      onCheckedChange={() => selection.toggle(item.id)}
+                      aria-label="Select row"
+                      data-testid={`checkbox-row-${item.id}`}
+                    />
+                  </TableCell>
+                )}
                 {columns.map((col) => (
                   <TableCell key={col.key} className={col.className}>
                     {col.render(item)}
@@ -196,10 +230,20 @@ export function DataTable<T extends { id: string }>({
           <div
             key={item.id}
             data-testid={`${testIdPrefix}-mobile-${item.id}`}
-            className={`border rounded-lg p-3 bg-card ${onRowClick ? "cursor-pointer active:opacity-80" : ""} ${rowClassName ? rowClassName(item) : ""}`}
+            className={`border rounded-lg p-3 bg-card ${onRowClick ? "cursor-pointer active:opacity-80" : ""} ${selection?.isSelected(item.id) ? "ring-1 ring-primary/40 bg-primary/5" : ""} ${rowClassName ? rowClassName(item) : ""}`}
             onClick={() => onRowClick?.(item)}
           >
             <div className="flex items-start justify-between gap-3">
+              {selection && (
+                <div onClick={(e) => { e.stopPropagation(); }} className="pt-0.5">
+                  <Checkbox
+                    checked={selection.isSelected(item.id)}
+                    onCheckedChange={() => selection.toggle(item.id)}
+                    aria-label="Select row"
+                    data-testid={`checkbox-row-mobile-${item.id}`}
+                  />
+                </div>
+              )}
               <div className="flex-1 min-w-0">{firstCol.render(item)}</div>
               {restCols[0] && <div className="shrink-0">{restCols[0].render(item)}</div>}
             </div>

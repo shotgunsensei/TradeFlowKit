@@ -29,7 +29,7 @@ function Step({ number, title, children }: { number: number; title: string; chil
 
 function Note({ children }: { children: React.ReactNode }) {
   return (
-    <div className="p-3 rounded-lg bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-900 text-sm text-blue-800 dark:text-blue-300">
+    <div className="p-3 rounded-lg bg-muted border-l-4 border-primary text-sm text-foreground">
       {children}
     </div>
   );

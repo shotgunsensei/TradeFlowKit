@@ -1,5 +1,9 @@
+import { errMsg } from "./errors";
 import { storage } from "./storage";
 import type { MissedCall, AiMessage } from "@shared/schema";
+import { logger as rootLogger } from "./logger";
+
+const log = rootLogger.child({ component: "call-recovery-ai" });
 
 const SYSTEM_PROMPT = `You are an AI assistant for a service contractor business. A customer just called but couldn't reach the contractor. Your job is to help gather their service request details via SMS so the contractor can follow up.
 
@@ -120,7 +124,7 @@ async function callOpenAI(
 ): Promise<string> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
-    console.warn("OPENAI_API_KEY not set, using fallback response");
+    log.warn("OPENAI_API_KEY not set, using fallback response");
     return getFallbackResponse(messages);
   }
 
@@ -141,14 +145,14 @@ async function callOpenAI(
 
     if (!response.ok) {
       const errText = await response.text();
-      console.error("OpenAI API error:", errText);
+      log.error({ err: errText }, "OpenAI API error");
       return getFallbackResponse(messages);
     }
 
     const data = await response.json() as any;
     return data.choices?.[0]?.message?.content || getFallbackResponse(messages);
-  } catch (err: any) {
-    console.error("OpenAI call failed:", err.message);
+  } catch (err) {
+    log.error({ err, msg: errMsg(err) }, "OpenAI call failed");
     return getFallbackResponse(messages);
   }
 }

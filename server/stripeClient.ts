@@ -1,6 +1,17 @@
 import Stripe from 'stripe';
 
-let connectionSettings: any;
+interface ReplitConnectionSettings {
+  publishable?: string;
+  secret?: string;
+  [key: string]: unknown;
+}
+
+interface ReplitConnection {
+  settings: ReplitConnectionSettings;
+  [key: string]: unknown;
+}
+
+let connectionSettings: ReplitConnection | undefined;
 
 async function getCredentials() {
   const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME;
@@ -60,6 +71,8 @@ export async function getStripeSecretKey() {
   return secretKey;
 }
 
+// stripe-replit-sync has no exported type; opaque external client.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 let stripeSync: any = null;
 
 export async function getStripeSync() {

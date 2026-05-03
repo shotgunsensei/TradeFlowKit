@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useParams, useLocation } from "wouter";
 import { PageHeader } from "@/components/page-header";
@@ -21,14 +22,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ArrowLeft, Edit, Wrench, Trash2, Printer, Mail, Clock, AlertTriangle, CheckCircle2, XCircle, ExternalLink, Copy, MessageSquare } from "lucide-react";
+import { ArrowLeft, Edit, Wrench, Trash2, Printer, Mail, Clock, AlertTriangle, CheckCircle2, XCircle, ExternalLink, Copy, MessageSquare, Receipt } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { calcLineItemsTotal, calcTotalWithTaxDiscount } from "@shared/schema";
 import { format, differenceInDays } from "date-fns";
 import type { Quote, QuoteItem, Customer, Org, ReminderLog } from "@shared/schema";
-import { QuotePdf } from "@/components/pdf/QuotePdf";
 import { PdfDownloadButton } from "@/components/pdf/PdfDownloadButton";
+import { EmailDialog } from "@/components/email-dialog";
+import { useHotkey } from "@/hooks/use-hotkey";
+import { usePageShortcuts } from "@/components/shortcuts-help";
 
 const STATUS_STEPS = ["draft", "sent", "accepted"] as const;
 
@@ -73,6 +76,13 @@ export default function QuoteDetail() {
   const { id } = useParams<{ id: string }>();
   const [, navigate] = useLocation();
   const { toast } = useToast();
+  const [emailOpen, setEmailOpen] = useState(false);
+
+  useHotkey("e", () => navigate(`/quotes/${id}/edit`), { enabled: !!id });
+  usePageShortcuts([
+    { keys: "E", description: "Edit quote" },
+    { keys: "Esc", description: "Close dialog" },
+  ]);
 
   const { data: quote, isLoading } = useQuery<Quote & { items?: QuoteItem[]; customerName?: string; customer?: Customer; org?: Org }>({
     queryKey: ["/api/quotes", id],
@@ -113,6 +123,27 @@ export default function QuoteDetail() {
     },
   });
 
+  const convertToInvoiceMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/quotes/${id}/convert-to-invoice`);
+      return res.json();
+    },
+    onSuccess: (newInv: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
+      toast({ title: "Invoice created from quote" });
+      if (newInv?.id) navigate(`/invoices/${newInv.id}`);
+    },
+    onError: async (err: any) => {
+      let msg = err?.message || "Failed to convert quote";
+      try {
+        const parsed = JSON.parse(msg.replace(/^\d+:\s*/, ""));
+        if (parsed?.error) msg = parsed.error;
+      } catch {}
+      toast({ title: "Couldn't convert quote", description: msg, variant: "destructive" });
+    },
+  });
+
   const deleteMutation = useMutation({
     mutationFn: async () => {
       await apiRequest("DELETE", `/api/quotes/${id}`);
@@ -127,23 +158,7 @@ export default function QuoteDetail() {
 
   const handlePrint = () => window.print();
 
-  const handleEmail = () => {
-    if (!quote) return;
-    const customer = quote.customer;
-    const items = quote.items || [];
-    const subtotal = calcLineItemsTotal(items);
-    const totals = calcTotalWithTaxDiscount(subtotal, quote.taxRate || "0", quote.discount || "0");
-    const subject = encodeURIComponent(`Quote #${quote.id.slice(0, 8)} from ${quote.org?.name || "Our Company"}`);
-    const body = encodeURIComponent(
-      `Dear ${customer?.name || "Customer"},\n\n` +
-      `Please find below your quote #${quote.id.slice(0, 8)}.\n\n` +
-      `Total: $${totals.total.toFixed(2)}\n` +
-      (quote.expiresAt ? `Valid until: ${format(new Date(quote.expiresAt), "MMM d, yyyy")}\n` : "") +
-      `\nItems:\n${items.map(it => `- ${it.description}: ${it.qty} x $${Number(it.unitPrice).toFixed(2)}`).join("\n")}\n\n` +
-      `${quote.notes ? `Notes: ${quote.notes}\n\n` : ""}Thank you for your business.\n\n${quote.org?.name || ""}`
-    );
-    window.open(`mailto:${customer?.email || ""}?subject=${subject}&body=${body}`);
-  };
+  const handleEmail = () => setEmailOpen(true);
 
   if (isLoading) {
     return (
@@ -201,6 +216,10 @@ export default function QuoteDetail() {
             <PdfDownloadButton
               filename={`Quote-${quote.id.slice(0, 8).toUpperCase()}.pdf`}
               testId="button-download-pdf-quote"
+              loadPdf={async () => {
+                const { QuotePdf } = await import("@/components/pdf/QuotePdf");
+                return <QuotePdf quote={quote} />;
+              }}
             >
               Download PDF
             </PdfDownloadButton>
@@ -219,6 +238,18 @@ export default function QuoteDetail() {
               >
                 <Wrench className="h-4 w-4 mr-1" />
                 Convert to Job
+              </Button>
+            )}
+            {quote.status !== "declined" && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => convertToInvoiceMutation.mutate()}
+                disabled={convertToInvoiceMutation.isPending}
+                data-testid="button-convert-to-invoice"
+              >
+                <Receipt className="h-4 w-4 mr-1" />
+                {convertToInvoiceMutation.isPending ? "Converting..." : "Convert to Invoice"}
               </Button>
             )}
             <Button variant="outline" size="sm" onClick={() => navigate(`/quotes/${id}/edit`)} data-testid="button-edit-quote">
@@ -440,7 +471,20 @@ export default function QuoteDetail() {
         ]}
       />
 
-      <QuotePdf quote={quote} />
+      <EmailDialog
+        open={emailOpen}
+        onOpenChange={setEmailOpen}
+        documentType="quote"
+        documentId={quote.id}
+        documentNumber={quote.id.slice(0, 8).toUpperCase()}
+        defaultRecipient={customer?.email || ""}
+        defaultSubject={`Quote #${quote.id.slice(0, 8).toUpperCase()} from ${org?.name || "Our Company"}`}
+        defaultMessage={`Dear ${customer?.name || "Customer"},\n\nPlease find attached your quote #${quote.id.slice(0, 8).toUpperCase()}.${quote.expiresAt ? ` This quote is valid until ${format(new Date(quote.expiresAt), "MMM d, yyyy")}.` : ""} Let me know if you have any questions.\n\nThank you,\n${org?.name || ""}`}
+        onSent={() => {
+          queryClient.invalidateQueries({ queryKey: ["/api/quotes", id] });
+          queryClient.invalidateQueries({ queryKey: ["/api/quotes"] });
+        }}
+      />
     </div>
   );
 }

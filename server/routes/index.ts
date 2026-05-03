@@ -19,11 +19,17 @@ import analyticsRouter from "./analytics";
 import stripeConnectRouter from "./stripeConnect";
 import reviewRequestsRouter from "./reviewRequests";
 import automationsRouter from "./automations";
+import portalRouter from "./portal";
+import searchRouter from "./search";
+import twoFactorRouter from "./twoFactor";
+import exportsRouter from "./exports";
+import auditLogRouter from "./auditLog";
 
 declare module "express-session" {
   interface SessionData {
     userId?: string;
     orgId?: string;
+    pending2faUserId?: string;
   }
 }
 
@@ -74,6 +80,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.use(reviewRequestsRouter);
   app.use(adminRouter);
   app.use(automationsRouter);
+  app.use(portalRouter);
+  app.use(searchRouter);
+  app.use(twoFactorRouter);
+  app.use(exportsRouter);
+  app.use(auditLogRouter);
 
   return httpServer;
 }

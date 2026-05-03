@@ -58,7 +58,7 @@ type OrgMember = Membership & {
 
 const PLAN_COLORS: Record<string, string> = {
   free: "bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-300",
-  individual: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
+  individual: "bg-primary/10 text-primary dark:bg-primary/20 dark:text-primary",
   small_business: "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300",
   enterprise: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
 };
@@ -128,6 +128,7 @@ function OrgMembersRow({ orgId }: { orgId: string }) {
                 <Button
                   variant="ghost"
                   size="icon"
+                  aria-label="Remove member"
                   onClick={() => removeMemberMutation.mutate(m.userId)}
                   disabled={removeMemberMutation.isPending}
                   data-testid={`button-remove-member-${m.userId}`}
@@ -240,6 +241,7 @@ function OrganizationsTab() {
                         <Button
                           variant="ghost"
                           size="icon"
+                          aria-label={expandedOrg === org.id ? "Collapse organization details" : "Expand organization details"}
                           onClick={() => setExpandedOrg(expandedOrg === org.id ? null : org.id)}
                           data-testid={`button-expand-org-${org.id}`}
                         >
@@ -292,7 +294,7 @@ function OrganizationsTab() {
                       <TableCell className="text-right">
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" data-testid={`button-actions-org-${org.id}`}>
+                            <Button variant="ghost" size="icon" aria-label="Organization actions" data-testid={`button-actions-org-${org.id}`}>
                               <Settings className="h-4 w-4" />
                             </Button>
                           </DropdownMenuTrigger>

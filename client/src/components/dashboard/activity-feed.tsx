@@ -13,13 +13,13 @@ interface ActivityItem {
 function ActivityIcon({ type }: { type: string }) {
   if (type === "invoice") return <Receipt className="h-3.5 w-3.5 text-amber-600" />;
   if (type === "quote") return <FileText className="h-3.5 w-3.5 text-emerald-600" />;
-  return <Briefcase className="h-3.5 w-3.5 text-blue-600" />;
+  return <Briefcase className="h-3.5 w-3.5 text-primary" />;
 }
 
 function ActivityDot({ type }: { type: string }) {
   if (type === "invoice") return <div className="h-2 w-2 rounded-full bg-amber-500 shrink-0 mt-1.5" />;
   if (type === "quote") return <div className="h-2 w-2 rounded-full bg-emerald-500 shrink-0 mt-1.5" />;
-  return <div className="h-2 w-2 rounded-full bg-blue-500 shrink-0 mt-1.5" />;
+  return <div className="h-2 w-2 rounded-full bg-primary shrink-0 mt-1.5" />;
 }
 
 export function ActivityFeed({ items }: { items: ActivityItem[] }) {

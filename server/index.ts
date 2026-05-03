@@ -8,7 +8,8 @@ import { runMigrations } from "stripe-replit-sync";
 import { getStripeSync } from "./stripeClient";
 import { WebhookHandlers } from "./webhookHandlers";
 import { getEnv } from "./env";
-import { isAppError } from "./errors";
+import { isAppError, errMsg } from "./errors";
+import { logger, httpLogger, requestIdMiddleware } from "./logger";
 
 const app = express();
 const httpServer = createServer(app);
@@ -56,78 +57,94 @@ app.use("/api/call-recovery/webhook", webhookLimiter);
 async function initStripe() {
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) {
-    console.warn("DATABASE_URL not set, skipping Stripe init");
+    logger.warn("DATABASE_URL not set, skipping Stripe init");
     return;
   }
 
   try {
-    console.log("Initializing Stripe schema...");
+    logger.info("Initializing Stripe schema...");
     await runMigrations({ databaseUrl });
-    console.log("Stripe schema ready");
+    logger.info("Stripe schema ready");
 
     const stripeSync = await getStripeSync();
 
     const replitDomains = process.env.REPLIT_DOMAINS;
     if (replitDomains) {
-      console.log("Setting up managed webhook...");
+      logger.info("Setting up managed webhook...");
       const webhookBaseUrl = `https://${replitDomains.split(",")[0]}`;
       try {
         const result = await stripeSync.findOrCreateManagedWebhook(
           `${webhookBaseUrl}/api/stripe/webhook`
         );
-        console.log(`Webhook configured: ${result?.webhook?.url || "done"}`);
-      } catch (whErr: any) {
-        console.warn("Webhook setup warning (non-fatal):", whErr.message);
+        logger.info({ url: result?.webhook?.url }, "Webhook configured");
+      } catch (whErr) {
+        logger.warn({ err: errMsg(whErr) }, "Webhook setup warning (non-fatal)");
       }
     } else {
-      console.warn("REPLIT_DOMAINS not set, skipping webhook setup");
+      logger.warn("REPLIT_DOMAINS not set, skipping webhook setup");
     }
 
-    console.log("Syncing Stripe data...");
+    logger.info("Syncing Stripe data...");
     stripeSync
       .syncBackfill()
-      .then(() => console.log("Stripe data synced"))
-      .catch((err: any) => console.error("Error syncing Stripe data:", err));
+      .then(() => logger.info("Stripe data synced"))
+      .catch((err: unknown) => logger.error({ err: errMsg(err) }, "Error syncing Stripe data"));
   } catch (error) {
-    console.error("Failed to initialize Stripe:", error);
+    logger.error({ err: errMsg(error) }, "Failed to initialize Stripe");
   }
 }
 
-initStripe().catch((err) => console.error("Stripe init error:", err));
+initStripe().catch((err) => logger.error({ err: err?.message || err }, "Stripe init error"));
 
 app.post(
   "/api/stripe/webhook",
   express.raw({ type: "application/json" }),
+  requestIdMiddleware,
   async (req, res) => {
+    const reqLog = logger.child({ requestId: (req as any).id, route: "/api/stripe/webhook" });
     const signature = req.headers["stripe-signature"];
     if (!signature) {
+      reqLog.warn("Missing stripe-signature header");
       return res.status(400).json({ error: "Missing stripe-signature" });
     }
 
+    const sig = Array.isArray(signature) ? signature[0] : signature;
+    if (!Buffer.isBuffer(req.body)) {
+      reqLog.error("STRIPE WEBHOOK ERROR: req.body is not a Buffer");
+      return res.status(500).json({ error: "Webhook processing error" });
+    }
+
     try {
-      const sig = Array.isArray(signature) ? signature[0] : signature;
-      if (!Buffer.isBuffer(req.body)) {
-        console.error("STRIPE WEBHOOK ERROR: req.body is not a Buffer");
-        return res.status(500).json({ error: "Webhook processing error" });
-      }
-      await WebhookHandlers.processWebhook(req.body as Buffer, sig);
+      await WebhookHandlers.processWebhook(req.body as Buffer, sig, reqLog);
       res.status(200).json({ received: true });
-    } catch (error: any) {
-      console.error("Webhook error:", error.message);
-      res.status(400).json({ error: "Webhook processing error" });
+    } catch (error) {
+      const isSignatureError = (err: any) => 
+        err?.code === "signature_verification_failed" || 
+        err?.type === "signature_verification_failed" ||
+        err?.message?.includes("No signatures found matching");
+
+      if (isSignatureError(error)) {
+        reqLog.warn({ err: errMsg(error) }, "Webhook signature verification failed");
+        return res.status(400).json({ error: "Invalid signature" });
+      }
+
+      // Processing errors → 500 so Stripe retries
+      reqLog.error({ err: errMsg(error) }, "Webhook processing error");
+      res.status(500).json({ error: "Webhook processing error" });
     }
   }
 );
 
 app.use(
   express.json({
+    limit: "5mb",
     verify: (req, _res, buf) => {
       req.rawBody = buf;
     },
   })
 );
 
-app.use(express.urlencoded({ extended: false }));
+app.use(express.urlencoded({ extended: false, limit: "5mb" }));
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
@@ -137,34 +154,12 @@ export function log(message: string, source = "express") {
     hour12: true,
   });
 
+  // Startup banner — keep as-is in dev so the workflow detector sees the URL
+  // eslint-disable-next-line no-console
   console.log(`${formattedTime} [${source}] ${message}`);
 }
 
-app.use((req, res, next) => {
-  const start = Date.now();
-  const path = req.path;
-  let capturedJsonResponse: Record<string, any> | undefined = undefined;
-
-  const originalResJson = res.json;
-  res.json = function (bodyJson, ...args) {
-    capturedJsonResponse = bodyJson;
-    return originalResJson.apply(res, [bodyJson, ...args]);
-  };
-
-  res.on("finish", () => {
-    const duration = Date.now() - start;
-    if (path.startsWith("/api")) {
-      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
-      }
-
-      log(logLine);
-    }
-  });
-
-  next();
-});
+app.use(httpLogger);
 
 (async () => {
   const { seedDatabase, ensureSuperAdmin, ensureDemoAccount, ensureReviewerAccount } = await import("./seed");
@@ -181,7 +176,7 @@ app.use((req, res, next) => {
   const { startReminderWorker } = await import("./reminderWorker");
   startReminderWorker();
 
-  app.use((err: unknown, _req: Request, res: Response, next: NextFunction) => {
+  app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
     if (res.headersSent) {
       return next(err);
     }
@@ -190,7 +185,7 @@ app.use((req, res, next) => {
 
     if (isAppError(err)) {
       return res.status(err.statusCode).json({
-        message: err.message,
+        message: errMsg(err),
       });
     }
 
@@ -200,9 +195,10 @@ app.use((req, res, next) => {
 
     const message = isProduction
       ? "An unexpected error occurred"
-      : (err instanceof Error ? err.message : "Internal Server Error");
+      : (err instanceof Error ? errMsg(err) : "Internal Server Error");
 
-    console.error("[unhandled error]", err);
+    const reqLog = (req as any).log || logger;
+    reqLog.error({ err: err instanceof Error ? err.message : err, stack: err instanceof Error ? err.stack : undefined }, "Unhandled error");
     return res.status(status).json({ message });
   });
 

@@ -1,8 +1,27 @@
-# TradeFlow - Service Management Platform
+# TradeFlowKit - Service Management Platform
 
 ## Overview
 
-TradeFlow is a multi-tenant practice management platform for blue-collar service businesses (electricians, plumbers, carpenters, HVAC). It provides a web-based admin portal for managing customers, jobs, quotes, and invoices within isolated organizational contexts.
+TradeFlowKit is a multi-tenant practice management platform for blue-collar service businesses (electricians, plumbers, carpenters, HVAC). It provides a web-based admin portal for managing customers, jobs, quotes, and invoices within isolated organizational contexts.
+
+## Ecosystem Positioning
+
+TradeFlowKit is the **business-operations & revenue-flow command center** in the **Shotgun Ninjas Productions** ecosystem. It is one of several focused tools that share a common brand, billing model, and design language:
+
+- **TradeFlowKit.com** *(this product)* — business ops, jobs, quotes, invoices, team
+- **TorqueShed.pro** — automotive diagnostics, repair cases, parts, mechanic community (pairs with TradeFlowKit for shop owners)
+- **TechDeck.app** — IT operations, scripts, automation, MSP/power-user tooling (pairs with TradeFlowKit for low-voltage / IT / A-V / security trades)
+- **PulseDesk.support** — healthcare operations coordination
+- **FaultlineLab.com** — diagnostic challenge & training platform (great for training apprentice techs)
+- **ShotgunNinjaVillage.com** — community, entertainment, games, merch
+- **ShotgunNinjas.com** — central ecosystem hub
+
+Cross-promotion in TradeFlowKit lives in three places:
+1. The marketing landing page (`auth-page.tsx`) has a dedicated "Tools that work with TradeFlow" ecosystem section featuring TorqueShed, TechDeck, and FaultlineLab as cards, plus a full sister-products link row in the footer.
+2. The in-app sidebar footer carries a small "Built by Shotgun Ninjas Productions" link to the hub.
+3. OG / metadata in `client/index.html` references Shotgun Ninjas Productions as the publisher/author.
+
+Reusable component: `client/src/components/ecosystem-section.tsx` is the cross-promo card grid — drop it into any other Shotgun Ninjas product to maintain consistent ecosystem styling.
 
 The application follows a monolithic full-stack architecture with a React frontend served by an Express backend, backed by PostgreSQL via Drizzle ORM. It supports multi-tenancy through organizations with role-based memberships (owner, admin, tech, viewer).
 
@@ -33,6 +52,7 @@ The application follows a monolithic full-stack architecture with a React fronte
 - Progressive Web App (PWA) with service worker, installable on mobile devices
 - Privacy policy page at /privacy (accessible without login)
 - Digital Asset Links for Google Play Store TWA publishing
+- Email PDF quotes/invoices: "Email" button on quote/invoice detail opens a dialog with prefilled recipient/subject/message; server generates a branded PDF with `pdfkit` and sends via SendGrid (`@sendgrid/mail`) with the PDF as an attachment. Requires `SENDGRID_API_KEY` and `SENDGRID_FROM_EMAIL` secrets. Endpoints: `POST /api/quotes/:id/send-email`, `POST /api/invoices/:id/send-email`. Sending a draft quote/invoice auto-promotes it to "sent" status. Delivery status is shown via toast + in-dialog confirmation.
 
 ## User Preferences
 
@@ -119,3 +139,19 @@ The frontend follows a page-based structure under `client/src/pages/` with reusa
 
 ### Seed Data
 - `server/seed.ts` provides demo data seeding with a demo user (username: `demo`, password: `demo123`) and sample organization, customers, and jobs
+
+## Testing
+
+Vitest powers unit/integration tests; Playwright powers a single end-to-end spec.
+
+- `npm run test` — run the vitest suite once (CI mode). Covers storage org-scoping, plan-gate enforcement, and Stripe webhook handlers (idempotency + status flips). Tests use the `DATABASE_URL` Postgres database; each suite creates ephemeral orgs/users with random slugs and tears them down via `storage.deleteOrg`. The Stripe signature check is bypassed via `vi.mock('./server/stripeClient')`.
+- `npm run test:watch` — watch mode for local development.
+- `npm run test:coverage` — vitest with v8 coverage (focused on `server/storage.ts`, `server/webhookHandlers.ts`, `server/routes/automations.ts`).
+- `npm run test:e2e` — Playwright e2e for the signup → org → customer → job → quote → invoice → mark-paid flow. Requires the dev server running on `http://localhost:5000` (override with `E2E_BASE_URL`) and Playwright browsers installed (`npx playwright install chromium`).
+
+Test layout:
+- `tests/helpers.ts` — org/user setup + cleanup helpers
+- `tests/storage-org-scoping.test.ts` — multi-tenant isolation across customers/jobs/quotes/invoices/memberships
+- `tests/plan-gate.test.ts` — `/api/automations` 403 for free/individual, 200 for small_business/enterprise; `PLAN_LIMITS` shape; recurring-jobs gate
+- `tests/webhooks.test.ts` — checkout per plan tier, replay idempotency, subscription deletion downgrade, payment-failed → past_due, invoice payment marks paid
+- `e2e/signup-to-paid.spec.ts` — full signup-to-paid happy path

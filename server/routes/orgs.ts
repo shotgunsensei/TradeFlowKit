@@ -1,3 +1,4 @@
+import { errMsg } from "../errors";
 import { Router, type Request, type Response } from "express";
 import { storage } from "../storage";
 import { requireAuth, requireOrg, checkTeamLimit } from "../middleware";
@@ -20,8 +21,8 @@ router.post("/api/orgs", requireAuth, async (req: Request, res: Response) => {
     await storage.createMembership(org.id, req.session.userId!, "owner");
     req.session.orgId = org.id;
     res.json(org);
-  } catch (err: any) {
-    res.status(500).send(err.message);
+  } catch (err) {
+    res.status(500).send(errMsg(err));
   }
 });
 
@@ -33,8 +34,8 @@ router.patch("/api/orgs/:id", requireAuth, requireOrg, async (req: Request, res:
     const { plan, stripeCustomerId, stripeSubscriptionId, subscriptionStatus, currentPeriodEnd, ...safeData } = req.body;
     const org = await storage.updateOrg(req.params.id as string, safeData);
     res.json(org);
-  } catch (err: any) {
-    res.status(500).send(err.message);
+  } catch (err) {
+    res.status(500).send(errMsg(err));
   }
 });
 
@@ -62,8 +63,8 @@ router.post("/api/orgs/join", requireAuth, async (req: Request, res: Response) =
     await storage.createMembership(invite.orgId, req.session.userId!, invite.role);
     req.session.orgId = invite.orgId;
     res.json({ ok: true });
-  } catch (err: any) {
-    res.status(500).send(err.message);
+  } catch (err) {
+    res.status(500).send(errMsg(err));
   }
 });
 
@@ -71,8 +72,8 @@ router.get("/api/invite-codes", requireAuth, requireOrg, async (req: Request, re
   try {
     const codes = await storage.getOrgInviteCodes(req.session.orgId!);
     res.json(codes);
-  } catch (err: any) {
-    res.status(500).send(err.message);
+  } catch (err) {
+    res.status(500).send(errMsg(err));
   }
 });
 
@@ -88,8 +89,8 @@ router.post("/api/invite-codes", requireAuth, requireOrg, async (req: Request, r
     const { role } = req.body;
     const code = await storage.createInviteCode(req.session.orgId!, role || "tech", req.session.userId!);
     res.json(code);
-  } catch (err: any) {
-    res.status(500).send(err.message);
+  } catch (err) {
+    res.status(500).send(errMsg(err));
   }
 });
 
@@ -101,8 +102,8 @@ router.get("/api/plan-info", requireAuth, requireOrg, async (req: Request, res: 
     const limits = PLAN_LIMITS[org.plan] || PLAN_LIMITS.free;
     const counts = await storage.getOrgCounts(org.id);
     res.json({ plan: org.plan, limits, counts, subscriptionStatus: org.subscriptionStatus });
-  } catch (err: any) {
-    res.status(500).send(err.message);
+  } catch (err) {
+    res.status(500).send(errMsg(err));
   }
 });
 
@@ -116,8 +117,8 @@ router.get("/api/memberships", requireAuth, requireOrg, async (req: Request, res
       })
     );
     res.json(membersWithUsers);
-  } catch (err: any) {
-    res.status(500).send(err.message);
+  } catch (err) {
+    res.status(500).send(errMsg(err));
   }
 });
 
@@ -142,8 +143,8 @@ router.patch("/api/memberships/:userId/role", requireAuth, requireOrg, async (re
     }
     await storage.updateMembershipRole(req.session.orgId!, userId, role);
     res.json({ ok: true });
-  } catch (err: any) {
-    res.status(500).send(err.message);
+  } catch (err) {
+    res.status(500).send(errMsg(err));
   }
 });
 
@@ -164,8 +165,8 @@ router.delete("/api/memberships/:userId", requireAuth, requireOrg, async (req: R
     }
     await storage.deleteMembership(req.session.orgId!, userId);
     res.json({ ok: true });
-  } catch (err: any) {
-    res.status(500).send(err.message);
+  } catch (err) {
+    res.status(500).send(errMsg(err));
   }
 });
 

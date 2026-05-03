@@ -1,6 +1,9 @@
 import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
 import { PageHeader } from "@/components/page-header";
 import { DataTable } from "@/components/data-table";
 import { EmptyState } from "@/components/empty-state";
@@ -8,6 +11,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import {
   Dialog,
   DialogContent,
@@ -22,10 +27,33 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, Users, Search, Download, Upload, CheckCircle2, AlertCircle } from "lucide-react";
+import { Plus, Users, Search, Download, Upload, CheckCircle2, AlertCircle, Trash2 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useRowSelection } from "@/hooks/use-row-selection";
+import { BulkActionBar } from "@/components/bulk-action-bar";
+import { toCSV, downloadCSV } from "@/lib/csv";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import type { Customer } from "@shared/schema";
+
+const customerFormSchema = z.object({
+  name: z.string().trim().min(1, "Name is required"),
+  phone: z.string().optional().default(""),
+  email: z.union([z.string().email("Enter a valid email"), z.literal("")]).optional().default(""),
+  address: z.string().optional().default(""),
+  notes: z.string().optional().default(""),
+  smsOptOut: z.boolean().optional().default(false),
+});
+type CustomerFormValues = z.infer<typeof customerFormSchema>;
 
 const CSV_HEADERS = ["name", "phone", "email", "address", "notes"];
 const CSV_DISPLAY_HEADERS = ["Name", "Phone", "Email", "Address", "Notes"];
@@ -77,13 +105,18 @@ export default function CustomersPage() {
   const [, navigate] = useLocation();
   const [showCreate, setShowCreate] = useState(false);
   const [showImport, setShowImport] = useState(false);
+  const createForm = useForm<CustomerFormValues>({
+    resolver: zodResolver(customerFormSchema),
+    defaultValues: { name: "", phone: "", email: "", address: "", notes: "", smsOptOut: false },
+  });
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [importRows, setImportRows] = useState<Record<string, string>[]>([]);
   const [csvHeaders, setCsvHeaders] = useState<string[]>([]);
   const [fieldMapping, setFieldMapping] = useState<Record<string, string>>({});
   const [importStep, setImportStep] = useState<"upload" | "map" | "preview">("upload");
-  const [importResult, setImportResult] = useState<{ imported: number; errors: { row: number; error: string }[] } | null>(null);
+  const [importResult, setImportResult] = useState<{ imported: number; skipped?: number; errors: { row: number; error: string }[] } | null>(null);
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
@@ -103,12 +136,13 @@ export default function CustomersPage() {
   });
 
   const createMutation = useMutation({
-    mutationFn: async (data: any) => {
+    mutationFn: async (data: CustomerFormValues) => {
       await apiRequest("POST", "/api/customers", data);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/customers"] });
       setShowCreate(false);
+      createForm.reset();
       toast({ title: "Customer created" });
     },
     onError: (err: Error) => {
@@ -131,6 +165,37 @@ export default function CustomersPage() {
   });
 
   const filtered = customers;
+
+  const selection = useRowSelection(filtered);
+
+  const bulkDeleteMutation = useMutation({
+    mutationFn: async (ids: string[]) => {
+      const res = await apiRequest("POST", "/api/customers/bulk-delete", { ids });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/customers"] });
+      toast({ title: `${data.updated} customer${data.updated !== 1 ? "s" : ""} deleted` });
+      selection.clear();
+      setConfirmBulkDelete(false);
+    },
+    onError: (err: Error) => {
+      toast({ title: "Delete failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const handleExportSelected = () => {
+    const items = selection.selectedItems.length > 0 ? selection.selectedItems : filtered;
+    const csv = toCSV(items, [
+      { header: "Name", value: (c) => c.name },
+      { header: "Phone", value: (c) => c.phone || "" },
+      { header: "Email", value: (c) => c.email || "" },
+      { header: "Address", value: (c) => c.address || "" },
+      { header: "Notes", value: (c) => c.notes || "" },
+    ]);
+    downloadCSV(`customers-${new Date().toISOString().slice(0, 10)}.csv`, csv);
+    toast({ title: `Exported ${items.length} customer${items.length !== 1 ? "s" : ""}` });
+  };
 
   const columns = [
     {
@@ -161,18 +226,6 @@ export default function CustomersPage() {
       ),
     },
   ];
-
-  const handleCreate = (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const fd = new FormData(e.currentTarget);
-    createMutation.mutate({
-      name: fd.get("name"),
-      phone: fd.get("phone") || "",
-      email: fd.get("email") || "",
-      address: fd.get("address") || "",
-      notes: fd.get("notes") || "",
-    });
-  };
 
   const downloadTemplate = () => {
     const exampleRow = ["John Smith", "(555) 123-4567", "john@example.com", "123 Main St City ST", "Existing customer"];
@@ -221,6 +274,10 @@ export default function CustomersPage() {
         description="Manage your customer directory"
         actions={
           <div className="flex gap-2">
+            <Button size="sm" variant="outline" onClick={handleExportSelected} data-testid="button-export-customers">
+              <Download className="h-4 w-4 mr-1" />
+              Export
+            </Button>
             <Button size="sm" variant="outline" onClick={() => setShowImport(true)} data-testid="button-import-customers">
               <Upload className="h-4 w-4 mr-1" />
               Import
@@ -257,6 +314,7 @@ export default function CustomersPage() {
           isLoading={isLoading}
           onRowClick={(c) => navigate(`/customers/${c.id}`)}
           testIdPrefix="customer-row"
+          selection={selection}
           emptyState={
             <EmptyState
               icon={Users}
@@ -267,44 +325,153 @@ export default function CustomersPage() {
             />
           }
         />
+
+        <BulkActionBar count={selection.selectedCount} onClear={selection.clear}>
+          <Button size="sm" variant="outline" onClick={handleExportSelected} data-testid="button-bulk-export-customers">
+            <Download className="h-4 w-4 mr-1" />
+            Export CSV
+          </Button>
+          <Button
+            size="sm"
+            variant="destructive"
+            onClick={() => setConfirmBulkDelete(true)}
+            data-testid="button-bulk-delete-customers"
+          >
+            <Trash2 className="h-4 w-4 mr-1" />
+            Delete
+          </Button>
+        </BulkActionBar>
       </div>
 
+      <AlertDialog open={confirmBulkDelete} onOpenChange={setConfirmBulkDelete}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {selection.selectedCount} customer{selection.selectedCount !== 1 ? "s" : ""}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently remove the selected customers. Their jobs and invoices will keep references but lose the customer link. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="button-bulk-delete-cancel">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => bulkDeleteMutation.mutate(selection.selected)}
+              disabled={bulkDeleteMutation.isPending}
+              data-testid="button-bulk-delete-confirm"
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {bulkDeleteMutation.isPending ? "Deleting..." : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {/* Add Customer Dialog */}
-      <Dialog open={showCreate} onOpenChange={setShowCreate}>
+      <Dialog open={showCreate} onOpenChange={(open) => { setShowCreate(open); if (!open) createForm.reset(); }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Add Customer</DialogTitle>
           </DialogHeader>
-          <form onSubmit={handleCreate} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="cust-name">Name</Label>
-              <Input id="cust-name" name="name" required data-testid="input-customer-name" placeholder="Customer name" />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <Label htmlFor="cust-phone">Phone</Label>
-                <Input id="cust-phone" name="phone" data-testid="input-customer-phone" placeholder="(555) 123-4567" />
+          <Form {...createForm}>
+            <form onSubmit={createForm.handleSubmit((data) => createMutation.mutate(data))} className="space-y-4" noValidate>
+              <FormField
+                control={createForm.control}
+                name="name"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Name</FormLabel>
+                    <FormControl>
+                      <Input {...field} data-testid="input-customer-name" placeholder="Customer name" />
+                    </FormControl>
+                    <FormMessage data-testid="error-customer-name" />
+                  </FormItem>
+                )}
+              />
+              <div className="grid grid-cols-2 gap-3">
+                <FormField
+                  control={createForm.control}
+                  name="phone"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Phone</FormLabel>
+                      <FormControl>
+                        <Input {...field} data-testid="input-customer-phone" placeholder="(555) 123-4567" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={createForm.control}
+                  name="email"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Email</FormLabel>
+                      <FormControl>
+                        <Input {...field} type="email" data-testid="input-customer-email" placeholder="email@example.com" />
+                      </FormControl>
+                      <FormMessage data-testid="error-customer-email" />
+                    </FormItem>
+                  )}
+                />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="cust-email">Email</Label>
-                <Input id="cust-email" name="email" type="email" data-testid="input-customer-email" placeholder="email@example.com" />
+              <FormField
+                control={createForm.control}
+                name="address"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Address</FormLabel>
+                    <FormControl>
+                      <Input {...field} data-testid="input-customer-address" placeholder="123 Main St, City, ST" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={createForm.control}
+                name="notes"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Notes</FormLabel>
+                    <FormControl>
+                      <Textarea {...field} data-testid="input-customer-notes" placeholder="Any notes about this customer..." rows={3} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={createForm.control}
+                name="smsOptOut"
+                render={({ field }) => (
+                  <FormItem className="flex items-start gap-2 rounded-md border p-3 space-y-0">
+                    <FormControl>
+                      <Checkbox
+                        id="cust-create-sms-opt-out"
+                        checked={field.value}
+                        onCheckedChange={(v) => field.onChange(v === true)}
+                        data-testid="checkbox-create-sms-opt-out"
+                      />
+                    </FormControl>
+                    <div className="space-y-0.5">
+                      <Label htmlFor="cust-create-sms-opt-out" className="cursor-pointer">
+                        Do not send SMS reminders
+                      </Label>
+                      <p className="text-xs text-muted-foreground">
+                        Skip this customer for invoice reminders, quote follow-ups, and other automated text messages.
+                      </p>
+                    </div>
+                  </FormItem>
+                )}
+              />
+              <div className="flex justify-end gap-2">
+                <Button type="button" variant="outline" onClick={() => { setShowCreate(false); createForm.reset(); }}>Cancel</Button>
+                <Button type="submit" disabled={createMutation.isPending} data-testid="button-save-customer">
+                  {createMutation.isPending ? "Creating..." : "Add Customer"}
+                </Button>
               </div>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="cust-address">Address</Label>
-              <Input id="cust-address" name="address" data-testid="input-customer-address" placeholder="123 Main St, City, ST" />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="cust-notes">Notes</Label>
-              <Textarea id="cust-notes" name="notes" data-testid="input-customer-notes" placeholder="Any notes about this customer..." rows={3} />
-            </div>
-            <div className="flex justify-end gap-2">
-              <Button type="button" variant="outline" onClick={() => setShowCreate(false)}>Cancel</Button>
-              <Button type="submit" disabled={createMutation.isPending} data-testid="button-save-customer">
-                {createMutation.isPending ? "Creating..." : "Add Customer"}
-              </Button>
-            </div>
-          </form>
+            </form>
+          </Form>
         </DialogContent>
       </Dialog>
 
@@ -323,8 +490,11 @@ export default function CustomersPage() {
               <div className="flex items-center gap-3 p-4 rounded-lg bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-900">
                 <CheckCircle2 className="h-5 w-5 text-green-600 flex-shrink-0" />
                 <div>
-                  <p className="font-medium text-green-900 dark:text-green-300">
+                  <p className="font-medium text-green-900 dark:text-green-300" data-testid="text-import-summary">
                     {importResult.imported} customer{importResult.imported !== 1 ? "s" : ""} imported successfully
+                  </p>
+                  <p className="text-sm text-green-800 dark:text-green-400 mt-0.5" data-testid="text-import-skipped">
+                    {importResult.skipped ?? 0} duplicate{(importResult.skipped ?? 0) !== 1 ? "s" : ""} skipped
                   </p>
                 </div>
               </div>

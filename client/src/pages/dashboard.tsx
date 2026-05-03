@@ -1,12 +1,18 @@
+import { lazy, Suspense } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "@/components/page-header";
 import { StatusBadge } from "@/components/status-badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { RevenueChart } from "@/components/dashboard/revenue-chart";
 import { QuickActions } from "@/components/dashboard/quick-actions";
 import { ActivityFeed } from "@/components/dashboard/activity-feed";
 import { PwaInstallBanner } from "@/components/pwa-install-banner";
+
+const RevenueChart = lazy(() =>
+  import("@/components/dashboard/revenue-chart").then((m) => ({
+    default: m.RevenueChart,
+  })),
+);
 import {
   Users,
   Wrench,
@@ -105,7 +111,7 @@ function EmptyState() {
     <Card data-testid="empty-state">
       <CardHeader>
         <CardTitle className="text-base flex items-center gap-2">
-          <CheckCircle2 className="h-5 w-5 text-blue-600" />
+          <CheckCircle2 className="h-5 w-5 text-primary" />
           Welcome to TradeFlow — let's get set up
         </CardTitle>
       </CardHeader>
@@ -137,7 +143,7 @@ function EmptyState() {
 
 const STATUS_COLORS: Record<string, string> = {
   lead: "bg-gray-100 text-gray-700",
-  quoted: "bg-blue-100 text-blue-700",
+  quoted: "bg-primary/10 text-primary",
   scheduled: "bg-indigo-100 text-indigo-700",
   in_progress: "bg-amber-100 text-amber-700",
   done: "bg-emerald-100 text-emerald-700",
@@ -197,7 +203,7 @@ export default function Dashboard() {
             <div className="rounded-xl border bg-card p-4 hover-elevate cursor-pointer" data-testid="kpi-todays-jobs">
               <div className="flex items-center justify-between mb-1">
                 <span className="text-xs text-muted-foreground font-medium">Today's Jobs</span>
-                <CalendarCheck className="h-4 w-4 text-blue-600" />
+                <CalendarCheck className="h-4 w-4 text-primary" />
               </div>
               <p className="text-2xl font-bold">{stats.todaysJobs.length}</p>
               <p className="text-xs text-muted-foreground mt-0.5">scheduled today</p>
@@ -289,7 +295,9 @@ export default function Dashboard() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <RevenueChart data={stats.revenueChartData} />
+                <Suspense fallback={<Skeleton className="h-[260px] w-full" />}>
+                  <RevenueChart data={stats.revenueChartData} />
+                </Suspense>
               </CardContent>
             </Card>
 
@@ -305,7 +313,7 @@ export default function Dashboard() {
                   <div className="text-center py-5">
                     <p className="text-sm text-muted-foreground">No jobs scheduled today</p>
                     <Link href="/jobs?new=1">
-                      <button className="mt-2 text-xs text-blue-600 hover:underline">+ Add a job</button>
+                      <button className="mt-2 text-xs text-primary hover:underline">+ Add a job</button>
                     </Link>
                   </div>
                 ) : (
@@ -319,7 +327,7 @@ export default function Dashboard() {
                               {job.customerName || "No customer"}
                               {job.scheduledStart && ` · ${format(new Date(job.scheduledStart), "h:mm a")}`}
                               {job.assignedUserNames && job.assignedUserNames.length > 0 && (
-                                <> · <span className="text-blue-600">{job.assignedUserNames.join(", ")}</span></>
+                                <> · <span className="text-primary">{job.assignedUserNames.join(", ")}</span></>
                               )}
                             </p>
                           </div>
@@ -433,7 +441,7 @@ export default function Dashboard() {
                     {stats.memberWorkload.map((m) => (
                       <div key={m.userId} className="flex items-center justify-between gap-2" data-testid={`workload-${m.userId}`}>
                         <div className="flex items-center gap-2 min-w-0">
-                          <div className="h-7 w-7 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-xs font-bold shrink-0">
+                          <div className="h-7 w-7 rounded-full bg-primary/10 text-primary flex items-center justify-center text-xs font-bold shrink-0">
                             {m.userName.slice(0, 2).toUpperCase()}
                           </div>
                           <span className="text-sm truncate">{m.userName}</span>
@@ -441,7 +449,7 @@ export default function Dashboard() {
                         <div className="flex items-center gap-1.5 shrink-0">
                           <div className="h-1.5 rounded-full bg-muted overflow-hidden w-16">
                             <div
-                              className="h-full rounded-full bg-blue-500 transition-all"
+                              className="h-full rounded-full bg-primary transition-all"
                               style={{ width: `${Math.min((m.activeJobCount / 10) * 100, 100)}%` }}
                             />
                           </div>

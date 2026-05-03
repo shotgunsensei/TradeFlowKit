@@ -1,12 +1,15 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation, useParams, useSearch } from "wouter";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { ArrowLeft, Plus, Trash2 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -20,6 +23,15 @@ interface LineItem {
   unitPrice: string;
 }
 
+const quoteFormSchema = z.object({
+  customerId: z.string().trim().min(1, "Please select a customer"),
+  expiresAt: z.string().optional().default(""),
+  notes: z.string().optional().default(""),
+  taxRate: z.string().refine((v) => v === "" || (!isNaN(Number(v)) && Number(v) >= 0), { message: "Tax rate must be a non-negative number" }).default("0"),
+  discount: z.string().refine((v) => v === "" || (!isNaN(Number(v)) && Number(v) >= 0), { message: "Discount must be a non-negative number" }).default("0"),
+});
+type QuoteFormValues = z.infer<typeof quoteFormSchema>;
+
 export default function QuoteForm() {
   const { id } = useParams<{ id: string }>();
   const isEditing = !!id && id !== "new";
@@ -28,15 +40,22 @@ export default function QuoteForm() {
   const params = new URLSearchParams(searchParams);
   const { toast } = useToast();
 
-  const [customerId, setCustomerId] = useState(params.get("customerId") || "");
   const [jobId, setJobId] = useState(params.get("jobId") || "");
-  const [taxRate, setTaxRate] = useState("0");
-  const [discount, setDiscount] = useState("0");
-  const [notes, setNotes] = useState("");
-  const [expiresAt, setExpiresAt] = useState("");
   const [items, setItems] = useState<LineItem[]>([
     { description: "", qty: "1", unitPrice: "0" },
   ]);
+  const [itemsError, setItemsError] = useState<string>("");
+
+  const form = useForm<QuoteFormValues>({
+    resolver: zodResolver(quoteFormSchema),
+    defaultValues: {
+      customerId: params.get("customerId") || "",
+      expiresAt: "",
+      notes: "",
+      taxRate: "0",
+      discount: "0",
+    },
+  });
 
   const { data: customers = [] } = useQuery<Customer[]>({
     queryKey: ["/api/customers"],
@@ -49,12 +68,14 @@ export default function QuoteForm() {
 
   useEffect(() => {
     if (existingQuote) {
-      setCustomerId(existingQuote.customerId || "");
+      form.reset({
+        customerId: existingQuote.customerId || "",
+        expiresAt: existingQuote.expiresAt ? new Date(existingQuote.expiresAt).toISOString().split("T")[0] : "",
+        notes: existingQuote.notes || "",
+        taxRate: existingQuote.taxRate || "0",
+        discount: existingQuote.discount || "0",
+      });
       setJobId(existingQuote.jobId || "");
-      setTaxRate(existingQuote.taxRate || "0");
-      setDiscount(existingQuote.discount || "0");
-      setNotes(existingQuote.notes || "");
-      setExpiresAt(existingQuote.expiresAt ? new Date(existingQuote.expiresAt).toISOString().split("T")[0] : "");
       if (existingQuote.items && existingQuote.items.length > 0) {
         setItems(
           existingQuote.items.map((it) => ({
@@ -112,6 +133,7 @@ export default function QuoteForm() {
     const newItems = [...items];
     newItems[index] = { ...newItems[index], [field]: value };
     setItems(newItems);
+    if (itemsError) setItemsError("");
   };
 
   const handleDescKeyDown = (e: React.KeyboardEvent, i: number) => {
@@ -128,19 +150,26 @@ export default function QuoteForm() {
     }
   };
 
+  const taxRate = form.watch("taxRate");
+  const discount = form.watch("discount");
   const subtotal = calcLineItemsTotal(items);
   const totals = calcTotalWithTaxDiscount(subtotal, taxRate, discount);
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const onSubmit = (data: QuoteFormValues) => {
+    const validItems = items.filter((it) => it.description.trim());
+    if (validItems.length === 0) {
+      setItemsError("Add at least one line item with a description");
+      return;
+    }
+    setItemsError("");
     saveMutation.mutate({
-      customerId: customerId || null,
+      customerId: data.customerId || null,
       jobId: jobId || null,
-      taxRate,
-      discount,
-      notes,
-      expiresAt: expiresAt || null,
-      items: items.filter((it) => it.description.trim()),
+      taxRate: data.taxRate,
+      discount: data.discount,
+      notes: data.notes,
+      expiresAt: data.expiresAt || null,
+      items: validItems,
     });
   };
 
@@ -156,41 +185,58 @@ export default function QuoteForm() {
       />
 
       <div className="flex-1 overflow-auto p-6">
-        <form onSubmit={handleSubmit} className="max-w-3xl space-y-6">
+        <Form {...form}>
+        <form onSubmit={form.handleSubmit(onSubmit)} className="max-w-3xl space-y-6" noValidate>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label>Customer</Label>
-              <select
-                value={customerId}
-                onChange={(e) => setCustomerId(e.target.value)}
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                data-testid="select-quote-customer"
-              >
-                <option value="">Select customer</option>
-                {customers.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
-            </div>
-            <div className="space-y-2">
-              <Label>Expiry Date</Label>
-              <Input
-                type="date"
-                value={expiresAt}
-                onChange={(e) => setExpiresAt(e.target.value)}
-                data-testid="input-quote-expires"
-              />
-            </div>
-          </div>
-          <div className="space-y-2">
-            <Label>Notes</Label>
-            <Input
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              data-testid="input-quote-notes"
-              placeholder="Quote notes..."
+            <FormField
+              control={form.control}
+              name="customerId"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Customer</FormLabel>
+                  <FormControl>
+                    <select
+                      {...field}
+                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      data-testid="select-quote-customer"
+                    >
+                      <option value="">Select customer</option>
+                      {customers.map((c) => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                  </FormControl>
+                  <FormMessage data-testid="error-quote-customer" />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="expiresAt"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Expiry Date</FormLabel>
+                  <FormControl>
+                    <Input {...field} type="date" data-testid="input-quote-expires" />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
             />
           </div>
+          <FormField
+            control={form.control}
+            name="notes"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Notes</FormLabel>
+                <FormControl>
+                  <Input {...field} data-testid="input-quote-notes" placeholder="Quote notes..." />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
 
           <Card>
             <CardHeader className="pb-3">
@@ -250,6 +296,7 @@ export default function QuoteForm() {
                     type="button"
                     variant="ghost"
                     size="icon"
+                    aria-label="Remove line item"
                     onClick={() => removeItem(i)}
                     disabled={items.length <= 1}
                     data-testid={`button-remove-item-${i}`}
@@ -258,30 +305,39 @@ export default function QuoteForm() {
                   </Button>
                 </div>
               ))}
+              {itemsError && (
+                <p className="text-sm font-medium text-destructive" data-testid="error-quote-items">{itemsError}</p>
+              )}
             </CardContent>
           </Card>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className="space-y-2">
-              <Label>Tax Rate (%)</Label>
-              <Input
-                type="number"
-                step="0.01"
-                value={taxRate}
-                onChange={(e) => setTaxRate(e.target.value)}
-                data-testid="input-quote-tax"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Discount ($)</Label>
-              <Input
-                type="number"
-                step="0.01"
-                value={discount}
-                onChange={(e) => setDiscount(e.target.value)}
-                data-testid="input-quote-discount"
-              />
-            </div>
+            <FormField
+              control={form.control}
+              name="taxRate"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Tax Rate (%)</FormLabel>
+                  <FormControl>
+                    <Input {...field} type="number" step="0.01" data-testid="input-quote-tax" />
+                  </FormControl>
+                  <FormMessage data-testid="error-quote-tax" />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="discount"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Discount ($)</FormLabel>
+                  <FormControl>
+                    <Input {...field} type="number" step="0.01" data-testid="input-quote-discount" />
+                  </FormControl>
+                  <FormMessage data-testid="error-quote-discount" />
+                </FormItem>
+              )}
+            />
             <div className="space-y-1 pt-6">
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Subtotal</span>
@@ -313,6 +369,7 @@ export default function QuoteForm() {
             </Button>
           </div>
         </form>
+        </Form>
       </div>
 
       {/* Mobile pinned totals */}

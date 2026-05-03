@@ -1,14 +1,20 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useParams, useLocation, Link } from "wouter";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
 import { PageHeader } from "@/components/page-header";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Badge } from "@/components/ui/badge";
 import {
   Tabs,
   TabsContent,
@@ -21,17 +27,34 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { ArrowLeft, Edit, Phone, Mail, MapPin, Wrench, FileText, Receipt, Trash2, Plus, BarChart3, Calendar } from "lucide-react";
+import { ArrowLeft, Edit, Phone, Mail, MapPin, Wrench, FileText, Receipt, Trash2, Plus, BarChart3, Calendar, MessageSquareOff, Activity, Link2, Check } from "lucide-react";
+import { CustomerActivityTimeline } from "@/components/customer-activity-timeline";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useHotkey } from "@/hooks/use-hotkey";
+import { usePageShortcuts } from "@/components/shortcuts-help";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import type { Customer, Job, Quote, Invoice } from "@shared/schema";
+
+const editCustomerSchema = z.object({
+  name: z.string().trim().min(1, "Name is required"),
+  phone: z.string().optional().default(""),
+  email: z.union([z.string().email("Enter a valid email"), z.literal("")]).optional().default(""),
+  address: z.string().optional().default(""),
+  notes: z.string().optional().default(""),
+  smsOptOut: z.boolean().optional().default(false),
+});
 
 export default function CustomerDetail() {
   const { id } = useParams<{ id: string }>();
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const [showEdit, setShowEdit] = useState(false);
+  const [copiedPortal, setCopiedPortal] = useState(false);
+  const editForm = useForm<z.infer<typeof editCustomerSchema>>({
+    resolver: zodResolver(editCustomerSchema),
+    defaultValues: { name: "", phone: "", email: "", address: "", notes: "", smsOptOut: false },
+  });
 
   const { data: customer, isLoading } = useQuery<Customer>({
     queryKey: ["/api/customers", id],
@@ -52,6 +75,14 @@ export default function CustomerDetail() {
   });
   const customerQuotes = allQuotes.filter((q) => q.customerId === id);
 
+  useHotkey("e", () => {
+    openEdit();
+  }, { enabled: !showEdit });
+  usePageShortcuts([
+    { keys: "E", description: "Edit customer" },
+    { keys: "Esc", description: "Close dialog" },
+  ]);
+
   const updateMutation = useMutation({
     mutationFn: async (data: any) => {
       await apiRequest("PATCH", `/api/customers/${id}`, data);
@@ -61,6 +92,9 @@ export default function CustomerDetail() {
       queryClient.invalidateQueries({ queryKey: ["/api/customers"] });
       setShowEdit(false);
       toast({ title: "Customer updated" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Couldn't update customer", description: err.message || "Please try again.", variant: "destructive" });
     },
   });
 
@@ -73,6 +107,9 @@ export default function CustomerDetail() {
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
       navigate("/customers");
       toast({ title: "Customer deleted" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Couldn't delete customer", description: err.message || "Please try again.", variant: "destructive" });
     },
   });
 
@@ -89,16 +126,16 @@ export default function CustomerDetail() {
     return <div className="p-6 text-center text-muted-foreground">Customer not found</div>;
   }
 
-  const handleUpdate = (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const fd = new FormData(e.currentTarget);
-    updateMutation.mutate({
-      name: fd.get("name"),
-      phone: fd.get("phone") || "",
-      email: fd.get("email") || "",
-      address: fd.get("address") || "",
-      notes: fd.get("notes") || "",
+  const openEdit = () => {
+    editForm.reset({
+      name: customer?.name || "",
+      phone: customer?.phone || "",
+      email: customer?.email || "",
+      address: customer?.address || "",
+      notes: customer?.notes || "",
+      smsOptOut: !!customer?.smsOptOut,
     });
+    setShowEdit(true);
   };
 
   return (
@@ -112,7 +149,7 @@ export default function CustomerDetail() {
               <ArrowLeft className="h-4 w-4 mr-1" />
               Back
             </Button>
-            <Button variant="outline" size="sm" onClick={() => setShowEdit(true)} data-testid="button-edit-customer">
+            <Button variant="outline" size="sm" onClick={openEdit} data-testid="button-edit-customer">
               <Edit className="h-4 w-4 mr-1" />
               Edit
             </Button>
@@ -160,6 +197,21 @@ export default function CustomerDetail() {
           )}
         </div>
 
+        {customer.smsOptOut && (
+          <div
+            className="flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-900 px-3 py-2"
+            data-testid="status-sms-opt-out"
+          >
+            <MessageSquareOff className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" />
+            <p className="text-sm text-amber-900 dark:text-amber-200">
+              This customer has opted out of SMS reminders. No automated text messages will be sent.
+            </p>
+            <Badge variant="outline" className="ml-auto border-amber-400 text-amber-700 dark:text-amber-300">
+              SMS opt-out
+            </Badge>
+          </div>
+        )}
+
         <div className="flex gap-2 flex-wrap" data-testid="customer-quick-actions">
           <Button
             size="sm"
@@ -191,10 +243,36 @@ export default function CustomerDetail() {
             <Receipt className="h-3.5 w-3.5" />
             New Invoice
           </Button>
+          {(customer as any).portalToken && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5"
+              onClick={async () => {
+                const link = `${window.location.origin}/portal/${(customer as any).portalToken}`;
+                try {
+                  await navigator.clipboard.writeText(link);
+                  setCopiedPortal(true);
+                  toast({ title: "Portal link copied!", description: "Send this private link to your customer." });
+                  setTimeout(() => setCopiedPortal(false), 2000);
+                } catch {
+                  toast({ title: "Failed to copy link", variant: "destructive" });
+                }
+              }}
+              data-testid="button-copy-portal-link"
+            >
+              {copiedPortal ? <Check className="h-3.5 w-3.5 text-green-600" /> : <Link2 className="h-3.5 w-3.5" />}
+              {copiedPortal ? "Copied!" : "Copy Portal Link"}
+            </Button>
+          )}
         </div>
 
-        <Tabs defaultValue="overview">
+        <Tabs defaultValue="activity">
           <TabsList>
+            <TabsTrigger value="activity" data-testid="tab-customer-activity">
+              <Activity className="h-3.5 w-3.5 mr-1.5" />
+              Activity
+            </TabsTrigger>
             <TabsTrigger value="overview" data-testid="tab-customer-overview">
               Overview
             </TabsTrigger>
@@ -211,6 +289,10 @@ export default function CustomerDetail() {
               Notes
             </TabsTrigger>
           </TabsList>
+
+          <TabsContent value="activity" className="mt-4">
+            <CustomerActivityTimeline customerId={id!} />
+          </TabsContent>
 
           <TabsContent value="overview" className="mt-4">
             {(() => {
@@ -404,7 +486,7 @@ export default function CustomerDetail() {
                         size="sm"
                         variant="ghost"
                         className="h-6 px-2 ml-auto text-xs"
-                        onClick={() => setShowEdit(true)}
+                        onClick={openEdit}
                         data-testid="button-edit-notes"
                       >
                         <Edit className="h-3 w-3 mr-1" />
@@ -420,7 +502,7 @@ export default function CustomerDetail() {
                       size="sm"
                       variant="outline"
                       className="mt-3"
-                      onClick={() => setShowEdit(true)}
+                      onClick={openEdit}
                       data-testid="button-add-notes"
                     >
                       <Plus className="h-3.5 w-3.5 mr-1.5" />
@@ -439,36 +521,107 @@ export default function CustomerDetail() {
           <DialogHeader>
             <DialogTitle>Edit Customer</DialogTitle>
           </DialogHeader>
-          <form onSubmit={handleUpdate} className="space-y-4">
-            <div className="space-y-2">
-              <Label>Name</Label>
-              <Input name="name" defaultValue={customer.name} required data-testid="input-edit-customer-name" />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <Label>Phone</Label>
-                <Input name="phone" defaultValue={customer.phone || ""} data-testid="input-edit-customer-phone" />
+          <Form {...editForm}>
+            <form onSubmit={editForm.handleSubmit((data) => updateMutation.mutate(data))} className="space-y-4" noValidate>
+              <FormField
+                control={editForm.control}
+                name="name"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Name</FormLabel>
+                    <FormControl>
+                      <Input {...field} data-testid="input-edit-customer-name" />
+                    </FormControl>
+                    <FormMessage data-testid="error-edit-customer-name" />
+                  </FormItem>
+                )}
+              />
+              <div className="grid grid-cols-2 gap-3">
+                <FormField
+                  control={editForm.control}
+                  name="phone"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Phone</FormLabel>
+                      <FormControl>
+                        <Input {...field} data-testid="input-edit-customer-phone" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={editForm.control}
+                  name="email"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Email</FormLabel>
+                      <FormControl>
+                        <Input {...field} type="email" data-testid="input-edit-customer-email" />
+                      </FormControl>
+                      <FormMessage data-testid="error-edit-customer-email" />
+                    </FormItem>
+                  )}
+                />
               </div>
-              <div className="space-y-2">
-                <Label>Email</Label>
-                <Input name="email" type="email" defaultValue={customer.email || ""} data-testid="input-edit-customer-email" />
+              <FormField
+                control={editForm.control}
+                name="address"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Address</FormLabel>
+                    <FormControl>
+                      <Input {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={editForm.control}
+                name="notes"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Notes</FormLabel>
+                    <FormControl>
+                      <Textarea {...field} rows={3} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={editForm.control}
+                name="smsOptOut"
+                render={({ field }) => (
+                  <FormItem className="flex items-start gap-2 rounded-md border p-3 space-y-0">
+                    <FormControl>
+                      <Checkbox
+                        id="cust-sms-opt-out"
+                        checked={field.value}
+                        onCheckedChange={(v) => field.onChange(v === true)}
+                        data-testid="checkbox-sms-opt-out"
+                      />
+                    </FormControl>
+                    <div className="space-y-0.5">
+                      <Label htmlFor="cust-sms-opt-out" className="cursor-pointer">
+                        Do not send SMS reminders
+                      </Label>
+                      <p className="text-xs text-muted-foreground">
+                        Skip this customer for invoice reminders, quote follow-ups, and other automated text messages.
+                      </p>
+                    </div>
+                  </FormItem>
+                )}
+              />
+              <div className="flex justify-end gap-2">
+                <Button type="button" variant="outline" onClick={() => setShowEdit(false)}>Cancel</Button>
+                <Button type="submit" disabled={updateMutation.isPending} data-testid="button-update-customer">
+                  {updateMutation.isPending ? "Saving..." : "Save Changes"}
+                </Button>
               </div>
-            </div>
-            <div className="space-y-2">
-              <Label>Address</Label>
-              <Input name="address" defaultValue={customer.address || ""} />
-            </div>
-            <div className="space-y-2">
-              <Label>Notes</Label>
-              <Textarea name="notes" defaultValue={customer.notes || ""} rows={3} />
-            </div>
-            <div className="flex justify-end gap-2">
-              <Button type="button" variant="outline" onClick={() => setShowEdit(false)}>Cancel</Button>
-              <Button type="submit" disabled={updateMutation.isPending} data-testid="button-update-customer">
-                {updateMutation.isPending ? "Saving..." : "Save Changes"}
-              </Button>
-            </div>
-          </form>
+            </form>
+          </Form>
         </DialogContent>
       </Dialog>
     </div>

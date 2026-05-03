@@ -1,3 +1,8 @@
+import { errMsg } from "./errors";
+import { logger as rootLogger } from "./logger";
+
+const log = rootLogger.child({ component: "twilio" });
+
 let twilioCredentials: { accountSid: string; authToken: string; phoneNumber?: string } | null = null;
 
 async function getTwilioCredentials() {
@@ -33,8 +38,8 @@ async function getTwilioCredentials() {
         };
         return twilioCredentials;
       }
-    } catch (err: any) {
-      console.warn('Twilio connector not available:', err.message);
+    } catch (err) {
+      log.warn({ err, msg: errMsg(err) }, 'Twilio connector not available');
     }
   }
 
@@ -53,7 +58,7 @@ async function getTwilioCredentials() {
 export async function sendSMS(to: string, from: string, body: string): Promise<boolean> {
   const creds = await getTwilioCredentials();
   if (!creds) {
-    console.warn('Twilio not configured, SMS not sent. Would have sent to:', to, 'Body:', body);
+    log.warn({ to, bodyPreview: body.slice(0, 60) }, 'Twilio not configured, SMS not sent');
     return false;
   }
 
@@ -77,13 +82,13 @@ export async function sendSMS(to: string, from: string, body: string): Promise<b
 
     if (!response.ok) {
       const errText = await response.text();
-      console.error('Twilio SMS error:', errText);
+      log.error({ err: errText, to }, 'Twilio SMS error');
       return false;
     }
 
     return true;
-  } catch (err: any) {
-    console.error('Failed to send SMS:', err.message);
+  } catch (err) {
+    log.error({ err, msg: errMsg(err), to }, 'Failed to send SMS');
     return false;
   }
 }
@@ -102,18 +107,18 @@ export async function validateTwilioAccountSid(
   requestAccountSid: string | undefined
 ): Promise<boolean> {
   if (!requestAccountSid) {
-    console.warn('Twilio webhook missing AccountSid in request body');
+    log.warn('Twilio webhook missing AccountSid in request body');
     return false;
   }
 
   const creds = await getTwilioCredentials();
   if (!creds) {
-    console.warn('Twilio not configured — cannot validate AccountSid');
+    log.warn('Twilio not configured — cannot validate AccountSid');
     return false;
   }
 
   if (requestAccountSid !== creds.accountSid) {
-    console.warn(`Twilio AccountSid mismatch: request="${requestAccountSid}" expected="${creds.accountSid}"`);
+    log.warn({ request: requestAccountSid }, 'Twilio AccountSid mismatch');
     return false;
   }
 

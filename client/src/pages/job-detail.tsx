@@ -1,6 +1,9 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useParams, useLocation, Link } from "wouter";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
 import { PageHeader } from "@/components/page-header";
 import { StatusBadge } from "@/components/status-badge";
 import { MobileActionBar } from "@/components/mobile-action-bar";
@@ -8,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -47,10 +51,12 @@ import { useAuth } from "@/lib/auth";
 import { format, formatDistanceToNow } from "date-fns";
 import { JOB_STATUS_LABELS, JOB_PRIORITY_LABELS, RECURRING_FREQUENCY_LABELS } from "@shared/schema";
 import { Switch } from "@/components/ui/switch";
+import { useHotkey } from "@/hooks/use-hotkey";
+import { usePageShortcuts } from "@/components/shortcuts-help";
 import type { Job, Customer, JobEvent, ReviewRequest } from "@shared/schema";
 
 const EVENT_ICONS: Record<string, React.ReactNode> = {
-  created: <Circle className="h-3.5 w-3.5 text-blue-500" />,
+  created: <Circle className="h-3.5 w-3.5 text-primary" />,
   status_changed: <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />,
   updated: <Edit className="h-3.5 w-3.5 text-amber-500" />,
   note_added: <FileText className="h-3.5 w-3.5 text-purple-500" />,
@@ -61,6 +67,25 @@ const PRIORITY_STYLES: Record<string, string> = {
   normal: "bg-muted text-muted-foreground",
   low: "bg-muted text-muted-foreground",
 };
+
+const editJobSchema = z.object({
+  title: z.string().trim().min(1, "Title is required"),
+  description: z.string().optional().default(""),
+  customerId: z.string().optional().default(""),
+  priority: z.enum(["low", "normal", "urgent"]).default("normal"),
+  scheduledStart: z.string().optional().default(""),
+  scheduledEnd: z.string().optional().default(""),
+  internalNotes: z.string().optional().default(""),
+}).refine(
+  (data) => {
+    if (data.scheduledStart && data.scheduledEnd) {
+      return new Date(data.scheduledEnd) >= new Date(data.scheduledStart);
+    }
+    return true;
+  },
+  { message: "End time must be after start time", path: ["scheduledEnd"] }
+);
+type EditJobValues = z.infer<typeof editJobSchema>;
 
 function eventLabel(event: JobEvent): string {
   const type = event.type;
@@ -84,6 +109,10 @@ export default function JobDetail() {
   const [showStatusChange, setShowStatusChange] = useState(false);
   const [editIsRecurring, setEditIsRecurring] = useState(false);
   const [editRecurringFrequency, setEditRecurringFrequency] = useState("monthly");
+  const editForm = useForm<EditJobValues>({
+    resolver: zodResolver(editJobSchema),
+    defaultValues: { title: "", description: "", customerId: "", priority: "normal", scheduledStart: "", scheduledEnd: "", internalNotes: "" },
+  });
 
   const { data: job, isLoading } = useQuery<Job & { customerName?: string }>({
     queryKey: ["/api/jobs", id],
@@ -108,6 +137,12 @@ export default function JobDetail() {
     enabled: !!id,
   });
 
+  useHotkey("e", () => setShowEdit(true), { enabled: !showEdit });
+  usePageShortcuts([
+    { keys: "E", description: "Edit job" },
+    { keys: "Esc", description: "Close dialog" },
+  ]);
+
   const updateMutation = useMutation({
     mutationFn: async (data: any) => {
       await apiRequest("PATCH", `/api/jobs/${id}`, data);
@@ -120,6 +155,9 @@ export default function JobDetail() {
       setShowEdit(false);
       toast({ title: "Job updated" });
     },
+    onError: (err: any) => {
+      toast({ title: "Couldn't update job", description: err.message || "Please try again.", variant: "destructive" });
+    },
   });
 
   const deleteMutation = useMutation({
@@ -131,6 +169,26 @@ export default function JobDetail() {
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
       navigate("/jobs");
       toast({ title: "Job deleted" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Couldn't delete job", description: err.message || "Please try again.", variant: "destructive" });
+    },
+  });
+
+  const customer = customers.find((c) => c.id === job?.customerId);
+  const customerHasPhone = !!customer?.phone && customer.phone.trim().length >= 7;
+
+  const requestReviewMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("POST", "/api/review-requests", { jobId: id });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/review-requests/job", id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/review-requests/stats"] });
+      toast({ title: "Review request sent" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Could not send review request", description: err?.message || "Please try again", variant: "destructive" });
     },
   });
 
@@ -147,6 +205,9 @@ export default function JobDetail() {
       queryClient.invalidateQueries({ queryKey: ["/api/review-requests/stats"] });
       toast({ title: "Status updated" });
     },
+    onError: (err: any) => {
+      toast({ title: "Couldn't change status", description: err.message || "Please try again.", variant: "destructive" });
+    },
   });
 
   if (isLoading) {
@@ -162,17 +223,15 @@ export default function JobDetail() {
     return <div className="p-6 text-center text-muted-foreground">Job not found</div>;
   }
 
-  const handleUpdate = (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const fd = new FormData(e.currentTarget);
+  const handleUpdate = (data: EditJobValues) => {
     updateMutation.mutate({
-      title: fd.get("title"),
-      description: fd.get("description") || "",
-      customerId: fd.get("customerId") || null,
-      priority: fd.get("priority") || "normal",
-      scheduledStart: fd.get("scheduledStart") || null,
-      scheduledEnd: fd.get("scheduledEnd") || null,
-      internalNotes: fd.get("internalNotes") || "",
+      title: data.title,
+      description: data.description || "",
+      customerId: data.customerId || null,
+      priority: data.priority || "normal",
+      scheduledStart: data.scheduledStart || null,
+      scheduledEnd: data.scheduledEnd || null,
+      internalNotes: data.internalNotes || "",
       isRecurring: canUseRecurring ? editIsRecurring : job?.isRecurring ?? false,
       recurringFrequency: canUseRecurring && editIsRecurring ? editRecurringFrequency : null,
     });
@@ -181,6 +240,15 @@ export default function JobDetail() {
   const openEditDialog = () => {
     setEditIsRecurring(job?.isRecurring ?? false);
     setEditRecurringFrequency(job?.recurringFrequency || "monthly");
+    editForm.reset({
+      title: job?.title || "",
+      description: job?.description || "",
+      customerId: job?.customerId || "",
+      priority: (job?.priority as any) || "normal",
+      scheduledStart: job?.scheduledStart ? format(new Date(job.scheduledStart), "yyyy-MM-dd'T'HH:mm") : "",
+      scheduledEnd: job?.scheduledEnd ? format(new Date(job.scheduledEnd), "yyyy-MM-dd'T'HH:mm") : "",
+      internalNotes: job?.internalNotes || "",
+    });
     setShowEdit(true);
   };
 
@@ -238,7 +306,7 @@ export default function JobDetail() {
                       </SelectContent>
                     </Select>
                   </div>
-                  {reviewRequest && (
+                  {reviewRequest ? (
                     <div>
                       <p className="text-xs text-muted-foreground mb-1">Review</p>
                       <Badge
@@ -250,7 +318,22 @@ export default function JobDetail() {
                         Review Requested
                       </Badge>
                     </div>
-                  )}
+                  ) : customerHasPhone ? (
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-1">Review</p>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="gap-1.5"
+                        onClick={() => requestReviewMutation.mutate()}
+                        disabled={requestReviewMutation.isPending}
+                        data-testid="button-request-review"
+                      >
+                        <Star className="h-3.5 w-3.5" />
+                        {requestReviewMutation.isPending ? "Sending..." : "Request Review"}
+                      </Button>
+                    </div>
+                  ) : null}
                   <div>
                     <p className="text-xs text-muted-foreground mb-1">Priority</p>
                     <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium gap-1 ${PRIORITY_STYLES[job.priority || "normal"]}`}>
@@ -261,7 +344,7 @@ export default function JobDetail() {
                   {job.isRecurring && (
                     <div>
                       <p className="text-xs text-muted-foreground mb-1">Recurring</p>
-                      <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 px-2.5 py-1 text-xs font-medium" data-testid="badge-recurring-detail">
+                      <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 dark:bg-primary/20 text-primary px-2.5 py-1 text-xs font-medium" data-testid="badge-recurring-detail">
                         <RefreshCw className="h-3 w-3" />
                         {job.recurringFrequency ? RECURRING_FREQUENCY_LABELS[job.recurringFrequency] || "Recurring" : "Recurring"}
                       </span>
@@ -450,65 +533,119 @@ export default function JobDetail() {
           <DialogHeader>
             <DialogTitle>Edit Job</DialogTitle>
           </DialogHeader>
-          <form onSubmit={handleUpdate} className="space-y-4">
-            <div className="space-y-2">
-              <Label>Title</Label>
-              <Input name="title" defaultValue={job.title} required data-testid="input-edit-job-title" />
-            </div>
+          <Form {...editForm}>
+          <form onSubmit={editForm.handleSubmit(handleUpdate)} className="space-y-4" noValidate>
+            <FormField
+              control={editForm.control}
+              name="title"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Title</FormLabel>
+                  <FormControl>
+                    <Input {...field} data-testid="input-edit-job-title" />
+                  </FormControl>
+                  <FormMessage data-testid="error-edit-job-title" />
+                </FormItem>
+              )}
+            />
             <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <Label>Customer</Label>
-                <select
-                  name="customerId"
-                  defaultValue={job.customerId || ""}
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                >
-                  <option value="">No customer</option>
-                  {customers.map((c) => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="space-y-2">
-                <Label>Priority</Label>
-                <select
-                  name="priority"
-                  defaultValue={job.priority || "normal"}
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                  data-testid="select-edit-job-priority"
-                >
-                  <option value="low">Low</option>
-                  <option value="normal">Normal</option>
-                  <option value="urgent">Urgent</option>
-                </select>
-              </div>
+              <FormField
+                control={editForm.control}
+                name="customerId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Customer</FormLabel>
+                    <FormControl>
+                      <select
+                        {...field}
+                        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      >
+                        <option value="">No customer</option>
+                        {customers.map((c) => (
+                          <option key={c.id} value={c.id}>{c.name}</option>
+                        ))}
+                      </select>
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={editForm.control}
+                name="priority"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Priority</FormLabel>
+                    <FormControl>
+                      <select
+                        {...field}
+                        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                        data-testid="select-edit-job-priority"
+                      >
+                        <option value="low">Low</option>
+                        <option value="normal">Normal</option>
+                        <option value="urgent">Urgent</option>
+                      </select>
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
             </div>
-            <div className="space-y-2">
-              <Label>Description</Label>
-              <Textarea name="description" defaultValue={job.description || ""} rows={3} />
-            </div>
+            <FormField
+              control={editForm.control}
+              name="description"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Description</FormLabel>
+                  <FormControl>
+                    <Textarea {...field} rows={3} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
             <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <Label>Start</Label>
-                <Input
-                  name="scheduledStart"
-                  type="datetime-local"
-                  defaultValue={job.scheduledStart ? format(new Date(job.scheduledStart), "yyyy-MM-dd'T'HH:mm") : ""}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>End</Label>
-                <Input
-                  name="scheduledEnd"
-                  type="datetime-local"
-                  defaultValue={job.scheduledEnd ? format(new Date(job.scheduledEnd), "yyyy-MM-dd'T'HH:mm") : ""}
-                />
-              </div>
+              <FormField
+                control={editForm.control}
+                name="scheduledStart"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Start</FormLabel>
+                    <FormControl>
+                      <Input {...field} type="datetime-local" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={editForm.control}
+                name="scheduledEnd"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>End</FormLabel>
+                    <FormControl>
+                      <Input {...field} type="datetime-local" />
+                    </FormControl>
+                    <FormMessage data-testid="error-edit-job-end" />
+                  </FormItem>
+                )}
+              />
             </div>
-            <div className="space-y-2">
-              <Label>Internal Notes</Label>
-              <Textarea name="internalNotes" defaultValue={job.internalNotes || ""} rows={2} />
-            </div>
+            <FormField
+              control={editForm.control}
+              name="internalNotes"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Internal Notes</FormLabel>
+                  <FormControl>
+                    <Textarea {...field} rows={2} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
             {canUseRecurring && (
               <div className="space-y-3 rounded-lg border p-3 bg-muted/30">
                 <div className="flex items-center justify-between">
@@ -546,6 +683,7 @@ export default function JobDetail() {
               </Button>
             </div>
           </form>
+          </Form>
         </DialogContent>
       </Dialog>
 

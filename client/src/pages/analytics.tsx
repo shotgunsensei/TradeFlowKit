@@ -30,6 +30,7 @@ import {
   Clock,
   Repeat,
   Timer,
+  CreditCard,
 } from "lucide-react";
 
 interface QuoteAnalytics {
@@ -54,7 +55,13 @@ interface InvoiceAnalytics {
   overdueValue: number;
   collectionRate: number;
   avgDaysToPayment: number;
-  weekly: { week: string; revenue: number }[];
+  avgDaysSentToPaid: number;
+  stripeCollected: number;
+  stripePaidCount: number;
+  stripeCollectedThisMonth: number;
+  avgDaysToPaymentStripe: number;
+  avgDaysToPaymentManual: number;
+  weekly: { week: string; revenue: number; stripeRevenue: number; manualRevenue: number }[];
   aging: { bucket: string; count: number; value: number }[];
 }
 
@@ -248,7 +255,11 @@ function InvoicesTab() {
   const weeklyData = data.weekly.map((w) => ({
     week: format(parseISO(String(w.week)), "MMM d"),
     Revenue: w.revenue,
+    Stripe: w.stripeRevenue,
+    Manual: w.manualRevenue,
   }));
+
+  const hasStripe = data.weekly.some((w) => w.stripeRevenue > 0);
 
   const agingData = data.aging
     .filter((a) => a.bucket !== "no_due_date" && a.bucket !== "current")
@@ -271,10 +282,45 @@ function InvoicesTab() {
         <StatCard icon={DollarSign} label="Revenue Collected" value={fmt(data.collected)} />
         <StatCard
           icon={Timer}
-          label="Avg. Days to Payment"
-          value={data.avgDaysToPayment > 0 ? `${data.avgDaysToPayment}d` : "—"}
-          sub="for paid invoices"
-          color={data.avgDaysToPayment > 0 && data.avgDaysToPayment <= 30 ? "text-green-600" : data.avgDaysToPayment > 60 ? "text-red-600" : "text-foreground"}
+          label="Time to Pay"
+          value={data.avgDaysSentToPaid > 0 ? `${data.avgDaysSentToPaid}d` : "—"}
+          sub="avg invoice sent → paid"
+          color={data.avgDaysSentToPaid > 0 && data.avgDaysSentToPaid <= 30 ? "text-green-600" : data.avgDaysSentToPaid > 60 ? "text-red-600" : "text-foreground"}
+        />
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div data-testid="card-stripe-this-month">
+          <StatCard
+            icon={CreditCard}
+            label="Card Payments (This Month)"
+            value={fmt(data.stripeCollectedThisMonth)}
+            sub="paid via Stripe"
+            color="text-violet-600"
+          />
+        </div>
+        <div data-testid="card-stripe-total">
+          <StatCard
+            icon={CreditCard}
+            label="Card Payments (All Time)"
+            value={fmt(data.stripeCollected)}
+            sub={`${data.stripePaidCount} invoice${data.stripePaidCount !== 1 ? "s" : ""}`}
+            color="text-violet-600"
+          />
+        </div>
+        <StatCard
+          icon={Timer}
+          label="Time to Pay (Card)"
+          value={data.avgDaysToPaymentStripe > 0 ? `${data.avgDaysToPaymentStripe}d` : "—"}
+          sub="Stripe-paid invoices"
+          color={data.avgDaysToPaymentStripe > 0 && data.avgDaysToPaymentStripe <= 7 ? "text-green-600" : "text-foreground"}
+        />
+        <StatCard
+          icon={Timer}
+          label="Time to Pay (Manual)"
+          value={data.avgDaysToPaymentManual > 0 ? `${data.avgDaysToPaymentManual}d` : "—"}
+          sub="manually-marked paid"
+          color="text-foreground"
         />
       </div>
 
@@ -291,10 +337,25 @@ function InvoicesTab() {
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Weekly Revenue (12 weeks)</CardTitle>
+            {hasStripe && (
+              <CardDescription>Stripe (card) vs. manually-marked paid</CardDescription>
+            )}
           </CardHeader>
           <CardContent>
             {weeklyData.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-8">No paid invoices yet</p>
+            ) : hasStripe ? (
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={weeklyData} barSize={14}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                  <XAxis dataKey="week" tick={{ fontSize: 11 }} />
+                  <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
+                  <Tooltip formatter={(v: number, name) => [fmt(v), name]} />
+                  <Legend />
+                  <Bar dataKey="Stripe" stackId="rev" fill="#8b5cf6" radius={[0, 0, 0, 0]} />
+                  <Bar dataKey="Manual" stackId="rev" fill="#22c55e" radius={[2, 2, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
             ) : (
               <ResponsiveContainer width="100%" height={220}>
                 <LineChart data={weeklyData}>

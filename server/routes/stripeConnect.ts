@@ -1,8 +1,12 @@
+import { errMsg } from "../errors";
 import { Router, type Request, type Response } from "express";
 import { storage } from "../storage";
 import { requireAuth, requireOrg } from "../middleware";
 import { getUncachableStripeClient } from "../stripeClient";
 import { randomBytes } from "crypto";
+import { logger as rootLogger } from "../logger";
+
+const log = rootLogger.child({ component: "stripe-connect" });
 
 declare module "express-session" {
   interface SessionData {
@@ -46,8 +50,8 @@ router.get("/api/stripe/connect/authorize", requireAuth, requireOrg, async (req:
 
     const url = `https://connect.stripe.com/oauth/authorize?${params.toString()}`;
     res.json({ url });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
+  } catch (err) {
+    res.status(500).json({ error: errMsg(err) });
   }
 });
 
@@ -61,7 +65,7 @@ router.get("/api/stripe/connect/callback", async (req: Request, res: Response) =
     const { code, state, error } = req.query as Record<string, string>;
 
     if (error) {
-      console.warn("[stripe-connect] OAuth error:", error);
+      log.warn({ err: error }, "OAuth error");
       return res.redirect(`${baseUrl}/settings?tab=payments&error=${encodeURIComponent(error)}`);
     }
 
@@ -71,7 +75,7 @@ router.get("/api/stripe/connect/callback", async (req: Request, res: Response) =
 
     const pendingState = req.session.stripeConnectState;
     if (!pendingState || pendingState.nonce !== state) {
-      console.warn("[stripe-connect] state mismatch — potential CSRF attempt");
+      log.warn("state mismatch — potential CSRF attempt");
       return res.redirect(`${baseUrl}/settings?tab=payments&error=invalid_state`);
     }
 
@@ -96,11 +100,11 @@ router.get("/api/stripe/connect/callback", async (req: Request, res: Response) =
       stripeConnectOnboarded: true,
     });
 
-    console.log(`[stripe-connect] org ${orgId} connected account ${connectedAccountId}`);
+    log.info({ orgId, connectedAccountId }, "org connected Stripe account");
     res.redirect(`${baseUrl}/settings?tab=payments&connected=true`);
-  } catch (err: any) {
-    console.error("[stripe-connect] callback error:", err.message);
-    res.redirect(`${baseUrl}/settings?tab=payments&error=${encodeURIComponent(err.message)}`);
+  } catch (err) {
+    log.error({ err, msg: errMsg(err) }, "callback error");
+    res.redirect(`${baseUrl}/settings?tab=payments&error=${encodeURIComponent(errMsg(err))}`);
   }
 });
 
@@ -111,8 +115,8 @@ router.delete("/api/stripe/connect", requireAuth, requireOrg, async (req: Reques
       stripeConnectOnboarded: false,
     });
     res.json({ ok: true });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
+  } catch (err) {
+    res.status(500).json({ error: errMsg(err) });
   }
 });
 

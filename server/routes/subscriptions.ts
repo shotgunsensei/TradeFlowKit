@@ -1,3 +1,4 @@
+import { errMsg } from "../errors";
 import { Router, type Request, type Response } from "express";
 import { storage } from "../storage";
 import { requireAuth, requireOrg } from "../middleware";
@@ -11,8 +12,8 @@ router.get("/api/stripe/publishable-key", requireAuth, async (_req: Request, res
   try {
     const key = await getStripePublishableKey();
     res.json({ publishableKey: key });
-  } catch (err: any) {
-    res.status(500).send(err.message);
+  } catch (err) {
+    res.status(500).send(errMsg(err));
   }
 });
 
@@ -34,8 +35,8 @@ router.get("/api/stripe/plans", requireAuth, async (_req: Request, res: Response
       ORDER BY pr.unit_amount ASC
     `);
     res.json(result.rows);
-  } catch (err: any) {
-    res.status(500).send(err.message);
+  } catch (err) {
+    res.status(500).send(errMsg(err));
   }
 });
 
@@ -80,8 +81,8 @@ router.post("/api/stripe/create-checkout", requireAuth, requireOrg, async (req: 
     );
 
     res.json({ url: session.url });
-  } catch (err: any) {
-    res.status(500).send(err.message);
+  } catch (err) {
+    res.status(500).send(errMsg(err));
   }
 });
 
@@ -101,8 +102,8 @@ router.post("/api/stripe/create-portal", requireAuth, requireOrg, async (req: Re
     );
 
     res.json({ url: portalSession.url });
-  } catch (err: any) {
-    res.status(500).send(err.message);
+  } catch (err) {
+    res.status(500).send(errMsg(err));
   }
 });
 

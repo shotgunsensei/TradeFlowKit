@@ -116,7 +116,7 @@ function JobCard({ job, members }: JobCardProps) {
 
       {job.isRecurring && (
         <div className="flex items-center gap-1" data-testid={`badge-recurring-${job.id}`}>
-          <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 px-1.5 py-0.5 text-[10px] font-medium">
+          <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 dark:bg-primary/20 text-primary dark:text-primary px-1.5 py-0.5 text-[10px] font-medium">
             <RefreshCw className="h-2.5 w-2.5" />
             {job.recurringFrequency ? RECURRING_FREQUENCY_LABELS[job.recurringFrequency] || "Recurring" : "Recurring"}
           </span>

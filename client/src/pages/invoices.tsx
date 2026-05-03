@@ -1,6 +1,21 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import { useRowSelection } from "@/hooks/use-row-selection";
+import { BulkActionBar } from "@/components/bulk-action-bar";
+import { toCSV, downloadCSV } from "@/lib/csv";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { PageHeader } from "@/components/page-header";
 import { DataTable } from "@/components/data-table";
 import { EmptyState } from "@/components/empty-state";
@@ -14,7 +29,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, Receipt, Search, Filter, Download, AlertTriangle, CreditCard } from "lucide-react";
+import { Plus, Receipt, Search, Filter, Download, Upload, AlertTriangle, CreditCard, Trash2, CheckCircle2 } from "lucide-react";
+import { CsvImportDialog } from "@/components/csv-import-dialog";
 import { format, differenceInDays } from "date-fns";
 import type { Invoice, Customer } from "@shared/schema";
 
@@ -54,6 +70,9 @@ export default function InvoicesPage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [customerFilter, setCustomerFilter] = useState("all");
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
+  const [showImport, setShowImport] = useState(false);
+  const { toast } = useToast();
 
   const { data: invoices = [], isLoading } = useQuery<(Invoice & { customerName?: string; total?: number })[]>({
     queryKey: ["/api/invoices"],
@@ -71,6 +90,55 @@ export default function InvoicesPage() {
     const matchesCustomer = customerFilter === "all" || inv.customerId === customerFilter;
     return matchesSearch && matchesStatus && matchesCustomer;
   });
+
+  const selection = useRowSelection(filtered);
+
+  const bulkDeleteMutation = useMutation({
+    mutationFn: async (ids: string[]) => {
+      const res = await apiRequest("POST", "/api/invoices/bulk-delete", { ids });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
+      toast({ title: `${data.updated} invoice${data.updated !== 1 ? "s" : ""} deleted` });
+      selection.clear();
+      setConfirmBulkDelete(false);
+    },
+    onError: (err: Error) => {
+      toast({ title: "Delete failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const bulkMarkPaidMutation = useMutation({
+    mutationFn: async (ids: string[]) => {
+      const res = await apiRequest("POST", "/api/invoices/bulk-mark-paid", { ids });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
+      toast({ title: `${data.updated} invoice${data.updated !== 1 ? "s" : ""} marked as paid` });
+      selection.clear();
+    },
+    onError: (err: Error) => {
+      toast({ title: "Update failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const handleExportInvoices = () => {
+    const items = selection.selectedItems.length > 0 ? selection.selectedItems : filtered;
+    const csv = toCSV(items, [
+      { header: "Invoice #", value: (inv) => inv.id.slice(0, 8).toUpperCase() },
+      { header: "Customer", value: (inv) => inv.customerName || "" },
+      { header: "Status", value: (inv) => inv.status },
+      { header: "Total", value: (inv) => (inv.total || 0).toFixed(2) },
+      { header: "Due Date", value: (inv) => inv.dueDate ? format(new Date(inv.dueDate), "yyyy-MM-dd") : "" },
+      { header: "Created", value: (inv) => inv.createdAt ? format(new Date(inv.createdAt), "yyyy-MM-dd") : "" },
+    ]);
+    downloadCSV(`invoices-${new Date().toISOString().slice(0, 10)}.csv`, csv);
+    toast({ title: `Exported ${items.length} invoice${items.length !== 1 ? "s" : ""}` });
+  };
 
   const outstandingTotal = invoices
     .filter((inv) => inv.status !== "paid" && inv.status !== "void")
@@ -95,7 +163,7 @@ export default function InvoicesPage() {
           <div className="flex items-center gap-1.5">
             <StatusBadge status={inv.status} type="invoice" />
             {(inv as any).paidViaStripe && (
-              <CreditCard className="h-3.5 w-3.5 text-blue-500" aria-label="Paid via card" />
+              <CreditCard className="h-3.5 w-3.5 text-primary" aria-label="Paid via card" />
             )}
           </div>
           <AgingBadge dueDate={inv.dueDate} status={inv.status} />
@@ -143,11 +211,24 @@ export default function InvoicesPage() {
             <Button
               size="sm"
               variant="outline"
+              onClick={handleExportInvoices}
+              data-testid="button-export-invoices"
+            >
+              <Download className="h-4 w-4 mr-1" />
+              Export
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
               onClick={() => { window.location.href = "/api/invoices/export/quickbooks"; }}
               data-testid="button-export-quickbooks"
             >
               <Download className="h-4 w-4 mr-1" />
-              Export
+              QuickBooks
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => setShowImport(true)} data-testid="button-import-invoices">
+              <Upload className="h-4 w-4 mr-1" />
+              Import
             </Button>
             <Button size="sm" onClick={() => navigate("/invoices/new")} data-testid="button-add-invoice">
               <Plus className="h-4 w-4 mr-1" />
@@ -213,6 +294,7 @@ export default function InvoicesPage() {
           onRowClick={(inv) => navigate(`/invoices/${inv.id}`)}
           testIdPrefix="invoice-row"
           rowClassName={statusRowClass}
+          selection={selection}
           emptyState={
             <EmptyState
               icon={Receipt}
@@ -223,7 +305,96 @@ export default function InvoicesPage() {
             />
           }
         />
+
+        <BulkActionBar count={selection.selectedCount} onClear={selection.clear}>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => bulkMarkPaidMutation.mutate(selection.selected)}
+            disabled={bulkMarkPaidMutation.isPending}
+            data-testid="button-bulk-mark-paid"
+          >
+            <CheckCircle2 className="h-4 w-4 mr-1" />
+            Mark as Paid
+          </Button>
+          <Button size="sm" variant="outline" onClick={handleExportInvoices} data-testid="button-bulk-export-invoices">
+            <Download className="h-4 w-4 mr-1" />
+            Export CSV
+          </Button>
+          <Button
+            size="sm"
+            variant="destructive"
+            onClick={() => setConfirmBulkDelete(true)}
+            data-testid="button-bulk-delete-invoices"
+          >
+            <Trash2 className="h-4 w-4 mr-1" />
+            Delete
+          </Button>
+        </BulkActionBar>
       </div>
+
+      <CsvImportDialog
+        open={showImport}
+        onOpenChange={setShowImport}
+        title="Import Invoices from CSV"
+        description="Customers must already exist; rows are matched by customer name. Use Invoice Ref to group multiple line item rows into one invoice."
+        resourceLabel="invoice"
+        templateFilename="invoices-template.csv"
+        templateExampleRow={[
+          "INV-1001",
+          "John Smith",
+          "draft",
+          "2026-06-01",
+          "8.5",
+          "0",
+          "Thanks for your business",
+          "Labor",
+          "2",
+          "75.00",
+        ]}
+        fields={[
+          { key: "invoiceRef", label: "Invoice Ref", aliases: ["invoiceno", "invoicenumber", "ref"] },
+          { key: "customerName", label: "Customer", aliases: ["customer", "client", "clientname"] },
+          { key: "status", label: "Status" },
+          { key: "dueDate", label: "Due Date", aliases: ["due"] },
+          { key: "taxRate", label: "Tax Rate %", aliases: ["tax", "taxpercent"] },
+          { key: "discount", label: "Discount", aliases: ["discountamount"] },
+          { key: "notes", label: "Notes" },
+          { key: "itemDescription", label: "Item Description", aliases: ["description", "item", "lineitem"] },
+          { key: "itemQty", label: "Item Qty", aliases: ["qty", "quantity"] },
+          { key: "itemUnitPrice", label: "Item Unit Price", aliases: ["unitprice", "price", "rate"] },
+        ]}
+        onImport={async (rows) => {
+          const res = await apiRequest("POST", "/api/invoices/import", { invoices: rows });
+          return res.json();
+        }}
+        onImported={() => {
+          queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
+        }}
+      />
+
+      <AlertDialog open={confirmBulkDelete} onOpenChange={setConfirmBulkDelete}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {selection.selectedCount} invoice{selection.selectedCount !== 1 ? "s" : ""}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently remove the selected invoices and their line items. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="button-bulk-delete-invoices-cancel">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => bulkDeleteMutation.mutate(selection.selected)}
+              disabled={bulkDeleteMutation.isPending}
+              data-testid="button-bulk-delete-invoices-confirm"
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {bulkDeleteMutation.isPending ? "Deleting..." : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

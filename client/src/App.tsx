@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react";
 import { Switch, Route } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -5,33 +6,49 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
+import { MobileBottomNav } from "@/components/mobile-bottom-nav";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import NotFound from "@/pages/not-found";
 import AuthPage from "@/pages/auth-page";
 import OrgSetup from "@/pages/org-setup";
-import Dashboard from "@/pages/dashboard";
-import CustomersPage from "@/pages/customers";
-import CustomerDetail from "@/pages/customer-detail";
-import JobsPage from "@/pages/jobs";
-import JobDetail from "@/pages/job-detail";
-import QuotesPage from "@/pages/quotes";
-import QuoteForm from "@/pages/quote-form";
-import QuoteDetail from "@/pages/quote-detail";
-import QuoteView from "@/pages/quote-view";
-import InvoicesPage from "@/pages/invoices";
-import InvoiceForm from "@/pages/invoice-form";
-import InvoiceDetail from "@/pages/invoice-detail";
-import InvoicePayPage from "@/pages/invoice-pay";
-import SettingsPage from "@/pages/settings";
-import SubscriptionPage from "@/pages/subscription";
-import AdminPage from "@/pages/admin";
-import PrivacyPage from "@/pages/privacy";
-import DeleteAccountPage from "@/pages/delete-account";
-import CallRecoveryPage from "@/pages/call-recovery";
-import AnalyticsPage from "@/pages/analytics";
-import SmsConsentPage from "@/pages/sms-consent";
-import GuidePage from "@/pages/guide";
 import { Skeleton } from "@/components/ui/skeleton";
+import { CommandPalette } from "@/components/command-palette";
+import { ShortcutsHelpProvider } from "@/components/shortcuts-help";
+
+const Dashboard = lazy(() => import("@/pages/dashboard"));
+const CustomersPage = lazy(() => import("@/pages/customers"));
+const JobsPage = lazy(() => import("@/pages/jobs"));
+const QuotesPage = lazy(() => import("@/pages/quotes"));
+const InvoicesPage = lazy(() => import("@/pages/invoices"));
+const CustomerDetail = lazy(() => import("@/pages/customer-detail"));
+const JobDetail = lazy(() => import("@/pages/job-detail"));
+const QuoteForm = lazy(() => import("@/pages/quote-form"));
+const QuoteDetail = lazy(() => import("@/pages/quote-detail"));
+const QuoteView = lazy(() => import("@/pages/quote-view"));
+const InvoiceForm = lazy(() => import("@/pages/invoice-form"));
+const InvoiceDetail = lazy(() => import("@/pages/invoice-detail"));
+const InvoicePayPage = lazy(() => import("@/pages/invoice-pay"));
+const SettingsPage = lazy(() => import("@/pages/settings"));
+const SubscriptionPage = lazy(() => import("@/pages/subscription"));
+const AdminPage = lazy(() => import("@/pages/admin"));
+const PrivacyPage = lazy(() => import("@/pages/privacy"));
+const TermsPage = lazy(() => import("@/pages/terms"));
+const DeleteAccountPage = lazy(() => import("@/pages/delete-account"));
+const CallRecoveryPage = lazy(() => import("@/pages/call-recovery"));
+const AnalyticsPage = lazy(() => import("@/pages/analytics"));
+const SmsConsentPage = lazy(() => import("@/pages/sms-consent"));
+const GuidePage = lazy(() => import("@/pages/guide"));
+const CustomerPortalPage = lazy(() => import("@/pages/customer-portal"));
+
+function RouteFallback() {
+  return (
+    <div className="p-6 space-y-4">
+      <Skeleton className="h-8 w-48" />
+      <Skeleton className="h-32 w-full" />
+      <Skeleton className="h-32 w-full" />
+    </div>
+  );
+}
 
 function AppContent() {
   const { user, org, isLoading } = useAuth();
@@ -50,15 +67,19 @@ function AppContent() {
 
   if (!user) {
     return (
-      <Switch>
-        <Route path="/privacy" component={PrivacyPage} />
-        <Route path="/sms-consent" component={SmsConsentPage} />
-        <Route path="/guide" component={GuidePage} />
-        <Route path="/delete-account" component={DeleteAccountPage} />
-        <Route path="/quotes/:id/view" component={QuoteView} />
-        <Route path="/invoices/:id/pay" component={InvoicePayPage} />
-        <Route><AuthPage /></Route>
-      </Switch>
+      <Suspense fallback={<RouteFallback />}>
+        <Switch>
+          <Route path="/privacy" component={PrivacyPage} />
+          <Route path="/terms" component={TermsPage} />
+          <Route path="/sms-consent" component={SmsConsentPage} />
+          <Route path="/guide" component={GuidePage} />
+          <Route path="/delete-account" component={DeleteAccountPage} />
+          <Route path="/quotes/:id/view" component={QuoteView} />
+          <Route path="/invoices/:id/pay" component={InvoicePayPage} />
+          <Route path="/portal/:token" component={CustomerPortalPage} />
+          <Route><AuthPage /></Route>
+        </Switch>
+      </Suspense>
     );
   }
 
@@ -72,41 +93,49 @@ function AppContent() {
   };
 
   return (
-    <SidebarProvider style={sidebarStyle as React.CSSProperties}>
-      <div className="flex h-screen w-full">
-        <AppSidebar />
-        <main className="flex-1 flex flex-col overflow-hidden">
-          <Switch>
-            <Route path="/" component={Dashboard} />
-            <Route path="/dashboard" component={Dashboard} />
-            <Route path="/customers" component={CustomersPage} />
-            <Route path="/customers/:id" component={CustomerDetail} />
-            <Route path="/jobs" component={JobsPage} />
-            <Route path="/jobs/:id" component={JobDetail} />
-            <Route path="/quotes" component={QuotesPage} />
-            <Route path="/quotes/new" component={QuoteForm} />
-            <Route path="/quotes/:id/view" component={QuoteView} />
-            <Route path="/quotes/:id/edit" component={QuoteForm} />
-            <Route path="/quotes/:id" component={QuoteDetail} />
-            <Route path="/invoices" component={InvoicesPage} />
-            <Route path="/invoices/new" component={InvoiceForm} />
-            <Route path="/invoices/:id/pay" component={InvoicePayPage} />
-            <Route path="/invoices/:id/edit" component={InvoiceForm} />
-            <Route path="/invoices/:id" component={InvoiceDetail} />
-            <Route path="/settings" component={SettingsPage} />
-            <Route path="/subscription" component={SubscriptionPage} />
-            <Route path="/analytics" component={AnalyticsPage} />
-            <Route path="/call-recovery" component={CallRecoveryPage} />
-            <Route path="/admin" component={AdminPage} />
-            <Route path="/guide" component={GuidePage} />
-            <Route path="/privacy" component={PrivacyPage} />
-            <Route path="/sms-consent" component={SmsConsentPage} />
-            <Route path="/delete-account" component={DeleteAccountPage} />
-            <Route component={NotFound} />
-          </Switch>
-        </main>
-      </div>
-    </SidebarProvider>
+    <ShortcutsHelpProvider>
+      <CommandPalette />
+      <SidebarProvider style={sidebarStyle as React.CSSProperties}>
+        <div className="flex h-screen w-full">
+          <AppSidebar />
+          <main className="flex-1 flex flex-col overflow-hidden pb-14 md:pb-0">
+            <Suspense fallback={<RouteFallback />}>
+              <Switch>
+                <Route path="/" component={Dashboard} />
+                <Route path="/dashboard" component={Dashboard} />
+                <Route path="/customers" component={CustomersPage} />
+                <Route path="/customers/:id" component={CustomerDetail} />
+                <Route path="/jobs" component={JobsPage} />
+                <Route path="/jobs/:id" component={JobDetail} />
+                <Route path="/quotes" component={QuotesPage} />
+                <Route path="/quotes/new" component={QuoteForm} />
+                <Route path="/quotes/:id/view" component={QuoteView} />
+                <Route path="/quotes/:id/edit" component={QuoteForm} />
+                <Route path="/quotes/:id" component={QuoteDetail} />
+                <Route path="/invoices" component={InvoicesPage} />
+                <Route path="/invoices/new" component={InvoiceForm} />
+                <Route path="/invoices/:id/pay" component={InvoicePayPage} />
+                <Route path="/invoices/:id/edit" component={InvoiceForm} />
+                <Route path="/invoices/:id" component={InvoiceDetail} />
+                <Route path="/settings" component={SettingsPage} />
+                <Route path="/subscription" component={SubscriptionPage} />
+                <Route path="/analytics" component={AnalyticsPage} />
+                <Route path="/call-recovery" component={CallRecoveryPage} />
+                <Route path="/admin" component={AdminPage} />
+                <Route path="/guide" component={GuidePage} />
+                <Route path="/privacy" component={PrivacyPage} />
+                <Route path="/terms" component={TermsPage} />
+                <Route path="/sms-consent" component={SmsConsentPage} />
+                <Route path="/delete-account" component={DeleteAccountPage} />
+                <Route path="/portal/:token" component={CustomerPortalPage} />
+                <Route component={NotFound} />
+              </Switch>
+            </Suspense>
+          </main>
+          <MobileBottomNav />
+        </div>
+      </SidebarProvider>
+    </ShortcutsHelpProvider>
   );
 }
 

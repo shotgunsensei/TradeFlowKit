@@ -1,6 +1,9 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
 import { PageHeader } from "@/components/page-header";
 import { DataTable } from "@/components/data-table";
 import { EmptyState } from "@/components/empty-state";
@@ -12,6 +15,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import {
   Dialog,
   DialogContent,
@@ -25,13 +29,46 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, Wrench, Search, Filter, LayoutGrid, List, RefreshCw } from "lucide-react";
+import { Plus, Wrench, Search, Filter, LayoutGrid, List, RefreshCw, Download, Upload, Trash2 } from "lucide-react";
+import { CsvImportDialog, type CsvImportField } from "@/components/csv-import-dialog";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
+import { useRowSelection } from "@/hooks/use-row-selection";
+import { BulkActionBar } from "@/components/bulk-action-bar";
+import { toCSV, downloadCSV } from "@/lib/csv";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { format } from "date-fns";
 import { JOB_STATUS_LABELS, JOB_PRIORITY_LABELS, RECURRING_FREQUENCY_LABELS } from "@shared/schema";
 import type { Job, Customer } from "@shared/schema";
+
+const jobFormSchema = z.object({
+  title: z.string().trim().min(1, "Title is required"),
+  description: z.string().optional().default(""),
+  customerId: z.string().optional().default(""),
+  priority: z.enum(["low", "normal", "urgent"]).default("normal"),
+  scheduledStart: z.string().optional().default(""),
+  scheduledEnd: z.string().optional().default(""),
+  internalNotes: z.string().optional().default(""),
+}).refine(
+  (data) => {
+    if (data.scheduledStart && data.scheduledEnd) {
+      return new Date(data.scheduledEnd) >= new Date(data.scheduledStart);
+    }
+    return true;
+  },
+  { message: "End time must be after start time", path: ["scheduledEnd"] }
+);
+type JobFormValues = z.infer<typeof jobFormSchema>;
 
 const PRIORITY_BADGE: Record<string, string> = {
   urgent: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
@@ -48,7 +85,14 @@ export default function JobsPage() {
   const [recurringFilter, setRecurringFilter] = useState(false);
   const [isRecurring, setIsRecurring] = useState(false);
   const [recurringFrequency, setRecurringFrequency] = useState("monthly");
+  const createForm = useForm<JobFormValues>({
+    resolver: zodResolver(jobFormSchema),
+    defaultValues: { title: "", description: "", customerId: "", priority: "normal", scheduledStart: "", scheduledEnd: "", internalNotes: "" },
+  });
   const [view, setView] = useState<"kanban" | "list">("kanban");
+  const [bulkStatus, setBulkStatus] = useState<string>("");
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const { toast } = useToast();
   const { org } = useAuth();
   const canUseRecurring = org?.plan === "small_business" || org?.plan === "enterprise";
@@ -73,6 +117,8 @@ export default function JobsPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
       setShowCreate(false);
+      createForm.reset();
+      setIsRecurring(false);
       toast({ title: "Job created" });
     },
     onError: (err: Error) => {
@@ -80,7 +126,7 @@ export default function JobsPage() {
     },
   });
 
-  const filtered = jobs.filter((j) => {
+  const filteredJobs = jobs.filter((j) => {
     const matchesSearch =
       j.title.toLowerCase().includes(search.toLowerCase()) ||
       (j.customerName || "").toLowerCase().includes(search.toLowerCase());
@@ -102,7 +148,7 @@ export default function JobsPage() {
           <div className="flex items-center gap-1.5">
             <p className="font-medium">{j.title}</p>
             {j.isRecurring && (
-              <span className="inline-flex items-center gap-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 px-1.5 py-0.5 text-[10px] font-medium" data-testid={`badge-recurring-list-${j.id}`}>
+              <span className="inline-flex items-center gap-0.5 rounded-full bg-primary/10 dark:bg-primary/20 text-primary px-1.5 py-0.5 text-[10px] font-medium" data-testid={`badge-recurring-list-${j.id}`}>
                 <RefreshCw className="h-2.5 w-2.5" />
                 {j.recurringFrequency ? RECURRING_FREQUENCY_LABELS[j.recurringFrequency] || "Recurring" : "Recurring"}
               </span>
@@ -180,18 +226,68 @@ export default function JobsPage() {
     },
   ];
 
-  const handleCreate = (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const fd = new FormData(e.currentTarget);
+  const selection = useRowSelection(filteredJobs);
+
+  const bulkDeleteMutation = useMutation({
+    mutationFn: async (ids: string[]) => {
+      const res = await apiRequest("POST", "/api/jobs/bulk-delete", { ids });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
+      toast({ title: `${data.updated} job${data.updated !== 1 ? "s" : ""} deleted` });
+      selection.clear();
+      setConfirmBulkDelete(false);
+    },
+    onError: (err: Error) => {
+      toast({ title: "Delete failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const bulkStatusMutation = useMutation({
+    mutationFn: async ({ ids, status }: { ids: string[]; status: string }) => {
+      const res = await apiRequest("POST", "/api/jobs/bulk-status", { ids, status });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
+      toast({ title: `${data.updated} job${data.updated !== 1 ? "s" : ""} updated` });
+      selection.clear();
+      setBulkStatus("");
+    },
+    onError: (err: Error) => {
+      toast({ title: "Update failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const handleExportJobs = () => {
+    const items = selection.selectedItems.length > 0 ? selection.selectedItems : filteredJobs;
+    const csv = toCSV(items, [
+      { header: "Title", value: (j) => j.title },
+      { header: "Customer", value: (j) => j.customerName || "" },
+      { header: "Status", value: (j) => JOB_STATUS_LABELS[j.status] || j.status },
+      { header: "Priority", value: (j) => JOB_PRIORITY_LABELS[j.priority || "normal"] || "" },
+      { header: "Scheduled Start", value: (j) => j.scheduledStart ? format(new Date(j.scheduledStart), "yyyy-MM-dd HH:mm") : "" },
+      { header: "Scheduled End", value: (j) => j.scheduledEnd ? format(new Date(j.scheduledEnd), "yyyy-MM-dd HH:mm") : "" },
+      { header: "Description", value: (j) => j.description || "" },
+      { header: "Created", value: (j) => j.createdAt ? format(new Date(j.createdAt), "yyyy-MM-dd") : "" },
+    ]);
+    downloadCSV(`jobs-${new Date().toISOString().slice(0, 10)}.csv`, csv);
+    toast({ title: `Exported ${items.length} job${items.length !== 1 ? "s" : ""}` });
+  };
+
+  const handleCreate = (data: JobFormValues) => {
     createMutation.mutate({
-      title: fd.get("title"),
-      description: fd.get("description") || "",
-      customerId: fd.get("customerId") || null,
-      priority: fd.get("priority") || "normal",
+      title: data.title,
+      description: data.description || "",
+      customerId: data.customerId || null,
+      priority: data.priority || "normal",
       status: "lead",
-      scheduledStart: fd.get("scheduledStart") || null,
-      scheduledEnd: fd.get("scheduledEnd") || null,
-      internalNotes: fd.get("internalNotes") || "",
+      scheduledStart: data.scheduledStart || null,
+      scheduledEnd: data.scheduledEnd || null,
+      internalNotes: data.internalNotes || "",
       isRecurring: canUseRecurring ? isRecurring : false,
       recurringFrequency: canUseRecurring && isRecurring ? recurringFrequency : null,
     });
@@ -203,10 +299,20 @@ export default function JobsPage() {
         title="Jobs"
         description="Track work from lead to paid"
         actions={
-          <Button size="sm" onClick={() => setShowCreate(true)} data-testid="button-add-job">
-            <Plus className="h-4 w-4 mr-1" />
-            New Job
-          </Button>
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" onClick={handleExportJobs} data-testid="button-export-jobs">
+              <Download className="h-4 w-4 mr-1" />
+              Export
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => setShowImport(true)} data-testid="button-import-jobs">
+              <Upload className="h-4 w-4 mr-1" />
+              Import
+            </Button>
+            <Button size="sm" onClick={() => setShowCreate(true)} data-testid="button-add-job">
+              <Plus className="h-4 w-4 mr-1" />
+              New Job
+            </Button>
+          </div>
         }
       />
 
@@ -248,14 +354,14 @@ export default function JobsPage() {
           {canUseRecurring && (
             <button
               onClick={() => setRecurringFilter(!recurringFilter)}
-              className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors ${recurringFilter ? "bg-blue-600 text-white border-blue-600" : "border-input bg-background hover:bg-muted"}`}
+              className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors ${recurringFilter ? "bg-primary text-primary-foreground border-primary" : "border-input bg-background hover:bg-muted"}`}
               data-testid="button-recurring-filter"
             >
               <RefreshCw className="h-3.5 w-3.5" />
               Recurring
             </button>
           )}
-          <span className="text-sm text-muted-foreground">{filtered.length} job{filtered.length !== 1 ? "s" : ""}</span>
+          <span className="text-sm text-muted-foreground">{filteredJobs.length} job{filteredJobs.length !== 1 ? "s" : ""}</span>
           <div className="ml-auto flex items-center border rounded-md overflow-hidden">
             <button
               className={`p-2 transition-colors ${view === "kanban" ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
@@ -302,7 +408,7 @@ export default function JobsPage() {
 
         {view === "kanban" ? (
           <KanbanBoard
-            jobs={filtered}
+            jobs={filteredJobs}
             isLoading={isLoading}
             statusFilter={statusFilter}
           />
@@ -310,10 +416,11 @@ export default function JobsPage() {
           <DataTable
             tableId="jobs"
             columns={columns}
-            data={filtered}
+            data={filteredJobs}
             isLoading={isLoading}
             onRowClick={(j) => navigate(`/jobs/${j.id}`)}
             testIdPrefix="job-row"
+            selection={view === "list" ? selection : undefined}
             emptyState={
               <EmptyState
                 icon={Wrench}
@@ -325,64 +432,220 @@ export default function JobsPage() {
             }
           />
         )}
+
+        {view === "list" && (
+          <BulkActionBar count={selection.selectedCount} onClear={selection.clear}>
+            <Select
+              value={bulkStatus}
+              onValueChange={(v) => {
+                setBulkStatus(v);
+                bulkStatusMutation.mutate({ ids: selection.selected, status: v });
+              }}
+            >
+              <SelectTrigger className="w-[160px] h-9" data-testid="select-bulk-job-status">
+                <SelectValue placeholder="Change status..." />
+              </SelectTrigger>
+              <SelectContent>
+                {Object.entries(JOB_STATUS_LABELS).map(([value, label]) => (
+                  <SelectItem key={value} value={value}>{label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button size="sm" variant="outline" onClick={handleExportJobs} data-testid="button-bulk-export-jobs">
+              <Download className="h-4 w-4 mr-1" />
+              Export CSV
+            </Button>
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={() => setConfirmBulkDelete(true)}
+              data-testid="button-bulk-delete-jobs"
+            >
+              <Trash2 className="h-4 w-4 mr-1" />
+              Delete
+            </Button>
+          </BulkActionBar>
+        )}
       </div>
+
+      <CsvImportDialog
+        open={showImport}
+        onOpenChange={setShowImport}
+        title="Import Jobs from CSV"
+        description="Customers must already exist; rows are matched by customer name (case-insensitive)."
+        resourceLabel="job"
+        templateFilename="jobs-template.csv"
+        templateExampleRow={[
+          "Kitchen sink repair",
+          "John Smith",
+          "Replace gasket",
+          "scheduled",
+          "normal",
+          "2026-05-10 09:00",
+          "2026-05-10 11:00",
+          "Bring extra parts",
+        ]}
+        fields={[
+          { key: "title", label: "Title", required: true, aliases: ["jobtitle", "name"] },
+          { key: "customerName", label: "Customer", aliases: ["customer", "client", "clientname", "customerName"] },
+          { key: "description", label: "Description", aliases: ["details"] },
+          { key: "status", label: "Status" },
+          { key: "priority", label: "Priority" },
+          { key: "scheduledStart", label: "Scheduled Start", aliases: ["start", "startdate", "starttime"] },
+          { key: "scheduledEnd", label: "Scheduled End", aliases: ["end", "enddate", "endtime"] },
+          { key: "internalNotes", label: "Internal Notes", aliases: ["notes"] },
+        ]}
+        onImport={async (rows) => {
+          const res = await apiRequest("POST", "/api/jobs/import", { jobs: rows });
+          return res.json();
+        }}
+        onImported={() => {
+          queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
+        }}
+      />
+
+      <AlertDialog open={confirmBulkDelete} onOpenChange={setConfirmBulkDelete}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {selection.selectedCount} job{selection.selectedCount !== 1 ? "s" : ""}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently remove the selected jobs and their history. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="button-bulk-delete-jobs-cancel">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => bulkDeleteMutation.mutate(selection.selected)}
+              disabled={bulkDeleteMutation.isPending}
+              data-testid="button-bulk-delete-jobs-confirm"
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {bulkDeleteMutation.isPending ? "Deleting..." : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Dialog open={showCreate} onOpenChange={setShowCreate}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Create Job</DialogTitle>
           </DialogHeader>
-          <form onSubmit={handleCreate} className="space-y-4">
-            <div className="space-y-2">
-              <Label>Title</Label>
-              <Input name="title" required data-testid="input-job-title" placeholder="e.g. Kitchen sink repair" />
-            </div>
+          <Form {...createForm}>
+          <form onSubmit={createForm.handleSubmit(handleCreate)} className="space-y-4" noValidate>
+            <FormField
+              control={createForm.control}
+              name="title"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Title</FormLabel>
+                  <FormControl>
+                    <Input {...field} data-testid="input-job-title" placeholder="e.g. Kitchen sink repair" />
+                  </FormControl>
+                  <FormMessage data-testid="error-job-title" />
+                </FormItem>
+              )}
+            />
             <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <Label>Customer</Label>
-                <select
-                  name="customerId"
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                  data-testid="select-job-customer"
-                >
-                  <option value="">No customer</option>
-                  {customers.map((c) => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="space-y-2">
-                <Label>Priority</Label>
-                <select
-                  name="priority"
-                  defaultValue="normal"
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                  data-testid="select-job-priority"
-                >
-                  <option value="low">Low</option>
-                  <option value="normal">Normal</option>
-                  <option value="urgent">Urgent</option>
-                </select>
-              </div>
+              <FormField
+                control={createForm.control}
+                name="customerId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Customer</FormLabel>
+                    <FormControl>
+                      <select
+                        {...field}
+                        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                        data-testid="select-job-customer"
+                      >
+                        <option value="">No customer</option>
+                        {customers.map((c) => (
+                          <option key={c.id} value={c.id}>{c.name}</option>
+                        ))}
+                      </select>
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={createForm.control}
+                name="priority"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Priority</FormLabel>
+                    <FormControl>
+                      <select
+                        {...field}
+                        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                        data-testid="select-job-priority"
+                      >
+                        <option value="low">Low</option>
+                        <option value="normal">Normal</option>
+                        <option value="urgent">Urgent</option>
+                      </select>
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
             </div>
-            <div className="space-y-2">
-              <Label>Description</Label>
-              <Textarea name="description" data-testid="input-job-description" placeholder="Job details..." rows={3} />
-            </div>
+            <FormField
+              control={createForm.control}
+              name="description"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Description</FormLabel>
+                  <FormControl>
+                    <Textarea {...field} data-testid="input-job-description" placeholder="Job details..." rows={3} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
             <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <Label>Start</Label>
-                <Input name="scheduledStart" type="datetime-local" data-testid="input-job-start" />
-              </div>
-              <div className="space-y-2">
-                <Label>End</Label>
-                <Input name="scheduledEnd" type="datetime-local" data-testid="input-job-end" />
-              </div>
+              <FormField
+                control={createForm.control}
+                name="scheduledStart"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Start</FormLabel>
+                    <FormControl>
+                      <Input {...field} type="datetime-local" data-testid="input-job-start" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={createForm.control}
+                name="scheduledEnd"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>End</FormLabel>
+                    <FormControl>
+                      <Input {...field} type="datetime-local" data-testid="input-job-end" />
+                    </FormControl>
+                    <FormMessage data-testid="error-job-end" />
+                  </FormItem>
+                )}
+              />
             </div>
-            <div className="space-y-2">
-              <Label>Internal Notes</Label>
-              <Textarea name="internalNotes" data-testid="input-job-notes" placeholder="Notes for your team..." rows={2} />
-            </div>
+            <FormField
+              control={createForm.control}
+              name="internalNotes"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Internal Notes</FormLabel>
+                  <FormControl>
+                    <Textarea {...field} data-testid="input-job-notes" placeholder="Notes for your team..." rows={2} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
             {canUseRecurring && (
               <div className="space-y-3 rounded-lg border p-3 bg-muted/30">
                 <div className="flex items-center justify-between">
@@ -420,6 +683,7 @@ export default function JobsPage() {
               </Button>
             </div>
           </form>
+          </Form>
         </DialogContent>
       </Dialog>
     </div>

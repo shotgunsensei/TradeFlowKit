@@ -4,6 +4,9 @@ import { users, memberships } from "@shared/schema";
 import { eq } from "drizzle-orm";
 import crypto from "crypto";
 import bcrypt from "bcrypt";
+import { logger as rootLogger } from "./logger";
+
+const log = rootLogger.child({ component: "seed" });
 
 const BCRYPT_ROUNDS = 12;
 
@@ -17,7 +20,7 @@ export async function ensureDemoAccount() {
     if (existing) {
       const mems = await db.select().from(memberships).where(eq(memberships.userId, existing.id));
       if (mems.length > 0) {
-        console.log("Demo account already exists with org, skipping.");
+        log.info("Demo account already exists with org, skipping");
         return;
       }
       const org = await storage.createOrg({
@@ -28,7 +31,7 @@ export async function ensureDemoAccount() {
         address: "123 Demo St, Austin, TX 78701",
       });
       await storage.createMembership(org.id, existing.id, "owner");
-      console.log("Demo org created for existing demo user.");
+      log.info("Demo org created for existing demo user");
       return;
     }
     const demoUser = await storage.createUser({
@@ -46,9 +49,9 @@ export async function ensureDemoAccount() {
       address: "123 Demo St, Austin, TX 78701",
     });
     await storage.createMembership(org.id, demoUser.id, "owner");
-    console.log("Demo account created: demo / demo123");
+    log.info("Demo account created: demo / demo123");
   } catch (err) {
-    console.error("Error ensuring demo account:", err);
+    log.error({ err: (err as any)?.message || err }, "Error ensuring demo account");
   }
 }
 
@@ -59,7 +62,7 @@ export async function ensureReviewerAccount() {
     if (existing) {
       const mems = await db.select().from(memberships).where(eq(memberships.userId, existing.id));
       if (mems.length > 0) {
-        console.log("Reviewer account already exists with org, skipping.");
+        log.info("Reviewer account already exists with org, skipping");
         return;
       }
       const demoUser = await storage.getUserByUsername("demo");
@@ -67,7 +70,7 @@ export async function ensureReviewerAccount() {
         const demoMems = await db.select().from(memberships).where(eq(memberships.userId, demoUser.id));
         if (demoMems.length > 0) {
           await storage.createMembership(demoMems[0].orgId, existing.id, "owner");
-          console.log("Reviewer added as owner to demo org.");
+          log.info("Reviewer added as owner to demo org");
           return;
         }
       }
@@ -89,9 +92,9 @@ export async function ensureReviewerAccount() {
         await storage.createMembership(demoMems[0].orgId, reviewerUser[0].id, "owner");
       }
     }
-    console.log("Reviewer account created: reviewer / Reviewer2026!");
+    log.info("Reviewer account created: reviewer / Reviewer2026!");
   } catch (err) {
-    console.error("Error ensuring reviewer account:", err);
+    log.error({ err: (err as any)?.message || err }, "Error ensuring reviewer account");
   }
 }
 
@@ -108,10 +111,10 @@ export async function ensureSuperAdmin() {
         email: "",
         isSuperAdmin: true,
       });
-      console.log("Super admin created: Johntwms355 / Admin2026!");
+      log.info("Super admin created: Johntwms355 / Admin2026!");
     }
   } catch (err) {
-    console.error("Error ensuring super admin:", err);
+    log.error({ err: (err as any)?.message || err }, "Error ensuring super admin");
   }
 }
 
@@ -119,11 +122,11 @@ export async function seedDatabase() {
   try {
     const existingUser = await storage.getUserByUsername("demo");
     if (existingUser) {
-      console.log("Seed data already exists, skipping...");
+      log.info("Seed data already exists, skipping");
       return;
     }
 
-    console.log("Seeding database with demo data...");
+    log.info("Seeding database with demo data");
 
     const demoUser = await storage.createUser({
       username: "demo",
@@ -296,9 +299,9 @@ export async function seedDatabase() {
       ],
     }, demoUser.id);
 
-    console.log("Seed data created successfully!");
-    console.log("Demo login: username=demo, password=demo123");
+    log.info("Seed data created successfully");
+    log.info("Demo login: username=demo, password=demo123");
   } catch (err) {
-    console.error("Seed error:", err);
+    log.error({ err: (err as any)?.message || err }, "Seed error");
   }
 }

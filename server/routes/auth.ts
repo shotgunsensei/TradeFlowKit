@@ -1,3 +1,4 @@
+import { errMsg } from "../errors";
 import { Router, type Request, type Response } from "express";
 import { storage } from "../storage";
 import { requireAuth } from "../middleware";
@@ -33,8 +34,8 @@ router.post("/api/auth/register", async (req: Request, res: Response) => {
       if (err) return res.status(500).send("Session error");
       res.json({ user: { ...user, password: undefined } });
     });
-  } catch (err: any) {
-    res.status(500).send(err.message);
+  } catch (err) {
+    res.status(500).send(errMsg(err));
   }
 });
 
@@ -56,6 +57,15 @@ router.post("/api/auth/login", async (req: Request, res: Response) => {
       await storage.updateUser(user.id, { password: newHash });
     }
 
+    if (user.totpEnabledAt) {
+      req.session.pending2faUserId = user.id;
+      delete req.session.userId;
+      return req.session.save((err) => {
+        if (err) return res.status(500).send("Session error");
+        res.json({ requires2fa: true });
+      });
+    }
+
     req.session.userId = user.id;
 
     const userOrgs = await storage.getUserOrgs(user.id);
@@ -65,10 +75,10 @@ router.post("/api/auth/login", async (req: Request, res: Response) => {
 
     req.session.save((err) => {
       if (err) return res.status(500).send("Session error");
-      res.json({ user: { ...user, password: undefined } });
+      res.json({ user: { ...user, password: undefined, totpSecret: undefined } });
     });
-  } catch (err: any) {
-    res.status(500).send(err.message);
+  } catch (err) {
+    res.status(500).send(errMsg(err));
   }
 });
 
@@ -85,8 +95,8 @@ router.delete("/api/auth/delete-account", requireAuth, async (req: Request, res:
     req.session.destroy(() => {
       res.json({ ok: true });
     });
-  } catch (error: any) {
-    res.status(500).json({ error: error.message || "Failed to delete account" });
+  } catch (error) {
+    res.status(500).json({ error: errMsg(error) || "Failed to delete account" });
   }
 });
 
@@ -127,8 +137,8 @@ router.get("/api/auth/me", requireAuth, async (req: Request, res: Response) => {
       planLimits,
       orgCounts,
     });
-  } catch (err: any) {
-    res.status(500).send(err.message);
+  } catch (err) {
+    res.status(500).send(errMsg(err));
   }
 });
 
@@ -139,8 +149,8 @@ router.post("/api/auth/switch-org", requireAuth, async (req: Request, res: Respo
     if (!membership) return res.status(403).send("Not a member of this organization");
     req.session.orgId = orgId;
     res.json({ ok: true });
-  } catch (err: any) {
-    res.status(500).send(err.message);
+  } catch (err) {
+    res.status(500).send(errMsg(err));
   }
 });
 
@@ -149,8 +159,8 @@ router.patch("/api/auth/profile", requireAuth, async (req: Request, res: Respons
     const { fullName, phone, email } = req.body;
     const user = await storage.updateUser(req.session.userId!, { fullName, phone, email });
     res.json({ ...user, password: undefined });
-  } catch (err: any) {
-    res.status(500).send(err.message);
+  } catch (err) {
+    res.status(500).send(errMsg(err));
   }
 });
 
@@ -170,8 +180,8 @@ router.post("/api/auth/change-password", requireAuth, async (req: Request, res: 
     const newHash = await hashPassword(newPassword);
     await storage.updateUser(user.id, { password: newHash });
     res.json({ ok: true });
-  } catch (err: any) {
-    res.status(500).send(err.message);
+  } catch (err) {
+    res.status(500).send(errMsg(err));
   }
 });
 

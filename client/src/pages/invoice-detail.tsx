@@ -30,15 +30,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ArrowLeft, Edit, Trash2, Printer, Mail, CheckCircle2, MessageSquare, Link2, CreditCard, Check, Zap } from "lucide-react";
+import { ArrowLeft, Edit, Trash2, Printer, Mail, CheckCircle2, MessageSquare, Link2, CreditCard, Check, Zap, Send, Repeat } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
-import { calcLineItemsTotal, calcTotalWithTaxDiscount } from "@shared/schema";
+import { calcLineItemsTotal, calcTotalWithTaxDiscount, RECURRING_INTERVAL_LABELS } from "@shared/schema";
 import { format } from "date-fns";
 import type { Invoice, InvoiceItem, Customer, Org, ReminderLog } from "@shared/schema";
-import { InvoicePdf } from "@/components/pdf/InvoicePdf";
 import { PdfDownloadButton } from "@/components/pdf/PdfDownloadButton";
+import { EmailDialog } from "@/components/email-dialog";
+import { useHotkey } from "@/hooks/use-hotkey";
+import { usePageShortcuts } from "@/components/shortcuts-help";
 
 export default function InvoiceDetail() {
   const { id } = useParams<{ id: string }>();
@@ -48,6 +50,33 @@ export default function InvoiceDetail() {
   const [showMarkPaid, setShowMarkPaid] = useState(false);
   const [paymentNotes, setPaymentNotes] = useState("");
   const [copyingLink, setCopyingLink] = useState(false);
+  const [emailOpen, setEmailOpen] = useState(false);
+
+  useHotkey("e", () => navigate(`/invoices/${id}/edit`), { enabled: !!id });
+  usePageShortcuts([
+    { keys: "E", description: "Edit invoice" },
+    { keys: "Esc", description: "Close dialog" },
+  ]);
+
+  const sendEmailMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/invoices/${id}/send-payment-email`, {});
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/invoices", id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+      toast({ title: "Email sent!", description: `Payment link sent to ${data.sentTo}` });
+    },
+    onError: async (err: any) => {
+      let msg = err?.message || "Failed to send email";
+      try {
+        const parsed = JSON.parse(msg.replace(/^\d+:\s*/, ""));
+        if (parsed?.error) msg = parsed.error;
+      } catch {}
+      toast({ title: "Could not send email", description: msg, variant: "destructive" });
+    },
+  });
 
   const { data: invoice, isLoading } = useQuery<Invoice & { items?: InvoiceItem[]; customerName?: string; customer?: Customer; org?: Org }>({
     queryKey: ["/api/invoices", id],
@@ -70,6 +99,9 @@ export default function InvoiceDetail() {
       setShowMarkPaid(false);
       toast({ title: "Invoice updated" });
     },
+    onError: (err: any) => {
+      toast({ title: "Couldn't update invoice", description: err.message || "Please try again.", variant: "destructive" });
+    },
   });
 
   const deleteMutation = useMutation({
@@ -81,6 +113,9 @@ export default function InvoiceDetail() {
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
       navigate("/invoices");
       toast({ title: "Invoice deleted" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Couldn't delete invoice", description: err.message || "Please try again.", variant: "destructive" });
     },
   });
 
@@ -101,21 +136,7 @@ export default function InvoiceDetail() {
     }
   };
 
-  const handleEmail = () => {
-    if (!invoice) return;
-    const customer = invoice.customer;
-    const items = invoice.items || [];
-    const subtotal = calcLineItemsTotal(items);
-    const totals = calcTotalWithTaxDiscount(subtotal, invoice.taxRate || "0", invoice.discount || "0");
-    const subject = encodeURIComponent(`Invoice #${invoice.id.slice(0, 8)} from ${invoice.org?.name || "Our Company"}`);
-    const body = encodeURIComponent(
-      `Dear ${customer?.name || "Customer"},\n\nPlease find your invoice #${invoice.id.slice(0, 8)}.\n\nTotal Due: $${totals.total.toFixed(2)}\n` +
-      `${invoice.dueDate ? `Due Date: ${format(new Date(invoice.dueDate), "MMM d, yyyy")}\n` : ""}` +
-      `\nItems:\n${items.map(it => `- ${it.description}: ${it.qty} x $${Number(it.unitPrice).toFixed(2)}`).join("\n")}\n\n` +
-      `${invoice.notes ? `Notes: ${invoice.notes}\n\n` : ""}Thank you!\n\n${invoice.org?.name || ""}`
-    );
-    window.open(`mailto:${customer?.email || ""}?subject=${subject}&body=${body}`);
-  };
+  const handleEmail = () => setEmailOpen(true);
 
   if (isLoading) {
     return (
@@ -162,6 +183,10 @@ export default function InvoiceDetail() {
             <PdfDownloadButton
               filename={`Invoice-${invoice.id.slice(0, 8).toUpperCase()}.pdf`}
               testId="button-download-pdf-invoice"
+              loadPdf={async () => {
+                const { InvoicePdf } = await import("@/components/pdf/InvoicePdf");
+                return <InvoicePdf invoice={invoice} />;
+              }}
             >
               Download PDF
             </PdfDownloadButton>
@@ -173,7 +198,25 @@ export default function InvoiceDetail() {
                 data-testid="button-send-payment-link"
               >
                 {copyingLink ? <Check className="h-4 w-4 mr-1 text-green-600" /> : <Link2 className="h-4 w-4 mr-1" />}
-                {copyingLink ? "Copied!" : "Send Payment Link"}
+                {copyingLink ? "Copied!" : "Copy Payment Link"}
+              </Button>
+            )}
+            {!isPaid && hasStripeConnect && (
+              <Button
+                size="sm"
+                className="gap-1.5 bg-blue-600 hover:bg-blue-700 text-white"
+                onClick={() => {
+                  if (!customer?.email) {
+                    toast({ title: "No customer email", description: "Add an email address to this customer's profile first.", variant: "destructive" });
+                    return;
+                  }
+                  sendEmailMutation.mutate();
+                }}
+                disabled={sendEmailMutation.isPending}
+                data-testid="button-send-to-customer"
+              >
+                <Send className="h-4 w-4" />
+                {sendEmailMutation.isPending ? "Sending..." : "Send to Customer"}
               </Button>
             )}
             <Button variant="outline" size="sm" onClick={handlePrint} data-testid="button-print-invoice">
@@ -215,7 +258,7 @@ export default function InvoiceDetail() {
           </div>
           {(invoice as any).paidViaStripe && (
             <div>
-              <Badge className="gap-1.5 bg-blue-600 text-white" data-testid="badge-paid-via-card">
+              <Badge className="gap-1.5 bg-primary text-primary-foreground" data-testid="badge-paid-via-card">
                 <CreditCard className="h-3 w-3" />
                 Paid via card
               </Badge>
@@ -240,16 +283,16 @@ export default function InvoiceDetail() {
         </div>
 
         {!isPaid && !hasStripeConnect && (
-          <div className="mb-4 rounded-lg border border-blue-200 bg-blue-50 dark:bg-blue-950/20 dark:border-blue-800 p-3 flex items-start gap-3 print:hidden" data-testid="card-stripe-nudge">
-            <Zap className="h-4 w-4 text-blue-600 shrink-0 mt-0.5" />
+          <div className="mb-4 rounded-lg border border-primary/30 bg-primary/5 dark:bg-primary/10 dark:border-primary/40 p-3 flex items-start gap-3 print:hidden" data-testid="card-stripe-nudge">
+            <Zap className="h-4 w-4 text-primary shrink-0 mt-0.5" />
             <div className="flex-1">
-              <p className="text-sm font-medium text-blue-800 dark:text-blue-300">Accept card payments</p>
-              <p className="text-xs text-blue-700/70 dark:text-blue-400/70 mt-0.5">
+              <p className="text-sm font-medium text-foreground">Accept card payments</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
                 Connect a Stripe account to let customers pay this invoice online.
               </p>
             </div>
             <a href="/settings?tab=payments">
-              <Button size="sm" variant="outline" className="text-blue-700 border-blue-300 hover:bg-blue-100 dark:text-blue-300 dark:border-blue-600 dark:hover:bg-blue-900/30 h-7 text-xs">
+              <Button size="sm" variant="outline" className="h-7 text-xs">
                 Connect Stripe
               </Button>
             </a>
@@ -379,6 +422,67 @@ export default function InvoiceDetail() {
           </Card>
         )}
 
+        {(() => {
+          const planAllowed = (authOrg as any)?.plan === "small_business" || (authOrg as any)?.plan === "enterprise";
+          const currentInterval = (invoice as any).recurringInterval || "";
+          const nextRunAt = (invoice as any).nextRunAt;
+          return (
+            <Card className="mt-4 print:hidden" data-testid="card-recurring">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm flex items-center gap-2">
+                  <Repeat className="h-4 w-4 text-muted-foreground" />
+                  Recurring Invoice
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {!planAllowed ? (
+                  <div className="rounded-md border border-primary/30 bg-primary/5 p-3 flex items-start gap-3">
+                    <Zap className="h-4 w-4 text-primary shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                      <p className="text-sm font-medium">Auto-generate this invoice on a schedule</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Recurring invoices require the Small Business or Enterprise plan.
+                      </p>
+                    </div>
+                    <a href="/subscription">
+                      <Button size="sm" variant="outline" className="h-7 text-xs">Upgrade</Button>
+                    </a>
+                  </div>
+                ) : (
+                  <div className="flex items-end gap-3 flex-wrap">
+                    <div className="space-y-1.5 flex-1 min-w-[180px]">
+                      <Label className="text-xs">Interval</Label>
+                      <Select
+                        value={currentInterval || "none"}
+                        onValueChange={(v) =>
+                          statusMutation.mutate({
+                            recurringInterval: v === "none" ? null : v,
+                          } as any)
+                        }
+                      >
+                        <SelectTrigger data-testid="select-recurring-interval">
+                          <SelectValue placeholder="Not recurring" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">Not recurring</SelectItem>
+                          {Object.entries(RECURRING_INTERVAL_LABELS).map(([value, label]) => (
+                            <SelectItem key={value} value={value}>{label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {currentInterval && nextRunAt && (
+                      <div className="text-sm text-muted-foreground" data-testid="text-next-run">
+                        Next run: <strong className="text-foreground">{format(new Date(nextRunAt), "MMM d, yyyy")}</strong>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          );
+        })()}
+
         {reminderLogs.length > 0 && (
           <Card className="mt-4 print:hidden" data-testid="card-reminder-history">
             <CardHeader className="pb-2">
@@ -463,7 +567,20 @@ export default function InvoiceDetail() {
         </DialogContent>
       </Dialog>
 
-      <InvoicePdf invoice={invoice} />
+      <EmailDialog
+        open={emailOpen}
+        onOpenChange={setEmailOpen}
+        documentType="invoice"
+        documentId={invoice.id}
+        documentNumber={invoice.id.slice(0, 8).toUpperCase()}
+        defaultRecipient={customer?.email || ""}
+        defaultSubject={`Invoice #${invoice.id.slice(0, 8).toUpperCase()} from ${org?.name || "Our Company"}`}
+        defaultMessage={`Dear ${customer?.name || "Customer"},\n\nPlease find attached your invoice #${invoice.id.slice(0, 8).toUpperCase()}.${invoice.dueDate ? ` Payment is due by ${format(new Date(invoice.dueDate), "MMM d, yyyy")}.` : ""} Thank you for your business.\n\n${org?.name || ""}`}
+        onSent={() => {
+          queryClient.invalidateQueries({ queryKey: ["/api/invoices", id] });
+          queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+        }}
+      />
     </div>
   );
 }

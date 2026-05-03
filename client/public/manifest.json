@@ -1,14 +1,14 @@
 {
-  "name": "TradeFlow - Service Management Platform",
-  "short_name": "TradeFlow",
-  "description": "Manage customers, jobs, quotes, and invoices for your service business",
+  "name": "TradeFlowKit — Business Operations for Trades",
+  "short_name": "TradeFlowKit",
+  "description": "Jobs, quotes, invoices, customers, and team — all in one place for trade contractors.",
   "start_url": "/",
   "scope": "/",
   "id": "/",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#ffffff",
-  "theme_color": "#1e40af",
+  "background_color": "#0a0a0a",
+  "theme_color": "#dc2626",
   "categories": ["business", "productivity"],
   "icons": [
     {
@@ -36,7 +36,7 @@
       "sizes": "512x512",
       "type": "image/png",
       "form_factor": "wide",
-      "label": "TradeFlow Dashboard"
+      "label": "TradeFlowKit Dashboard"
     }
   ]
 }

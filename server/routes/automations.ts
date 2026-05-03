@@ -1,3 +1,4 @@
+import { errMsg } from "../errors";
 import { Router, type Request, type Response } from "express";
 import { storage } from "../storage";
 import { requireAuth, requireOrg } from "../middleware";
@@ -17,8 +18,8 @@ router.get("/api/automations", requireAuth, requireOrg, async (req: Request, res
       quoteFollowUp: false,
       quoteFollowUpDays: [3, 5, 7],
     });
-  } catch (err: any) {
-    res.status(500).send(err.message);
+  } catch (err) {
+    res.status(500).send(errMsg(err));
   }
 });
 
@@ -32,7 +33,7 @@ router.post("/api/automations", requireAuth, requireOrg, async (req: Request, re
 
     const { invoiceReminder, invoiceReminderDays, quoteFollowUp, quoteFollowUpDays } = req.body;
 
-    const data: any = {};
+    const data: Record<string, unknown> = {};
     if (invoiceReminder !== undefined) data.invoiceReminder = Boolean(invoiceReminder);
     if (invoiceReminderDays !== undefined) data.invoiceReminderDays = Array.isArray(invoiceReminderDays) ? invoiceReminderDays.map(Number) : [3, 7, 14];
     if (quoteFollowUp !== undefined) data.quoteFollowUp = Boolean(quoteFollowUp);
@@ -40,8 +41,8 @@ router.post("/api/automations", requireAuth, requireOrg, async (req: Request, re
 
     const result = await storage.upsertOrgAutomations(orgId, data);
     res.json(result);
-  } catch (err: any) {
-    res.status(500).send(err.message);
+  } catch (err) {
+    res.status(500).send(errMsg(err));
   }
 });
 
@@ -55,8 +56,8 @@ router.get("/api/reminder-logs", requireAuth, requireOrg, async (req: Request, r
       targetId as string | undefined
     );
     res.json(logs);
-  } catch (err: any) {
-    res.status(500).send(err.message);
+  } catch (err) {
+    res.status(500).send(errMsg(err));
   }
 });
 

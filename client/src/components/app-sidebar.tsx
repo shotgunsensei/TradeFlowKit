@@ -190,7 +190,7 @@ export function AppSidebar() {
           </SidebarGroup>
         )}
       </SidebarContent>
-      <SidebarFooter className="p-4">
+      <SidebarFooter className="p-4 space-y-3">
         {user && (
           <div className="flex items-center gap-3">
             <Avatar className="h-8 w-8">
@@ -211,6 +211,15 @@ export function AppSidebar() {
             </button>
           </div>
         )}
+        <a
+          href="https://shotgunninjas.com"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="block text-[10px] text-muted-foreground/70 hover:text-muted-foreground transition-colors text-center pt-1 border-t border-sidebar-border"
+          data-testid="link-shotgun-ninjas"
+        >
+          Built by Shotgun Ninjas Productions
+        </a>
       </SidebarFooter>
     </Sidebar>
   );
