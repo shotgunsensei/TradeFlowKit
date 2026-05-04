@@ -141,7 +141,7 @@ export const dashboardStorage = {
             WHERE m.org_id = ${orgId}
           ) t) AS members,
           (SELECT COALESCE(json_agg(t), '[]'::json) FROM (
-            SELECT j.id, j.title, j.status, j.scheduled_start, j.scheduled_end, j.address,
+            SELECT j.id, j.title, j.status, j.scheduled_start, j.scheduled_end, c.address,
                    j.assigned_user_ids, j.customer_id, c.name AS customer_name, j.created_at,
                    j.priority, j.is_recurring, j.recurring_frequency
             FROM jobs j LEFT JOIN customers c ON c.id = j.customer_id
@@ -151,7 +151,7 @@ export const dashboardStorage = {
             ORDER BY j.created_at DESC
           ) t) AS todays_jobs,
           (SELECT COALESCE(json_agg(t), '[]'::json) FROM (
-            SELECT j.id, j.title, j.status, j.scheduled_start, j.scheduled_end, j.address,
+            SELECT j.id, j.title, j.status, j.scheduled_start, j.scheduled_end, c.address,
                    j.assigned_user_ids, j.customer_id, c.name AS customer_name, j.created_at,
                    j.priority, j.is_recurring, j.recurring_frequency
             FROM jobs j LEFT JOIN customers c ON c.id = j.customer_id
