@@ -49,6 +49,17 @@
       })();
     </script>
     <div id="root"></div>
+    <div id="boot-error" style="display:none;position:fixed;inset:0;z-index:99999;background:#111;color:#f87171;padding:2rem;font-family:monospace;white-space:pre-wrap;overflow:auto"></div>
+    <script>
+      window.addEventListener('error', function(e) {
+        var el = document.getElementById('boot-error');
+        if (el) { el.style.display = 'block'; el.textContent += 'ERROR: ' + e.message + '\n' + (e.filename||'') + ':' + (e.lineno||'') + '\n\n'; }
+      });
+      window.addEventListener('unhandledrejection', function(e) {
+        var el = document.getElementById('boot-error');
+        if (el) { el.style.display = 'block'; el.textContent += 'REJECTION: ' + (e.reason && e.reason.message || e.reason || 'unknown') + '\n' + (e.reason && e.reason.stack || '') + '\n\n'; }
+      });
+    </script>
     <script type="module" src="/src/main.tsx"></script>
     <script>
       window.__pwaInstallPrompt = null;
