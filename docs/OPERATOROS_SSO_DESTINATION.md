@@ -34,9 +34,12 @@ Secrets / Env panel — never committed):
 | `APP_ENV` | Optional | Expected `env` claim (e.g. `production`, `staging`). Defaults to `NODE_ENV`. |
 | `MODULE_SLUG` | Optional | Expected `aud` and `module_slug` claim. Defaults to `tradeflowkit`. |
 
-If `MODULE_SSO_SECRET` or `OPERATOROS_BASE_URL` is unset, the `/sso` endpoint
-responds with a clean "Sign-in is not configured" page (HTTP 503). The rest of
-the app continues to work normally.
+**Both `MODULE_SSO_SECRET` and `OPERATOROS_BASE_URL` are effectively required
+to enable OperatorOS sign-in.** The application will boot without them — the
+rest of the app continues to work normally — but the `/sso` endpoint will
+respond with a clean "Sign-in is not configured" page (HTTP 503, reference
+code SSO-017) until both are set. Operators turning on SSO must set both in
+the Secrets / Env panel and restart the workflow.
 
 `MODULE_SSO_SECRET` is server-only — it is never sent to the browser, never
 logged, and never echoed in any response.
