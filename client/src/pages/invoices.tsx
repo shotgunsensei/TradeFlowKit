@@ -35,7 +35,7 @@ import { format, differenceInDays } from "date-fns";
 import type { Invoice, Customer } from "@shared/schema";
 
 function AgingBadge({ dueDate, status }: { dueDate: string | Date | null; status: string }) {
-  if (status === "paid" || status === "void" || !dueDate) return null;
+  if (status === "paid" || status === "void" || status === "processing" || !dueDate) return null;
   const due = new Date(dueDate);
   const days = differenceInDays(new Date(), due);
   if (days > 0) {
@@ -59,6 +59,7 @@ function AgingBadge({ dueDate, status }: { dueDate: string | Date | null; status
 function statusRowClass(inv: Invoice & { total?: number }) {
   if (inv.status === "paid") return "opacity-70";
   if (inv.status === "void") return "opacity-50";
+  if (inv.status === "processing") return "";
   if (inv.dueDate && differenceInDays(new Date(), new Date(inv.dueDate)) > 0) {
     return "border-l-2 border-l-red-400";
   }
@@ -141,7 +142,7 @@ export default function InvoicesPage() {
   };
 
   const outstandingTotal = invoices
-    .filter((inv) => inv.status !== "paid" && inv.status !== "void")
+    .filter((inv) => inv.status !== "paid" && inv.status !== "void" && inv.status !== "processing")
     .reduce((sum, inv) => sum + (inv.total || 0), 0);
 
   const columns = [
@@ -268,6 +269,7 @@ export default function InvoicesPage() {
               <SelectItem value="all">All Statuses</SelectItem>
               <SelectItem value="draft">Draft</SelectItem>
               <SelectItem value="sent">Sent</SelectItem>
+              <SelectItem value="processing">Processing</SelectItem>
               <SelectItem value="paid">Paid</SelectItem>
               <SelectItem value="void">Void</SelectItem>
             </SelectContent>

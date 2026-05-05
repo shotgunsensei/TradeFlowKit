@@ -251,6 +251,7 @@ export default function InvoiceDetail() {
               <SelectContent>
                 <SelectItem value="draft">Draft</SelectItem>
                 <SelectItem value="sent">Sent</SelectItem>
+                <SelectItem value="processing">Processing</SelectItem>
                 <SelectItem value="paid">Paid</SelectItem>
                 <SelectItem value="void">Void</SelectItem>
               </SelectContent>

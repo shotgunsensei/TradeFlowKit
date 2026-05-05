@@ -71,6 +71,14 @@ export const invoicesStorage = {
     return { ...inv, items, customerName, customer };
   },
 
+  async getInvoiceByStripePaymentIntentId(paymentIntentId: string): Promise<Invoice | undefined> {
+    const [inv] = await db
+      .select()
+      .from(invoices)
+      .where(eq(invoices.stripePaymentIntentId, paymentIntentId));
+    return inv;
+  },
+
   async getInvoicePublic(id: string): Promise<(Invoice & { items?: InvoiceItem[]; customerName?: string; customer?: Customer; org?: Org }) | undefined> {
     const [inv] = await db.select().from(invoices).where(eq(invoices.id, id));
     if (!inv) return undefined;

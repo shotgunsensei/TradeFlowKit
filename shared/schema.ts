@@ -52,6 +52,7 @@ export const quoteStatusEnum = pgEnum("quote_status", [
 export const invoiceStatusEnum = pgEnum("invoice_status", [
   "draft",
   "sent",
+  "processing",
   "paid",
   "void",
 ]);

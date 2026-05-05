@@ -53,6 +53,7 @@ The application follows a monolithic full-stack architecture with a React fronte
 - Privacy policy page at /privacy (accessible without login)
 - Digital Asset Links for Google Play Store TWA publishing
 - Email PDF quotes/invoices: "Email" button on quote/invoice detail opens a dialog with prefilled recipient/subject/message; server generates a branded PDF with `pdfkit` and sends via SendGrid (`@sendgrid/mail`) with the PDF as an attachment. Requires `SENDGRID_API_KEY` and `SENDGRID_FROM_EMAIL` secrets. Endpoints: `POST /api/quotes/:id/send-email`, `POST /api/invoices/:id/send-email`. Sending a draft quote/invoice auto-promotes it to "sent" status. Delivery status is shown via toast + in-dialog confirmation.
+- Invoice payments via Stripe Checkout accept both card and ACH (us_bank_account). The invoice_status enum includes a `processing` interim state for ACH transfers that have been authorized but have not yet settled (3-5 business days). Webhooks: `checkout.session.completed` → marks paid (card) or processing (ACH) based on `payment_status`; `payment_intent.processing` → confirms processing; `payment_intent.succeeded` → marks paid on settlement; `payment_intent.payment_failed` → reverts to `sent` and writes a `payment_failed` audit-log entry the org can see in audit history. Resolution prefers metadata (invoiceId/orgId/feature=invoice_payment on PaymentIntent), falling back to lookup by stored `stripePaymentIntentId`.
 
 ## User Preferences
 

@@ -140,7 +140,13 @@ export default function InvoicePayPage() {
               <span>Invoice Details</span>
               <Badge
                 variant={invoice.status === "paid" ? "default" : "secondary"}
-                className={invoice.status === "paid" ? "bg-emerald-600 text-white" : ""}
+                className={
+                  invoice.status === "paid"
+                    ? "bg-emerald-600 text-white"
+                    : invoice.status === "processing"
+                      ? "bg-amber-100 text-amber-800"
+                      : ""
+                }
                 data-testid="badge-invoice-status"
               >
                 {invoice.status.charAt(0).toUpperCase() + invoice.status.slice(1)}

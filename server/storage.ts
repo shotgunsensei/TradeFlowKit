@@ -101,6 +101,7 @@ export interface IStorage {
   getInvoicesDueForRecurring(now: Date): Promise<Invoice[]>;
   generateInvoiceFromTemplate(templateId: string): Promise<Invoice | undefined>;
   convertQuoteToInvoice(orgId: string, quoteId: string, createdBy: string): Promise<Invoice | undefined>;
+  getInvoiceByStripePaymentIntentId(paymentIntentId: string): Promise<Invoice | undefined>;
 
   getCustomerByPortalToken(token: string): Promise<Customer | undefined>;
   getCustomerPortalData(customerId: string): Promise<{

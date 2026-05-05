@@ -278,6 +278,11 @@ router.post("/api/invoices/:id/payment-link", async (req: Request, res: Response
         transfer_data: {
           destination: org.stripeConnectAccountId,
         },
+        metadata: {
+          invoiceId: inv.id,
+          orgId: org.id,
+          feature: "invoice_payment",
+        },
         ...(applicationFeeAmount > 0 ? { application_fee_amount: applicationFeeAmount } : {}),
       },
     });

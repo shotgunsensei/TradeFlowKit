@@ -100,6 +100,18 @@ export class WebhookHandlers {
       await WebhookHandlers.handleInvoicePaymentCheckout(obj as unknown as Stripe.Checkout.Session, log);
       return;
     }
+    if (type === 'payment_intent.processing' && meta.feature === 'invoice_payment') {
+      await WebhookHandlers.handleInvoicePaymentIntentProcessing(obj as unknown as Stripe.PaymentIntent, log);
+      return;
+    }
+    if (type === 'payment_intent.succeeded' && meta.feature === 'invoice_payment') {
+      await WebhookHandlers.handleInvoicePaymentIntentSucceeded(obj as unknown as Stripe.PaymentIntent, log);
+      return;
+    }
+    if (type === 'payment_intent.payment_failed' && meta.feature === 'invoice_payment') {
+      await WebhookHandlers.handleInvoicePaymentIntentFailed(obj as unknown as Stripe.PaymentIntent, log);
+      return;
+    }
 
     // ── Main plan subscription events ───────────────────────────────────────
     if (type === 'checkout.session.completed') {
@@ -243,17 +255,162 @@ export class WebhookHandlers {
       if (!invoiceId || !orgId) return;
 
       const paymentIntentId = (session.payment_intent as string | null) || undefined;
+      // For ACH, payment_status is 'processing' (settles 3-5 business days later).
+      // For card, payment_status is 'paid' immediately.
+      const paymentStatus = session.payment_status;
 
-      await storage.updateInvoice(orgId, invoiceId, {
+      if (paymentStatus === 'paid') {
+        await storage.updateInvoice(orgId, invoiceId, {
+          status: 'paid',
+          paidAt: new Date(),
+          paidViaStripe: true,
+          stripePaymentIntentId: paymentIntentId || null,
+        });
+        log.info({ orgId, invoiceId, paymentIntentId }, '[invoice-payment] invoice marked paid via Stripe');
+      } else {
+        // ACH initiated but not yet settled. Hold in interim 'processing' state until
+        // payment_intent.succeeded (or revert on payment_intent.payment_failed).
+        await storage.updateInvoice(orgId, invoiceId, {
+          status: 'processing',
+          paidViaStripe: false,
+          paidAt: null,
+          stripePaymentIntentId: paymentIntentId || null,
+        });
+        log.info(
+          { orgId, invoiceId, paymentIntentId, paymentStatus },
+          '[invoice-payment] invoice marked processing (ACH bank transfer initiated)',
+        );
+      }
+    } catch (err) {
+      log.error({ err: errMsg(err) }, '[invoice-payment] handleInvoicePaymentCheckout error');
+    }
+  }
+
+  private static async resolveInvoiceFromPaymentIntent(
+    intent: Stripe.PaymentIntent,
+  ): Promise<{ orgId: string; invoiceId: string } | undefined> {
+    const meta = (intent.metadata ?? {}) as Record<string, string>;
+    let { invoiceId, orgId } = meta;
+    if (invoiceId && orgId) return { invoiceId, orgId };
+
+    // Fallback: find invoice by stored payment intent id (set at checkout.session.completed).
+    if (intent.id) {
+      const inv = await storage.getInvoiceByStripePaymentIntentId(intent.id);
+      if (inv) return { invoiceId: inv.id, orgId: inv.orgId };
+    }
+    return undefined;
+  }
+
+  private static async handleInvoicePaymentIntentProcessing(
+    intent: Stripe.PaymentIntent,
+    log: Logger,
+  ): Promise<void> {
+    try {
+      const ref = await WebhookHandlers.resolveInvoiceFromPaymentIntent(intent);
+      if (!ref) {
+        log.warn({ paymentIntentId: intent.id }, '[invoice-payment] processing: invoice not found');
+        return;
+      }
+      const existing = await storage.getInvoice(ref.orgId, ref.invoiceId);
+      if (!existing) return;
+      // Don't downgrade an already-paid invoice (e.g. card flow).
+      if (existing.status === 'paid') {
+        log.info({ ...ref, paymentIntentId: intent.id }, '[invoice-payment] processing: already paid; skipping');
+        return;
+      }
+      await storage.updateInvoice(ref.orgId, ref.invoiceId, {
+        status: 'processing',
+        paidViaStripe: false,
+        paidAt: null,
+        stripePaymentIntentId: intent.id,
+      });
+      log.info({ ...ref, paymentIntentId: intent.id }, '[invoice-payment] invoice marked processing (ACH)');
+    } catch (err) {
+      log.error({ err: errMsg(err) }, '[invoice-payment] handleInvoicePaymentIntentProcessing error');
+    }
+  }
+
+  private static async handleInvoicePaymentIntentSucceeded(
+    intent: Stripe.PaymentIntent,
+    log: Logger,
+  ): Promise<void> {
+    try {
+      const ref = await WebhookHandlers.resolveInvoiceFromPaymentIntent(intent);
+      if (!ref) {
+        log.warn({ paymentIntentId: intent.id }, '[invoice-payment] succeeded: invoice not found');
+        return;
+      }
+      const existing = await storage.getInvoice(ref.orgId, ref.invoiceId);
+      if (!existing) return;
+      if (existing.status === 'paid' && existing.stripePaymentIntentId === intent.id) {
+        log.info({ ...ref, paymentIntentId: intent.id }, '[invoice-payment] succeeded: already paid; skipping');
+        return;
+      }
+      await storage.updateInvoice(ref.orgId, ref.invoiceId, {
         status: 'paid',
         paidAt: new Date(),
         paidViaStripe: true,
-        stripePaymentIntentId: paymentIntentId || null,
+        stripePaymentIntentId: intent.id,
+      });
+      await storage.recordAudit({
+        orgId: ref.orgId,
+        action: 'paid',
+        entity: 'invoice',
+        entityId: ref.invoiceId,
+        after: { paidViaStripe: true, paymentIntentId: intent.id, source: 'stripe-webhook' },
+      });
+      log.info({ ...ref, paymentIntentId: intent.id }, '[invoice-payment] invoice settled and marked paid');
+    } catch (err) {
+      log.error({ err: errMsg(err) }, '[invoice-payment] handleInvoicePaymentIntentSucceeded error');
+    }
+  }
+
+  private static async handleInvoicePaymentIntentFailed(
+    intent: Stripe.PaymentIntent,
+    log: Logger,
+  ): Promise<void> {
+    try {
+      const ref = await WebhookHandlers.resolveInvoiceFromPaymentIntent(intent);
+      if (!ref) {
+        log.warn({ paymentIntentId: intent.id }, '[invoice-payment] failed: invoice not found');
+        return;
+      }
+      const existing = await storage.getInvoice(ref.orgId, ref.invoiceId);
+      if (!existing) return;
+
+      const lastErr = intent.last_payment_error;
+      const failureReason = lastErr?.message || lastErr?.code || 'unknown';
+      const failureCode = lastErr?.code || null;
+
+      // Revert to 'sent' (unpaid) so the org can retry. Only do this if we hadn't
+      // already reached a terminal paid state through some other channel.
+      if (existing.status !== 'paid') {
+        await storage.updateInvoice(ref.orgId, ref.invoiceId, {
+          status: 'sent',
+          paidViaStripe: false,
+          paidAt: null,
+        });
+      }
+
+      await storage.recordAudit({
+        orgId: ref.orgId,
+        action: 'payment_failed',
+        entity: 'invoice',
+        entityId: ref.invoiceId,
+        after: {
+          paymentIntentId: intent.id,
+          reason: failureReason,
+          code: failureCode,
+          source: 'stripe-webhook',
+        },
       });
 
-      log.info({ orgId, invoiceId }, '[invoice-payment] invoice marked paid via Stripe');
+      log.warn(
+        { ...ref, paymentIntentId: intent.id, reason: failureReason, code: failureCode },
+        '[invoice-payment] ACH payment failed; invoice reverted to unpaid',
+      );
     } catch (err) {
-      log.error({ err: errMsg(err) }, '[invoice-payment] handleInvoicePaymentCheckout error');
+      log.error({ err: errMsg(err) }, '[invoice-payment] handleInvoicePaymentIntentFailed error');
     }
   }
 

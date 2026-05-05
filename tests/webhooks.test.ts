@@ -110,7 +110,7 @@ describe("WebhookHandlers — main plan checkout", () => {
     expect(refreshed?.subscriptionStatus).toBe("past_due");
   });
 
-  it("invoice_payment checkout marks invoice paid", async () => {
+  it("invoice_payment checkout (card) marks invoice paid immediately", async () => {
     const cust = await storage.createCustomer(ctx.orgId!, { name: "PayCust", phone: "" } as any);
     const inv = await storage.createInvoice(
       ctx.orgId!,
@@ -121,12 +121,158 @@ describe("WebhookHandlers — main plan checkout", () => {
     const payload = makeEvent("checkout.session.completed", {
       metadata: { feature: "invoice_payment", invoiceId: inv.id, orgId: ctx.orgId },
       payment_intent: paymentIntentId,
+      payment_status: "paid",
     });
     await WebhookHandlers.processWebhook(payload, "sig");
     const refreshed = await storage.getInvoice(ctx.orgId!, inv.id);
     expect(refreshed?.status).toBe("paid");
     expect(refreshed?.paidViaStripe).toBe(true);
     expect(refreshed?.stripePaymentIntentId).toBe(paymentIntentId);
+  });
+
+  it("invoice_payment checkout (ACH) puts invoice in processing state, not paid", async () => {
+    const cust = await storage.createCustomer(ctx.orgId!, { name: "AchCust", phone: "" } as any);
+    const inv = await storage.createInvoice(
+      ctx.orgId!,
+      { customerId: cust.id, taxRate: "0", discount: "0", status: "sent", items: [{ description: "svc", qty: 1, unitPrice: 75 }] },
+      ctx.userId!,
+    );
+    const payload = makeEvent("checkout.session.completed", {
+      metadata: { feature: "invoice_payment", invoiceId: inv.id, orgId: ctx.orgId },
+      payment_intent: "pi_ach_processing",
+      payment_status: "processing",
+    });
+    await WebhookHandlers.processWebhook(payload, "sig");
+    const refreshed = await storage.getInvoice(ctx.orgId!, inv.id);
+    expect(refreshed?.status).toBe("processing");
+    expect(refreshed?.paidViaStripe).toBe(false);
+    expect(refreshed?.paidAt).toBeNull();
+    expect(refreshed?.stripePaymentIntentId).toBe("pi_ach_processing");
+  });
+
+  it("payment_intent.processing marks invoice processing (resolved by metadata)", async () => {
+    const cust = await storage.createCustomer(ctx.orgId!, { name: "AchPi", phone: "" } as any);
+    const inv = await storage.createInvoice(
+      ctx.orgId!,
+      { customerId: cust.id, taxRate: "0", discount: "0", status: "sent", items: [{ description: "svc", qty: 1, unitPrice: 100 }] },
+      ctx.userId!,
+    );
+    const payload = makeEvent("payment_intent.processing", {
+      id: "pi_pi_processing",
+      metadata: { feature: "invoice_payment", invoiceId: inv.id, orgId: ctx.orgId },
+    });
+    await WebhookHandlers.processWebhook(payload, "sig");
+    const refreshed = await storage.getInvoice(ctx.orgId!, inv.id);
+    expect(refreshed?.status).toBe("processing");
+    expect(refreshed?.stripePaymentIntentId).toBe("pi_pi_processing");
+    expect(refreshed?.paidViaStripe).toBe(false);
+  });
+
+  it("payment_intent.succeeded settles processing ACH invoice as paid", async () => {
+    const cust = await storage.createCustomer(ctx.orgId!, { name: "AchSettled", phone: "" } as any);
+    const inv = await storage.createInvoice(
+      ctx.orgId!,
+      { customerId: cust.id, taxRate: "0", discount: "0", status: "sent", items: [{ description: "svc", qty: 1, unitPrice: 200 }] },
+      ctx.userId!,
+    );
+    // Initiate ACH
+    await WebhookHandlers.processWebhook(
+      makeEvent("checkout.session.completed", {
+        metadata: { feature: "invoice_payment", invoiceId: inv.id, orgId: ctx.orgId },
+        payment_intent: "pi_ach_settle",
+        payment_status: "processing",
+      }),
+      "sig",
+    );
+    const intermediate = await storage.getInvoice(ctx.orgId!, inv.id);
+    expect(intermediate?.status).toBe("processing");
+
+    // Settle (no metadata on the payment_intent — should fall back to lookup by id)
+    await WebhookHandlers.processWebhook(
+      makeEvent("payment_intent.succeeded", {
+        id: "pi_ach_settle",
+        metadata: { feature: "invoice_payment" },
+      }),
+      "sig",
+    );
+    const refreshed = await storage.getInvoice(ctx.orgId!, inv.id);
+    expect(refreshed?.status).toBe("paid");
+    expect(refreshed?.paidViaStripe).toBe(true);
+    expect(refreshed?.paidAt).toBeTruthy();
+    expect(refreshed?.stripePaymentIntentId).toBe("pi_ach_settle");
+  });
+
+  it("payment_intent.payment_failed reverts ACH invoice back to unpaid and audits", async () => {
+    const cust = await storage.createCustomer(ctx.orgId!, { name: "AchFailed", phone: "" } as any);
+    const inv = await storage.createInvoice(
+      ctx.orgId!,
+      { customerId: cust.id, taxRate: "0", discount: "0", status: "sent", items: [{ description: "svc", qty: 1, unitPrice: 60 }] },
+      ctx.userId!,
+    );
+    // ACH initiated
+    await WebhookHandlers.processWebhook(
+      makeEvent("checkout.session.completed", {
+        metadata: { feature: "invoice_payment", invoiceId: inv.id, orgId: ctx.orgId },
+        payment_intent: "pi_ach_fail",
+        payment_status: "processing",
+      }),
+      "sig",
+    );
+
+    // ACH failed (insufficient funds, etc.)
+    await WebhookHandlers.processWebhook(
+      makeEvent("payment_intent.payment_failed", {
+        id: "pi_ach_fail",
+        metadata: { feature: "invoice_payment", invoiceId: inv.id, orgId: ctx.orgId },
+        last_payment_error: { code: "insufficient_funds", message: "Insufficient funds in account" },
+      }),
+      "sig",
+    );
+
+    const refreshed = await storage.getInvoice(ctx.orgId!, inv.id);
+    expect(refreshed?.status).toBe("sent");
+    expect(refreshed?.paidViaStripe).toBe(false);
+    expect(refreshed?.paidAt).toBeNull();
+
+    // Audit entry recorded for org notification
+    const audit = await storage.getAuditLog(ctx.orgId!, { limit: 50, offset: 0, entity: "invoice", action: "payment_failed" });
+    const matching = audit.items.find((row) => row.entityId === inv.id);
+    expect(matching).toBeTruthy();
+    expect((matching?.after as any)?.code).toBe("insufficient_funds");
+    expect((matching?.after as any)?.paymentIntentId).toBe("pi_ach_fail");
+  });
+
+  it("payment_intent.succeeded does not downgrade an already-paid invoice", async () => {
+    const cust = await storage.createCustomer(ctx.orgId!, { name: "AlreadyPaid", phone: "" } as any);
+    const inv = await storage.createInvoice(
+      ctx.orgId!,
+      { customerId: cust.id, taxRate: "0", discount: "0", status: "sent", items: [{ description: "svc", qty: 1, unitPrice: 30 }] },
+      ctx.userId!,
+    );
+    // Card flow: paid immediately
+    await WebhookHandlers.processWebhook(
+      makeEvent("checkout.session.completed", {
+        metadata: { feature: "invoice_payment", invoiceId: inv.id, orgId: ctx.orgId },
+        payment_intent: "pi_card_dup",
+        payment_status: "paid",
+      }),
+      "sig",
+    );
+    const first = await storage.getInvoice(ctx.orgId!, inv.id);
+    expect(first?.status).toBe("paid");
+    const firstPaidAt = first?.paidAt;
+
+    // payment_intent.succeeded fires later — should be a no-op
+    await WebhookHandlers.processWebhook(
+      makeEvent("payment_intent.succeeded", {
+        id: "pi_card_dup",
+        metadata: { feature: "invoice_payment", invoiceId: inv.id, orgId: ctx.orgId },
+      }),
+      "sig",
+    );
+    const second = await storage.getInvoice(ctx.orgId!, inv.id);
+    expect(second?.status).toBe("paid");
+    expect(second?.paidAt?.getTime()).toBe(firstPaidAt?.getTime());
   });
 
   it("duplicate event id is a no-op: zero writes on replay", async () => {
