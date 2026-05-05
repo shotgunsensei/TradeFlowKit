@@ -107,11 +107,11 @@ export function verifySsoToken(
     return { ok: false, reason: "expired" };
   }
 
-  if (!payload.jti || typeof payload.jti !== "string") {
+  if (typeof payload.jti !== "string" || payload.jti.trim().length === 0) {
     return { ok: false, reason: "missing_jti" };
   }
 
-  if (!payload.email || typeof payload.email !== "string") {
+  if (typeof payload.email !== "string" || payload.email.trim().length === 0) {
     return { ok: false, reason: "missing_email" };
   }
 

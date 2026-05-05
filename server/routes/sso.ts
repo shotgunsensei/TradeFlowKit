@@ -221,16 +221,9 @@ router.get("/sso", async (req: Request, res: Response) => {
         fullName: deriveFullName(claims),
         phone: "",
         email: emailNormalized,
+        isSsoProvisioned: true,
       });
       provisioned = true;
-    }
-
-    if (user.totpEnabledAt) {
-      reqLog.warn(
-        { outcome: "blocked_2fa", jti: claims.jti, userId: user.id },
-        "SSO blocked: user has 2FA enabled"
-      );
-      return sendError(res, "internal");
     }
 
     req.session.userId = user.id;

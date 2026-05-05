@@ -94,6 +94,7 @@ export const users = pgTable("users", {
   isSuperAdmin: boolean("is_super_admin").default(false).notNull(),
   totpSecret: text("totp_secret"),
   totpEnabledAt: timestamp("totp_enabled_at"),
+  isSsoProvisioned: boolean("is_sso_provisioned").default(false).notNull(),
 });
 
 export const userRecoveryCodes = pgTable("user_recovery_codes", {
@@ -440,6 +441,7 @@ export const insertUserSchema = createInsertSchema(users).pick({
   fullName: true,
   phone: true,
   email: true,
+  isSsoProvisioned: true,
 });
 
 export const insertOrgSchema = createInsertSchema(orgs).pick({

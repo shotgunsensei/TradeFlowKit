@@ -123,4 +123,18 @@ describe("verifySsoToken", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe("missing_email");
   });
+
+  it("rejects whitespace-only email", () => {
+    const token = sign({ ...baseClaims(), email: "   " });
+    const result = verifySsoToken(token, config);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe("missing_email");
+  });
+
+  it("rejects whitespace-only jti", () => {
+    const token = sign({ ...baseClaims(), jti: "   " });
+    const result = verifySsoToken(token, config);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe("missing_jti");
+  });
 });
