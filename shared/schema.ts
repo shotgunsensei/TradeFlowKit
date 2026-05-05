@@ -10,6 +10,7 @@ import {
   boolean,
   pgEnum,
   index,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -95,7 +96,16 @@ export const users = pgTable("users", {
   totpSecret: text("totp_secret"),
   totpEnabledAt: timestamp("totp_enabled_at"),
   isSsoProvisioned: boolean("is_sso_provisioned").default(false).notNull(),
-});
+}, (t) => [
+  uniqueIndex("users_email_unique_idx")
+    .on(sql`lower(trim(${t.email}))`)
+    .where(sql`length(trim(${t.email})) > 0`),
+]);
+
+export function normalizeEmail(email: string | null | undefined): string {
+  if (email == null) return "";
+  return String(email).trim().toLowerCase();
+}
 
 export const userRecoveryCodes = pgTable("user_recovery_codes", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),

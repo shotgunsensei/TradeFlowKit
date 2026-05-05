@@ -196,20 +196,7 @@ router.get("/sso", async (req: Request, res: Response) => {
 
   try {
     const emailNormalized = claims.email.trim().toLowerCase();
-    let user;
-    try {
-      user = await storage.getUserByEmail(emailNormalized);
-    } catch (lookupErr) {
-      const msg = lookupErr instanceof Error ? lookupErr.message : String(lookupErr);
-      if (msg.startsWith("AMBIGUOUS_EMAIL")) {
-        reqLog.error(
-          { outcome: "ambiguous_email", jti: claims.jti, email: emailNormalized },
-          "SSO blocked: multiple local users share this email"
-        );
-        return sendError(res, "internal");
-      }
-      throw lookupErr;
-    }
+    let user = await storage.getUserByEmail(emailNormalized);
     let provisioned = false;
 
     if (!user) {

@@ -3,6 +3,7 @@ import { Router, type Request, type Response } from "express";
 import { storage } from "../storage";
 import { requireAuth } from "../middleware";
 import { hashPassword, verifyPassword } from "../middleware";
+import { DuplicateEmailError } from "../storage/users";
 
 const router = Router();
 
@@ -160,6 +161,9 @@ router.patch("/api/auth/profile", requireAuth, async (req: Request, res: Respons
     const user = await storage.updateUser(req.session.userId!, { fullName, phone, email });
     res.json({ ...user, password: undefined });
   } catch (err) {
+    if (err instanceof DuplicateEmailError) {
+      return res.status(409).send("That email is already in use by another account");
+    }
     res.status(500).send(errMsg(err));
   }
 });

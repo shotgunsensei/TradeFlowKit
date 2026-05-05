@@ -3,10 +3,28 @@ import { db } from "../db";
 import {
   users,
   userRecoveryCodes,
+  normalizeEmail,
   type User,
   type InsertUser,
   type UserRecoveryCode,
 } from "@shared/schema";
+
+export class DuplicateEmailError extends Error {
+  email: string;
+  constructor(email: string) {
+    super(`DUPLICATE_EMAIL: another account already uses ${email}`);
+    this.name = "DuplicateEmailError";
+    this.email = email;
+  }
+}
+
+function isUniqueEmailViolation(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const e = err as { code?: string; constraint?: string; message?: string };
+  if (e.code !== "23505") return false;
+  const ref = `${e.constraint || ""} ${e.message || ""}`;
+  return ref.includes("users_email_unique_idx");
+}
 
 export const usersStorage = {
   async getUser(id: string): Promise<User | undefined> {
@@ -20,7 +38,7 @@ export const usersStorage = {
   },
 
   async getUserByEmail(email: string): Promise<User | undefined> {
-    const normalized = (email || "").trim().toLowerCase();
+    const normalized = normalizeEmail(email);
     if (!normalized) return undefined;
     const matches = await db
       .select()
@@ -34,13 +52,35 @@ export const usersStorage = {
   },
 
   async createUser(data: InsertUser): Promise<User> {
-    const [user] = await db.insert(users).values(data).returning();
-    return user;
+    const normalized = data.email == null ? data.email : normalizeEmail(data.email);
+    try {
+      const [user] = await db
+        .insert(users)
+        .values({ ...data, email: normalized as InsertUser["email"] })
+        .returning();
+      return user;
+    } catch (err) {
+      if (isUniqueEmailViolation(err)) {
+        throw new DuplicateEmailError(normalizeEmail(data.email));
+      }
+      throw err;
+    }
   },
 
   async updateUser(id: string, data: Partial<User>): Promise<User | undefined> {
-    const [user] = await db.update(users).set(data).where(eq(users.id, id)).returning();
-    return user;
+    const next: Partial<User> = { ...data };
+    if (Object.prototype.hasOwnProperty.call(data, "email")) {
+      next.email = data.email == null ? data.email : normalizeEmail(data.email);
+    }
+    try {
+      const [user] = await db.update(users).set(next).where(eq(users.id, id)).returning();
+      return user;
+    } catch (err) {
+      if (isUniqueEmailViolation(err)) {
+        throw new DuplicateEmailError(normalizeEmail(next.email as string | null | undefined));
+      }
+      throw err;
+    }
   },
 
   async getAllUsers(): Promise<User[]> {
