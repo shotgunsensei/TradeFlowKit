@@ -1,0 +1,62 @@
+Integrate TradeFlowKit as a Shotgun OS destination module using OperatorOS SSO.
+
+Goal:
+TradeFlowKit should accept users launched from OperatorOS via short-lived signed SSO handoff tokens.
+
+Do not rebuild TradeFlowKit.
+Do not replace its existing core app logic.
+Only add the destination-side SSO receiver, verifier, and user/session provisioning.
+
+Expected incoming URL:
+GET /sso?token=SIGNED_HANDOFF_TOKEN
+
+Required environment variables:
+- MODULE_SSO_SECRET
+- OPERATOROS_BASE_URL
+- APP_ENV
+- MODULE_SLUG=tradeflowkit
+
+Validation flow:
+1. Read token from /sso?token=...
+2. Verify HS256 signature using MODULE_SSO_SECRET
+3. Verify iss === OPERATOROS_BASE_URL
+4. Verify aud === "tradeflowkit"
+5. Verify module_slug === "tradeflowkit"
+6. Verify env === APP_ENV
+7. Verify exp has not passed
+8. Call POST {OPERATOROS_BASE_URL}/v1/modules/sso/consume with:
+   - jti
+   - aud
+   - env
+9. If consume returns:
+   - 200: continue login
+   - 409: reject as replay
+   - 404: reject as unknown token
+   - 410: reject as expired
+   - 400: reject as aud/env mismatch
+10. Lookup or create local TradeFlowKit user by email
+11. Start local TradeFlowKit session
+12. Redirect user to TradeFlowKit dashboard
+
+Security requirements:
+- Never expose MODULE_SSO_SECRET client-side
+- Token validation must happen server-side only
+- Do not trust email/user_id until token is verified and consumed
+- Destination app must use email as the stable identity link, not OperatorOS user_id
+- Log SSO success/failure server-side
+- Show a clean error page for invalid SSO attempts
+
+Add:
+- docs/OPERATOROS_SSO_DESTINATION.md
+- tests or manual validation checklist
+- debug-only route disabled in production if useful
+
+Manual tests:
+- Valid OperatorOS launch logs user into TradeFlowKit
+- Reusing same URL/token fails
+- Wrong aud fails
+- Wrong env fails
+- Expired token fails
+- Missing token shows error
+- Existing local user is reused by email
+- New user is provisioned by email
