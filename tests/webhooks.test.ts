@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterAll, vi } from "vitest";
+import { randomUUID } from "crypto";
 
 vi.mock("../server/stripeClient", () => ({
   getStripeSync: async () => ({
@@ -20,7 +21,9 @@ function makeEvent(type: string, object: any, id = `evt_test_${Math.random().toS
 describe("WebhookHandlers — main plan checkout", () => {
   const ctx: { orgId?: string; userId?: string } = {};
 
-  beforeAll(async () => {
+  beforeEach(async () => {
+    // Each test gets a freshly-seeded org so subscription-state mutations
+    // from one test can't bleed into another (order-independent).
     const { org, user } = await setupOrg("free");
     ctx.orgId = org.id;
     ctx.userId = user.id;
@@ -36,9 +39,6 @@ describe("WebhookHandlers — main plan checkout", () => {
   it.each(["individual", "small_business", "enterprise"] as const)(
     "checkout.session.completed upgrades plan to %s",
     async (plan) => {
-      // Reset to free
-      await storage.updateOrg(ctx.orgId!, { plan: "free", subscriptionStatus: "canceled" } as any);
-
       const payload = makeEvent("checkout.session.completed", {
         metadata: { orgId: ctx.orgId, plan },
         subscription: `sub_test_${plan}`,
@@ -54,13 +54,13 @@ describe("WebhookHandlers — main plan checkout", () => {
   );
 
   it("replaying the same checkout event is a no-op (same final state)", async () => {
-    await storage.updateOrg(ctx.orgId!, { plan: "free", subscriptionStatus: "canceled" } as any);
-
-    const eventId = "evt_idempotency_check";
+    // Use a unique event id per run so the dedupe table from a previous
+    // run doesn't cause the first delivery to be skipped.
+    const eventId = `evt_idempotency_check_${randomUUID()}`;
     const obj = {
       metadata: { orgId: ctx.orgId, plan: "small_business" },
-      subscription: "sub_idem",
-      customer: "cus_idem",
+      subscription: `sub_idem_${randomUUID().slice(0, 8)}`,
+      customer: `cus_idem_${randomUUID().slice(0, 8)}`,
     };
     await WebhookHandlers.processWebhook(makeEvent("checkout.session.completed", obj, eventId), "sig");
     const first = await storage.getOrg(ctx.orgId!);
@@ -75,16 +75,18 @@ describe("WebhookHandlers — main plan checkout", () => {
   });
 
   it("subscription.deleted downgrades org to free", async () => {
+    const cust = `cus_del_${randomUUID().slice(0, 8)}`;
+    const sub = `sub_del_${randomUUID().slice(0, 8)}`;
     await storage.updateOrg(ctx.orgId!, {
       plan: "enterprise",
       subscriptionStatus: "active",
-      stripeCustomerId: "cus_del_test",
-      stripeSubscriptionId: "sub_del_test",
+      stripeCustomerId: cust,
+      stripeSubscriptionId: sub,
     } as any);
 
     const payload = makeEvent("customer.subscription.deleted", {
-      id: "sub_del_test",
-      customer: "cus_del_test",
+      id: sub,
+      customer: cust,
       status: "canceled",
     });
     await WebhookHandlers.processWebhook(payload, "sig");
@@ -96,12 +98,13 @@ describe("WebhookHandlers — main plan checkout", () => {
   });
 
   it("invoice.payment_failed marks subscription past_due", async () => {
+    const cust = `cus_pf_${randomUUID().slice(0, 8)}`;
     await storage.updateOrg(ctx.orgId!, {
       plan: "small_business",
       subscriptionStatus: "active",
-      stripeCustomerId: "cus_pf_test",
+      stripeCustomerId: cust,
     } as any);
-    const payload = makeEvent("invoice.payment_failed", { customer: "cus_pf_test" });
+    const payload = makeEvent("invoice.payment_failed", { customer: cust });
     await WebhookHandlers.processWebhook(payload, "sig");
     const refreshed = await storage.getOrg(ctx.orgId!);
     expect(refreshed?.subscriptionStatus).toBe("past_due");
@@ -114,30 +117,24 @@ describe("WebhookHandlers — main plan checkout", () => {
       { customerId: cust.id, taxRate: "0", discount: "0", status: "sent", items: [{ description: "svc", qty: 1, unitPrice: 50 }] },
       ctx.userId!,
     );
+    const paymentIntentId = `pi_test_paid_${randomUUID().slice(0, 8)}`;
     const payload = makeEvent("checkout.session.completed", {
       metadata: { feature: "invoice_payment", invoiceId: inv.id, orgId: ctx.orgId },
-      payment_intent: "pi_test_paid",
+      payment_intent: paymentIntentId,
     });
     await WebhookHandlers.processWebhook(payload, "sig");
     const refreshed = await storage.getInvoice(ctx.orgId!, inv.id);
     expect(refreshed?.status).toBe("paid");
     expect(refreshed?.paidViaStripe).toBe(true);
-    expect(refreshed?.stripePaymentIntentId).toBe("pi_test_paid");
+    expect(refreshed?.stripePaymentIntentId).toBe(paymentIntentId);
   });
 
   it("duplicate event id is a no-op: zero writes on replay", async () => {
-    await storage.updateOrg(ctx.orgId!, {
-      plan: "free",
-      subscriptionStatus: "canceled",
-      stripeCustomerId: null,
-      stripeSubscriptionId: null,
-    } as any);
-
-    const eventId = `evt_zero_writes_${Math.random().toString(36).slice(2)}`;
+    const eventId = `evt_zero_writes_${randomUUID()}`;
     const obj = {
       metadata: { orgId: ctx.orgId, plan: "individual" },
-      subscription: "sub_zw",
-      customer: "cus_zw",
+      subscription: `sub_zw_${randomUUID().slice(0, 8)}`,
+      customer: `cus_zw_${randomUUID().slice(0, 8)}`,
     };
 
     // First delivery processes normally
