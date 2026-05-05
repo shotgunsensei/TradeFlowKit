@@ -51,6 +51,7 @@ const webhookLimiter = rateLimit({
 
 app.use("/api/auth/login", authLimiter);
 app.use("/api/auth/register", authLimiter);
+app.use("/sso", authLimiter);
 app.use("/api/stripe/webhook", webhookLimiter);
 app.use("/api/call-recovery/webhook", webhookLimiter);
 

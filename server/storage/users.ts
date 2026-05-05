@@ -19,6 +19,20 @@ export const usersStorage = {
     return user;
   },
 
+  async getUserByEmail(email: string): Promise<User | undefined> {
+    const normalized = (email || "").trim().toLowerCase();
+    if (!normalized) return undefined;
+    const matches = await db
+      .select()
+      .from(users)
+      .where(sql`lower(${users.email}) = ${normalized}`)
+      .limit(2);
+    if (matches.length > 1) {
+      throw new Error(`AMBIGUOUS_EMAIL: multiple users share email ${normalized}`);
+    }
+    return matches[0];
+  },
+
   async createUser(data: InsertUser): Promise<User> {
     const [user] = await db.insert(users).values(data).returning();
     return user;

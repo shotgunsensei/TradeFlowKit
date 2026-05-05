@@ -6,6 +6,7 @@ import { pool } from "../db";
 import { getSessionSecret } from "../env";
 
 import authRouter from "./auth";
+import ssoRouter from "./sso";
 import orgsRouter from "./orgs";
 import customersRouter from "./customers";
 import jobsRouter from "./jobs";
@@ -68,6 +69,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   app.use(wellKnownRouter);
   app.use(authRouter);
+  app.use(ssoRouter);
   app.use(orgsRouter);
   app.use(customersRouter);
   app.use(jobsRouter);
