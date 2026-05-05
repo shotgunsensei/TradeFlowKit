@@ -127,8 +127,10 @@ After consume returns 200:
   belongs to one or more orgs, the first one is set as `req.session.orgId`.
   Otherwise no org is set and the post-login flow handles org creation/joining
   the same way it does for native signups.
-- If the user has 2FA enabled, SSO is blocked (the user must complete 2FA via
-  the normal login flow). The error page is shown with code `SSO-019`.
+- 2FA is **not** re-checked on the SSO path. OperatorOS is the trusted issuer
+  of the handoff token; once consume succeeds, the session is started even for
+  users who have a TOTP secret configured locally. (Native username/password
+  sign-in still enforces 2FA exactly as before — this is purely additive.)
 
 The redirect target is always `/dashboard`.
 
@@ -144,7 +146,7 @@ Every SSO attempt logs a single structured line under `component: "sso"`:
 | `verify_failed` | `reason` (`missing_token` / `bad_signature` / `expired` / …) |
 | `consume_failed` | `reason` (`replay` / `unknown` / `expired` / `mismatch` / `transient`), `jti` |
 | `not_configured` | — |
-| `blocked_2fa` | `jti`, `userId` |
+| `ambiguous_email` | `jti`, `email` |
 | `session_failed` | `jti`, `userId` |
 | `internal_error` | `jti`, `err` |
 

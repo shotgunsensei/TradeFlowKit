@@ -25,7 +25,7 @@ export const usersStorage = {
     const matches = await db
       .select()
       .from(users)
-      .where(sql`lower(${users.email}) = ${normalized}`)
+      .where(sql`lower(trim(${users.email})) = ${normalized}`)
       .limit(2);
     if (matches.length > 1) {
       throw new Error(`AMBIGUOUS_EMAIL: multiple users share email ${normalized}`);
