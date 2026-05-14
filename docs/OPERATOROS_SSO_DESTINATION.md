@@ -59,8 +59,10 @@ For backward compatibility with deployments running the original task #66
 implementation, two legacy env names are still accepted:
 
 - `MODULE_SLUG` → falls back into `OPERATOROS_SSO_AUDIENCE`.
-- `APP_ENV` → translated into `OPERATOROS_SSO_ENV` (`production` → `prod`,
-  `staging` → `staging`, `development`/`test` → `dev`).
+- `APP_ENV` → translated into `OPERATOROS_SSO_ENV` (`production`/`prod` →
+  `prod`, `staging`/`stage` → `staging`, `development`/`dev` → `dev`). Any
+  other value (including `test`) is rejected — set `OPERATOROS_SSO_ENV`
+  explicitly instead.
 
 New deployments should set the canonical names directly.
 
