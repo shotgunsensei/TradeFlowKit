@@ -164,10 +164,10 @@ describe("/sso route", () => {
     const provisioned = await storage.getUserByOperatorosUserId(claims.sub);
     expect(provisioned).toBeDefined();
     expect(provisioned?.email).toBe(claims.email.toLowerCase());
-    expect((provisioned as any)?.isSsoProvisioned).toBe(true);
-    expect((provisioned as any)?.operatorosUserId).toBe(claims.sub);
-    expect((provisioned as any)?.operatorosRole).toBe("user");
-    expect((provisioned as any)?.operatorosPlanSlug).toBe("starter");
+    expect(provisioned?.isSsoProvisioned).toBe(true);
+    expect(provisioned?.operatorosUserId).toBe(claims.sub);
+    expect(provisioned?.operatorosRole).toBe("user");
+    expect(provisioned?.operatorosPlanSlug).toBe("starter");
     expect(provisioned?.fullName).toBe("Alice Example");
     if (provisioned) trackUser(provisioned.id);
     const sessions = (app as any).__sessions as Map<string, any>;
@@ -201,14 +201,14 @@ describe("/sso route", () => {
       email: baseEmail,
     } as any);
     trackUser(existing.id);
-    expect((existing as any).operatorosUserId).toBeNull();
+    expect(existing.operatorosUserId).toBeNull();
 
     const sub = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString("hex")}`;
     const claims = validClaims({ sub, user_id: sub, email: baseEmail.toUpperCase() });
     const res = await request(app).get(`/sso?token=${signToken(claims)}`).set("x-test-sid", "sid-backfill");
     expect(res.status).toBe(302);
     const updated = await storage.getUser(existing.id);
-    expect((updated as any)?.operatorosUserId).toBe(sub);
+    expect(updated?.operatorosUserId).toBe(sub);
     const sessions = (app as any).__sessions as Map<string, any>;
     expect(sessions.get("sid-backfill")?.userId).toBe(existing.id);
   });

@@ -51,12 +51,17 @@ export interface SsoConfig {
   apiUrl: string;
 }
 
-function normalizeLegacyEnv(value: string | undefined): "prod" | "staging" | "dev" | null {
+/**
+ * Translate the legacy `APP_ENV` value into the canonical `OPERATOROS_SSO_ENV`
+ * vocabulary. Only used as a backward-compatibility bridge — `NODE_ENV` is NOT
+ * a fallback (the canonical contract requires an explicit per-deployment value).
+ */
+function translateLegacyAppEnv(value: string | undefined): "prod" | "staging" | "dev" | null {
   if (!value) return null;
   const v = value.trim().toLowerCase();
   if (v === "prod" || v === "production") return "prod";
   if (v === "staging" || v === "stage") return "staging";
-  if (v === "dev" || v === "development" || v === "test") return "dev";
+  if (v === "dev" || v === "development") return "dev";
   return null;
 }
 
@@ -77,8 +82,7 @@ export function getSsoConfig(): SsoConfig | null {
 
   const ssoEnv =
     (env.OPERATOROS_SSO_ENV as "prod" | "staging" | "dev" | undefined) ||
-    normalizeLegacyEnv(env.APP_ENV) ||
-    normalizeLegacyEnv(env.NODE_ENV);
+    translateLegacyAppEnv(env.APP_ENV);
   if (!ssoEnv) return null;
 
   const baseUrl = env.OPERATOROS_BASE_URL.replace(/\/+$/, "");
@@ -105,6 +109,9 @@ export function assertSsoConfigForProduction(): void {
   const env = getEnv();
   if (env.NODE_ENV !== "production") return;
 
+  // Presence checks first, with names that point at the canonical var the
+  // operator should set. Legacy aliases (MODULE_SLUG, APP_ENV) still satisfy
+  // the presence requirement.
   const missing: string[] = [];
   if (!env.MODULE_SSO_SECRET) missing.push("MODULE_SSO_SECRET");
   if (!env.OPERATOROS_BASE_URL) missing.push("OPERATOROS_BASE_URL");
@@ -120,9 +127,19 @@ export function assertSsoConfigForProduction(): void {
     );
   }
 
-  if (env.MODULE_SSO_SECRET && env.MODULE_SSO_SECRET.length < MODULE_SSO_SECRET_MIN_LENGTH) {
+  if (env.MODULE_SSO_SECRET!.length < MODULE_SSO_SECRET_MIN_LENGTH) {
     throw new Error(
       `MODULE_SSO_SECRET must be at least ${MODULE_SSO_SECRET_MIN_LENGTH} characters (OperatorOS SSO contract)`
+    );
+  }
+
+  // Semantic validity check: the effective config must actually resolve. This
+  // catches cases where presence checks pass but a legacy value can't be
+  // translated to a valid canonical value (e.g. APP_ENV=staging-blue).
+  const config = getSsoConfig();
+  if (!config) {
+    throw new Error(
+      "OperatorOS SSO contract: env vars are present but could not be resolved into a valid SsoConfig (check OPERATOROS_SSO_ENV is one of prod|staging|dev — APP_ENV legacy fallback only translates production|staging|development)"
     );
   }
 }

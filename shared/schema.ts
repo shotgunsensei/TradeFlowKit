@@ -460,6 +460,10 @@ export const insertUserSchema = createInsertSchema(users).pick({
   phone: true,
   email: true,
   isSsoProvisioned: true,
+  operatorosUserId: true,
+  operatorosRole: true,
+  operatorosPlanSlug: true,
+  operatorosOrganizationId: true,
 });
 
 export const insertOrgSchema = createInsertSchema(orgs).pick({

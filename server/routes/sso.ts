@@ -1,9 +1,10 @@
 import { Router, type Request, type Response } from "express";
 import crypto from "crypto";
+import type { InsertUser, User } from "@shared/schema";
 import { storage } from "../storage";
 import { hashPassword } from "../middleware";
 import { getSsoConfig } from "../env";
-import { verifySsoToken, type SsoRejectCode } from "../sso/verifier";
+import { verifySsoToken, type SsoRejectCode, type SsoTokenClaims } from "../sso/verifier";
 import { consumeSsoToken } from "../sso/consume";
 import { renderSsoErrorPage } from "../sso/errorPage";
 import { logger } from "../logger";
@@ -131,7 +132,7 @@ function generateRandomPassword(): string {
   return crypto.randomBytes(32).toString("base64url");
 }
 
-function deriveFullName(claims: { name?: string; email: string }): string {
+function deriveFullName(claims: Pick<SsoTokenClaims, "name" | "email">): string {
   if (claims.name && claims.name.trim()) return claims.name.trim();
   const local = claims.email.split("@")[0] || "";
   return local.charAt(0).toUpperCase() + local.slice(1);
@@ -150,7 +151,7 @@ async function pickUniqueUsername(emailNormalized: string): Promise<string> {
 }
 
 router.get("/sso", async (req: Request, res: Response) => {
-  const reqLog = (req as any).log?.child?.({ route: "/sso" }) || ssoLog;
+  const reqLog = req.log ? req.log.child({ route: "/sso" }) : ssoLog;
 
   const config = getSsoConfig();
   if (!config) {
@@ -195,9 +196,8 @@ router.get("/sso", async (req: Request, res: Response) => {
       // attach the sub so subsequent launches go through the sub-keyed path.
       const byEmail = await storage.getUserByEmail(emailNormalized);
       if (byEmail) {
-        user = (await storage.updateUser(byEmail.id, {
-          operatorosUserId: claims.sub,
-        })) || byEmail;
+        const backfillPatch: Partial<User> = { operatorosUserId: claims.sub };
+        user = (await storage.updateUser(byEmail.id, backfillPatch)) || byEmail;
         backfilled = true;
       }
     }
@@ -205,7 +205,7 @@ router.get("/sso", async (req: Request, res: Response) => {
     if (!user) {
       const username = await pickUniqueUsername(emailNormalized);
       const randomPassword = await hashPassword(generateRandomPassword());
-      user = await storage.createUser({
+      const newUser: InsertUser = {
         username,
         password: randomPassword,
         fullName: deriveFullName(claims),
@@ -216,24 +216,25 @@ router.get("/sso", async (req: Request, res: Response) => {
         operatorosRole: claims.role ?? null,
         operatorosPlanSlug: claims.plan_slug ?? null,
         operatorosOrganizationId: claims.organization_id ?? null,
-      } as any);
+      };
+      user = await storage.createUser(newUser);
       provisioned = true;
     } else {
       // Refresh OperatorOS-owned attributes on every successful launch so the
       // local copy stays in sync with the parent platform.
-      const patch: Record<string, unknown> = {};
+      const patch: Partial<User> = {};
       if (user.email !== emailNormalized) patch.email = emailNormalized;
-      if ((user as any).operatorosRole !== (claims.role ?? null)) {
+      if (user.operatorosRole !== (claims.role ?? null)) {
         patch.operatorosRole = claims.role ?? null;
       }
-      if ((user as any).operatorosPlanSlug !== (claims.plan_slug ?? null)) {
+      if (user.operatorosPlanSlug !== (claims.plan_slug ?? null)) {
         patch.operatorosPlanSlug = claims.plan_slug ?? null;
       }
-      if ((user as any).operatorosOrganizationId !== (claims.organization_id ?? null)) {
+      if (user.operatorosOrganizationId !== (claims.organization_id ?? null)) {
         patch.operatorosOrganizationId = claims.organization_id ?? null;
       }
       if (Object.keys(patch).length > 0) {
-        const updated = await storage.updateUser(user.id, patch as any);
+        const updated = await storage.updateUser(user.id, patch);
         if (updated) user = updated;
       }
     }
