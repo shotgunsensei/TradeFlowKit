@@ -3,8 +3,9 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vites
 vi.hoisted(() => {
   process.env.MODULE_SSO_SECRET = "test-route-secret";
   process.env.OPERATOROS_BASE_URL = "https://operatoros.test";
-  process.env.APP_ENV = process.env.NODE_ENV || "development";
-  process.env.MODULE_SLUG = "tradeflowkit";
+  process.env.OPERATOROS_API_URL = "https://operatoros.test";
+  process.env.OPERATOROS_SSO_AUDIENCE = "tradeflowkit";
+  process.env.OPERATOROS_SSO_ENV = "dev";
 });
 
 vi.mock("../server/sso/consume", () => ({
@@ -48,16 +49,26 @@ function buildApp() {
   return app;
 }
 
-const validClaims = () => ({
-  iss: "https://operatoros.test",
-  aud: "tradeflowkit",
-  module_slug: "tradeflowkit",
-  env: process.env.APP_ENV || "development",
-  jti: `jti-${crypto.randomBytes(8).toString("hex")}`,
-  email: `sso-${crypto.randomBytes(4).toString("hex")}@example.com`,
-  exp: Math.floor(Date.now() / 1000) + 60,
-  iat: Math.floor(Date.now() / 1000),
-});
+const validClaims = (overrides: Record<string, any> = {}) => {
+  const now = Math.floor(Date.now() / 1000);
+  const sub = overrides.sub ?? `00000000-0000-4000-8000-${crypto.randomBytes(6).toString("hex")}`;
+  return {
+    iss: "https://operatoros.test",
+    aud: "tradeflowkit",
+    module_slug: "tradeflowkit",
+    env: "dev",
+    jti: `jti-${crypto.randomBytes(8).toString("hex")}`,
+    sub,
+    user_id: sub,
+    email: `sso-${crypto.randomBytes(4).toString("hex")}@example.com`,
+    role: "user",
+    plan_slug: "starter",
+    organization_id: null,
+    iat: now,
+    exp: now + 60,
+    ...overrides,
+  };
+};
 
 describe("/sso route", () => {
   let app: ReturnType<typeof buildApp>;
@@ -75,85 +86,130 @@ describe("/sso route", () => {
     (consumeSsoToken as any).mockReset();
   });
 
-  it("returns 400 SSO-001 when token is missing", async () => {
+  it("returns 400 missing_token (HTML) when token is missing", async () => {
     const res = await request(app).get("/sso");
     expect(res.status).toBe(400);
-    expect(res.text).toContain("SSO-001");
+    expect(res.text).toContain("missing_token");
     expect(consumeSsoToken).not.toHaveBeenCalled();
   });
 
-  it("returns 401 SSO-004 when signature is wrong, never calls consume", async () => {
+  it("returns JSON {code:missing_token} when Accept: application/json", async () => {
+    const res = await request(app).get("/sso").set("accept", "application/json");
+    expect(res.status).toBe(400);
+    expect(res.headers["content-type"]).toMatch(/application\/json/);
+    expect(res.body).toEqual({ code: "missing_token" });
+  });
+
+  it("returns 401 signature_invalid when signature is wrong, never calls consume", async () => {
     const token = signToken(validClaims(), "wrong-secret");
     const res = await request(app).get(`/sso?token=${token}`);
     expect(res.status).toBe(401);
-    expect(res.text).toContain("SSO-004");
+    expect(res.text).toContain("signature_invalid");
     expect(consumeSsoToken).not.toHaveBeenCalled();
   });
 
-  it("returns 409 SSO-012 on consume replay and creates no session/user", async () => {
-    (consumeSsoToken as any).mockResolvedValue({ ok: false, reason: "replay" });
+  it("returns 401 expired (HTML) on consume TOKEN_EXPIRED and creates no session/user", async () => {
+    (consumeSsoToken as any).mockResolvedValue({ ok: false, reason: "expired", apiCode: "TOKEN_EXPIRED" });
+    const claims = validClaims();
+    const token = signToken(claims);
+    const sid = `sid-expired-${Date.now()}`;
+    const res = await request(app).get(`/sso?token=${token}`).set("x-test-sid", sid);
+    expect(res.status).toBe(401);
+    expect(res.text).toContain("expired");
+    const sessions = (app as any).__sessions as Map<string, any>;
+    expect(sessions.get(sid)?.userId).toBeUndefined();
+  });
+
+  it("returns 401 audience_mismatch on consume AUDIENCE_MISMATCH (JSON path)", async () => {
+    (consumeSsoToken as any).mockResolvedValue({ ok: false, reason: "audience_mismatch", apiCode: "AUDIENCE_MISMATCH" });
+    const claims = validClaims();
+    const token = signToken(claims);
+    const res = await request(app).get(`/sso?token=${token}`).set("accept", "application/json");
+    expect(res.status).toBe(401);
+    expect(res.body).toEqual({ code: "audience_mismatch" });
+  });
+
+  it("returns 401 consume_failed on TOKEN_REPLAYED and creates no session/user", async () => {
+    (consumeSsoToken as any).mockResolvedValue({ ok: false, reason: "consume_failed", apiCode: "TOKEN_REPLAYED" });
     const claims = validClaims();
     const token = signToken(claims);
     const sid = `sid-replay-${Date.now()}`;
     const res = await request(app).get(`/sso?token=${token}`).set("x-test-sid", sid);
-    expect(res.status).toBe(409);
-    expect(res.text).toContain("SSO-012");
+    expect(res.status).toBe(401);
+    expect(res.text).toContain("consume_failed");
     const sessions = (app as any).__sessions as Map<string, any>;
     expect(sessions.get(sid)?.userId).toBeUndefined();
-    const lookedUp = await storage.getUserByEmail(claims.email);
-    expect(lookedUp).toBeUndefined();
   });
 
-  it("returns 503 SSO-016 on consume transient failure and creates no session/user", async () => {
-    (consumeSsoToken as any).mockResolvedValue({ ok: false, reason: "transient" });
+  it("returns 502 sso_consume_unavailable on consume 5xx and creates no session/user", async () => {
+    (consumeSsoToken as any).mockResolvedValue({ ok: false, reason: "sso_consume_unavailable", httpStatus: 502 });
     const claims = validClaims();
     const token = signToken(claims);
-    const sid = `sid-transient-${Date.now()}`;
+    const sid = `sid-unavail-${Date.now()}`;
     const res = await request(app).get(`/sso?token=${token}`).set("x-test-sid", sid);
-    expect(res.status).toBe(503);
-    expect(res.text).toContain("SSO-016");
+    expect(res.status).toBe(502);
+    expect(res.text).toContain("sso_consume_unavailable");
     const sessions = (app as any).__sessions as Map<string, any>;
     expect(sessions.get(sid)?.userId).toBeUndefined();
-    const lookedUp = await storage.getUserByEmail(claims.email);
-    expect(lookedUp).toBeUndefined();
   });
 
-  it("provisions a new user and starts a session on success (302 → /dashboard)", async () => {
+  it("provisions a new user keyed on sub and starts a session on success (302 → /dashboard)", async () => {
     (consumeSsoToken as any).mockResolvedValue({ ok: true });
-    const claims = { ...validClaims(), name: "Alice Example" };
+    const claims = validClaims({ name: "Alice Example" });
     const token = signToken(claims);
     const sid = `sid-success-${Date.now()}`;
     const res = await request(app).get(`/sso?token=${token}`).set("x-test-sid", sid);
     expect(res.status).toBe(302);
     expect(res.headers.location).toBe("/dashboard");
-    const provisioned = await storage.getUserByEmail(claims.email);
+    const provisioned = await storage.getUserByOperatorosUserId(claims.sub);
     expect(provisioned).toBeDefined();
     expect(provisioned?.email).toBe(claims.email.toLowerCase());
     expect((provisioned as any)?.isSsoProvisioned).toBe(true);
+    expect((provisioned as any)?.operatorosUserId).toBe(claims.sub);
+    expect((provisioned as any)?.operatorosRole).toBe("user");
+    expect((provisioned as any)?.operatorosPlanSlug).toBe("starter");
     expect(provisioned?.fullName).toBe("Alice Example");
     if (provisioned) trackUser(provisioned.id);
     const sessions = (app as any).__sessions as Map<string, any>;
     expect(sessions.get(sid)?.userId).toBe(provisioned!.id);
   });
 
-  it("reuses an existing user (case-insensitive) and does not re-provision", async () => {
+  it("reuses the same user on a second sub-keyed launch (no duplicate)", async () => {
     (consumeSsoToken as any).mockResolvedValue({ ok: true });
-    const baseEmail = `existing-${crypto.randomBytes(4).toString("hex")}@example.com`;
+    const sub = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString("hex")}`;
+    const email = `sub-reuse-${crypto.randomBytes(4).toString("hex")}@example.com`;
+    const first = await request(app).get(`/sso?token=${signToken(validClaims({ sub, user_id: sub, email }))}`).set("x-test-sid", "sid-first");
+    expect(first.status).toBe(302);
+    const second = await request(app).get(`/sso?token=${signToken(validClaims({ sub, user_id: sub, email }))}`).set("x-test-sid", "sid-second");
+    expect(second.status).toBe(302);
+    const user = await storage.getUserByOperatorosUserId(sub);
+    expect(user).toBeDefined();
+    if (user) trackUser(user.id);
+    const sessions = (app as any).__sessions as Map<string, any>;
+    expect(sessions.get("sid-first")?.userId).toBe(user!.id);
+    expect(sessions.get("sid-second")?.userId).toBe(user!.id);
+  });
+
+  it("backfills sub onto an existing email-keyed user from the previous implementation", async () => {
+    (consumeSsoToken as any).mockResolvedValue({ ok: true });
+    const baseEmail = `legacy-${crypto.randomBytes(4).toString("hex")}@example.com`;
     const existing = await storage.createUser({
       username: `pre-${crypto.randomBytes(4).toString("hex")}`,
       password: "hash-x",
-      fullName: "Pre Existing",
+      fullName: "Legacy User",
       phone: "",
       email: baseEmail,
     } as any);
     trackUser(existing.id);
+    expect((existing as any).operatorosUserId).toBeNull();
 
-    const claims = { ...validClaims(), email: baseEmail.toUpperCase() };
-    const token = signToken(claims);
-    const sid = `sid-reuse-${Date.now()}`;
-    const res = await request(app).get(`/sso?token=${token}`).set("x-test-sid", sid);
+    const sub = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString("hex")}`;
+    const claims = validClaims({ sub, user_id: sub, email: baseEmail.toUpperCase() });
+    const res = await request(app).get(`/sso?token=${signToken(claims)}`).set("x-test-sid", "sid-backfill");
     expect(res.status).toBe(302);
+    const updated = await storage.getUser(existing.id);
+    expect((updated as any)?.operatorosUserId).toBe(sub);
     const sessions = (app as any).__sessions as Map<string, any>;
-    expect(sessions.get(sid)?.userId).toBe(existing.id);
+    expect(sessions.get("sid-backfill")?.userId).toBe(existing.id);
   });
 });

@@ -97,10 +97,17 @@ export const users = pgTable("users", {
   totpSecret: text("totp_secret"),
   totpEnabledAt: timestamp("totp_enabled_at"),
   isSsoProvisioned: boolean("is_sso_provisioned").default(false).notNull(),
+  operatorosUserId: text("operatoros_user_id"),
+  operatorosRole: text("operatoros_role"),
+  operatorosPlanSlug: text("operatoros_plan_slug"),
+  operatorosOrganizationId: text("operatoros_organization_id"),
 }, (t) => [
   uniqueIndex("users_email_unique_idx")
     .on(sql`lower(trim(${t.email}))`)
     .where(sql`length(trim(${t.email})) > 0`),
+  uniqueIndex("users_operatoros_user_id_idx")
+    .on(t.operatorosUserId)
+    .where(sql`${t.operatorosUserId} IS NOT NULL`),
 ]);
 
 export function normalizeEmail(email: string | null | undefined): string {

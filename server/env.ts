@@ -7,6 +7,10 @@ const envSchema = z.object({
   PORT: z.string().optional(),
   MODULE_SSO_SECRET: z.string().optional(),
   OPERATOROS_BASE_URL: z.string().url().optional(),
+  OPERATOROS_API_URL: z.string().url().optional(),
+  OPERATOROS_SSO_AUDIENCE: z.string().optional(),
+  OPERATOROS_SSO_ENV: z.enum(["prod", "staging", "dev"]).optional(),
+  // Legacy aliases (kept for backward compatibility with existing deployments).
   APP_ENV: z.string().optional(),
   MODULE_SLUG: z.string().optional(),
 });
@@ -37,20 +41,88 @@ export function getSessionSecret(): string {
 
 export interface SsoConfig {
   secret: string;
+  /** Expected `iss` claim. */
   operatorosBaseUrl: string;
-  appEnv: string;
-  moduleSlug: string;
+  /** Expected `env` claim — `prod` | `staging` | `dev`. */
+  ssoEnv: "prod" | "staging" | "dev";
+  /** Expected `aud` and `module_slug` claims. */
+  audience: string;
+  /** Host to POST `/v1/modules/sso/consume` against. */
+  apiUrl: string;
 }
 
+function normalizeLegacyEnv(value: string | undefined): "prod" | "staging" | "dev" | null {
+  if (!value) return null;
+  const v = value.trim().toLowerCase();
+  if (v === "prod" || v === "production") return "prod";
+  if (v === "staging" || v === "stage") return "staging";
+  if (v === "dev" || v === "development" || v === "test") return "dev";
+  return null;
+}
+
+/**
+ * Resolve the SSO configuration from env. Returns `null` if the required
+ * vars are missing, so callers can render a friendly "not configured" page
+ * in development without breaking startup. In production, callers should
+ * have already enforced the secret at boot via `assertSsoConfigForProduction`.
+ */
 export function getSsoConfig(): SsoConfig | null {
   const env = getEnv();
   if (!env.MODULE_SSO_SECRET || !env.OPERATOROS_BASE_URL) {
     return null;
   }
+
+  const audience = env.OPERATOROS_SSO_AUDIENCE || env.MODULE_SLUG;
+  if (!audience) return null;
+
+  const ssoEnv =
+    (env.OPERATOROS_SSO_ENV as "prod" | "staging" | "dev" | undefined) ||
+    normalizeLegacyEnv(env.APP_ENV) ||
+    normalizeLegacyEnv(env.NODE_ENV);
+  if (!ssoEnv) return null;
+
+  const baseUrl = env.OPERATOROS_BASE_URL.replace(/\/+$/, "");
+  const apiUrl = (env.OPERATOROS_API_URL || env.OPERATOROS_BASE_URL).replace(/\/+$/, "");
+
   return {
     secret: env.MODULE_SSO_SECRET,
-    operatorosBaseUrl: env.OPERATOROS_BASE_URL.replace(/\/+$/, ""),
-    appEnv: env.APP_ENV || env.NODE_ENV,
-    moduleSlug: env.MODULE_SLUG || "tradeflowkit",
+    operatorosBaseUrl: baseUrl,
+    ssoEnv,
+    audience: audience.toLowerCase(),
+    apiUrl,
   };
+}
+
+/** Minimum length for MODULE_SSO_SECRET per the canonical contract. */
+export const MODULE_SSO_SECRET_MIN_LENGTH = 16;
+
+/**
+ * Enforce the canonical contract's "fail startup loudly" rule in production.
+ * In dev/test, missing SSO config is allowed — `/sso` will return a clean
+ * 503 "not configured" page and the rest of the app keeps working.
+ */
+export function assertSsoConfigForProduction(): void {
+  const env = getEnv();
+  if (env.NODE_ENV !== "production") return;
+
+  const missing: string[] = [];
+  if (!env.MODULE_SSO_SECRET) missing.push("MODULE_SSO_SECRET");
+  if (!env.OPERATOROS_BASE_URL) missing.push("OPERATOROS_BASE_URL");
+  if (!env.OPERATOROS_SSO_AUDIENCE && !env.MODULE_SLUG) {
+    missing.push("OPERATOROS_SSO_AUDIENCE");
+  }
+  if (!env.OPERATOROS_SSO_ENV && !env.APP_ENV) {
+    missing.push("OPERATOROS_SSO_ENV");
+  }
+  if (missing.length > 0) {
+    throw new Error(
+      `OperatorOS SSO contract requires the following env vars in production: ${missing.join(", ")}`
+    );
+  }
+
+  if (env.MODULE_SSO_SECRET && env.MODULE_SSO_SECRET.length < MODULE_SSO_SECRET_MIN_LENGTH) {
+    throw new Error(
+      `MODULE_SSO_SECRET must be at least ${MODULE_SSO_SECRET_MIN_LENGTH} characters (OperatorOS SSO contract)`
+    );
+  }
 }

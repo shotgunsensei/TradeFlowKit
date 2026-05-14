@@ -37,6 +37,16 @@ export const usersStorage = {
     return user;
   },
 
+  async getUserByOperatorosUserId(operatorosUserId: string): Promise<User | undefined> {
+    if (!operatorosUserId) return undefined;
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(eq(users.operatorosUserId, operatorosUserId))
+      .limit(1);
+    return user;
+  },
+
   async getUserByEmail(email: string): Promise<User | undefined> {
     const normalized = normalizeEmail(email);
     if (!normalized) return undefined;

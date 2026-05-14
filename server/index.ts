@@ -7,7 +7,7 @@ import { createServer } from "http";
 import { runMigrations } from "stripe-replit-sync";
 import { getStripeSync } from "./stripeClient";
 import { WebhookHandlers } from "./webhookHandlers";
-import { getEnv } from "./env";
+import { getEnv, assertSsoConfigForProduction } from "./env";
 import { isAppError, errMsg } from "./errors";
 import { logger, httpLogger, requestIdMiddleware } from "./logger";
 
@@ -23,6 +23,7 @@ declare module "http" {
 }
 
 const env = getEnv();
+assertSsoConfigForProduction();
 
 app.use(
   helmet({

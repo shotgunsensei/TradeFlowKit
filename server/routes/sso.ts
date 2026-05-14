@@ -3,7 +3,7 @@ import crypto from "crypto";
 import { storage } from "../storage";
 import { hashPassword } from "../middleware";
 import { getSsoConfig } from "../env";
-import { verifySsoToken, type SsoVerifyFailureReason } from "../sso/verifier";
+import { verifySsoToken, type SsoRejectCode } from "../sso/verifier";
 import { consumeSsoToken } from "../sso/consume";
 import { renderSsoErrorPage } from "../sso/errorPage";
 import { logger } from "../logger";
@@ -12,135 +12,119 @@ const router = Router();
 
 const ssoLog = logger.child({ component: "sso" });
 
-const FAILURE_PAGES: Record<
-  SsoVerifyFailureReason | "replay" | "unknown" | "consume_expired" | "mismatch" | "transient" | "not_configured" | "session" | "internal",
-  { status: number; title: string; message: string; code: string }
-> = {
+/**
+ * The canonical reject codes plus a few local-only outcomes (`not_configured`,
+ * `session`, `internal`) for things that aren't part of the wire contract but
+ * we still need to surface to the user.
+ */
+type LocalReason = "not_configured" | "session" | "internal";
+type Reason = SsoRejectCode | LocalReason;
+
+interface FailureMeta {
+  status: number;
+  title: string;
+  message: string;
+}
+
+const FAILURE_META: Record<Reason, FailureMeta> = {
+  // Canonical reject codes from the OperatorOS contract.
   missing_token: {
     status: 400,
     title: "Sign-in link is missing",
     message: "This page expects a sign-in link from OperatorOS. Please return to OperatorOS and try again.",
-    code: "SSO-001",
   },
-  malformed: {
+  bad_request: {
     status: 400,
     title: "Sign-in link is invalid",
     message: "This sign-in link is not valid. Please return to OperatorOS and request a new one.",
-    code: "SSO-002",
   },
-  bad_alg: {
-    status: 400,
-    title: "Sign-in link is invalid",
-    message: "This sign-in link uses an unsupported format. Please return to OperatorOS and request a new one.",
-    code: "SSO-003",
-  },
-  bad_signature: {
+  signature_invalid: {
     status: 401,
     title: "Sign-in link could not be verified",
     message: "We couldn't verify this sign-in link. Please return to OperatorOS and request a new one.",
-    code: "SSO-004",
   },
-  bad_iss: {
+  issuer_mismatch: {
     status: 401,
     title: "Sign-in link could not be verified",
-    message: "We couldn't verify this sign-in link. Please return to OperatorOS and request a new one.",
-    code: "SSO-005",
+    message: "This sign-in link wasn't issued by your OperatorOS server. Please return to OperatorOS and try again.",
   },
-  bad_aud: {
-    status: 400,
+  audience_mismatch: {
+    status: 401,
     title: "Sign-in link is for a different app",
     message: "This sign-in link wasn't issued for TradeFlowKit. Please return to OperatorOS and try again.",
-    code: "SSO-006",
   },
-  bad_module_slug: {
-    status: 400,
-    title: "Sign-in link is for a different app",
-    message: "This sign-in link wasn't issued for TradeFlowKit. Please return to OperatorOS and try again.",
-    code: "SSO-007",
-  },
-  bad_env: {
-    status: 400,
+  env_mismatch: {
+    status: 401,
     title: "Sign-in link is for the wrong environment",
     message: "This sign-in link was issued for a different environment. Please return to OperatorOS and try again.",
-    code: "SSO-008",
   },
   expired: {
-    status: 410,
+    status: 401,
     title: "Sign-in link has expired",
     message: "This sign-in link has expired. Please return to OperatorOS and request a new one.",
-    code: "SSO-009",
   },
-  missing_jti: {
-    status: 400,
-    title: "Sign-in link is invalid",
-    message: "This sign-in link is missing required information. Please return to OperatorOS and request a new one.",
-    code: "SSO-010",
-  },
-  missing_email: {
-    status: 400,
-    title: "Sign-in link is missing your email",
-    message: "We couldn't read your email from this sign-in link. Please return to OperatorOS and try again.",
-    code: "SSO-011",
-  },
-  replay: {
-    status: 409,
-    title: "This sign-in link has already been used",
-    message: "Each OperatorOS sign-in link works only once. Please return to OperatorOS and request a new one.",
-    code: "SSO-012",
-  },
-  unknown: {
-    status: 404,
-    title: "Sign-in link is unknown",
-    message: "OperatorOS doesn't recognize this sign-in link. Please return to OperatorOS and request a new one.",
-    code: "SSO-013",
-  },
-  consume_expired: {
-    status: 410,
-    title: "Sign-in link has expired",
-    message: "This sign-in link has expired. Please return to OperatorOS and request a new one.",
-    code: "SSO-014",
-  },
-  mismatch: {
-    status: 400,
+  clock_skew: {
+    status: 401,
     title: "Sign-in link could not be verified",
-    message: "Some details on this sign-in link don't match. Please return to OperatorOS and request a new one.",
-    code: "SSO-015",
+    message: "Your clock and the OperatorOS server clock are out of sync. Please try again in a moment.",
   },
-  transient: {
-    status: 503,
+  consume_failed: {
+    status: 401,
+    title: "Sign-in link could not be redeemed",
+    message: "OperatorOS rejected this sign-in link. Please return to OperatorOS and request a new one.",
+  },
+  sso_consume_unavailable: {
+    status: 502,
     title: "Sign-in temporarily unavailable",
     message: "We couldn't reach OperatorOS to complete sign-in. Please try again in a moment.",
-    code: "SSO-016",
   },
+
+  // Local-only outcomes (not part of the wire contract).
   not_configured: {
     status: 503,
     title: "Sign-in is not configured",
     message: "OperatorOS sign-in isn't enabled on this server. Please sign in with your username and password instead.",
-    code: "SSO-017",
   },
   session: {
     status: 500,
     title: "Couldn't start your session",
     message: "We verified your sign-in but couldn't start a session. Please try again.",
-    code: "SSO-018",
   },
   internal: {
     status: 500,
     title: "Something went wrong",
     message: "An unexpected error occurred while signing you in. Please try again.",
-    code: "SSO-019",
   },
 };
 
-function sendError(
-  res: Response,
-  reason: keyof typeof FAILURE_PAGES
-): void {
-  const page = FAILURE_PAGES[reason];
+/**
+ * Decide whether to return JSON or HTML based on the request `Accept` header.
+ * Browser launches (the normal case) get HTML. API/programmatic callers that
+ * explicitly prefer JSON get the canonical `{ "code": "<reason>" }` body.
+ */
+function prefersJson(req: Request): boolean {
+  const accept = (req.headers.accept || "").toLowerCase();
+  if (!accept || accept.includes("*/*") && !accept.includes("application/json")) {
+    // No explicit preference (or only `*/*`) → assume HTML for browser UX.
+    return false;
+  }
+  if (accept.includes("application/json") && !accept.includes("text/html")) {
+    return true;
+  }
+  // If both are listed, prefer HTML (browser's default Accept header lists both).
+  return false;
+}
+
+function sendError(req: Request, res: Response, reason: Reason): void {
+  const meta = FAILURE_META[reason];
+  res.status(meta.status);
+  if (prefersJson(req)) {
+    res.type("application/json").send(JSON.stringify({ code: reason }));
+    return;
+  }
   res
-    .status(page.status)
     .type("html")
-    .send(renderSsoErrorPage({ title: page.title, message: page.message, code: page.code }));
+    .send(renderSsoErrorPage({ title: meta.title, message: meta.message, code: reason }));
 }
 
 function generateRandomPassword(): string {
@@ -171,7 +155,7 @@ router.get("/sso", async (req: Request, res: Response) => {
   const config = getSsoConfig();
   if (!config) {
     reqLog.warn({ outcome: "not_configured" }, "SSO attempt while not configured");
-    return sendError(res, "not_configured");
+    return sendError(req, res, "not_configured");
   }
 
   const tokenRaw = req.query.token;
@@ -180,24 +164,43 @@ router.get("/sso", async (req: Request, res: Response) => {
   const verify = verifySsoToken(token, config);
   if (!verify.ok) {
     reqLog.warn({ outcome: "verify_failed", reason: verify.reason }, "SSO token verification failed");
-    return sendError(res, verify.reason);
+    return sendError(req, res, verify.reason);
   }
 
   const { claims } = verify;
   const consume = await consumeSsoToken(claims.jti, config);
   if (!consume.ok) {
     reqLog.warn(
-      { outcome: "consume_failed", reason: consume.reason, jti: claims.jti },
+      {
+        outcome: "consume_failed",
+        reason: consume.reason,
+        apiCode: consume.apiCode,
+        httpStatus: consume.httpStatus,
+        jti: claims.jti,
+      },
       "SSO consume rejected"
     );
-    if (consume.reason === "expired") return sendError(res, "consume_expired");
-    return sendError(res, consume.reason);
+    return sendError(req, res, consume.reason);
   }
 
   try {
     const emailNormalized = claims.email.trim().toLowerCase();
-    let user = await storage.getUserByEmail(emailNormalized);
+    let user = await storage.getUserByOperatorosUserId(claims.sub);
     let provisioned = false;
+    let backfilled = false;
+
+    if (!user) {
+      // Backfill path: a user provisioned by the original task #66 implementation
+      // was keyed on email and has no operatorosUserId yet. Match by email and
+      // attach the sub so subsequent launches go through the sub-keyed path.
+      const byEmail = await storage.getUserByEmail(emailNormalized);
+      if (byEmail) {
+        user = (await storage.updateUser(byEmail.id, {
+          operatorosUserId: claims.sub,
+        })) || byEmail;
+        backfilled = true;
+      }
+    }
 
     if (!user) {
       const username = await pickUniqueUsername(emailNormalized);
@@ -209,8 +212,30 @@ router.get("/sso", async (req: Request, res: Response) => {
         phone: "",
         email: emailNormalized,
         isSsoProvisioned: true,
-      });
+        operatorosUserId: claims.sub,
+        operatorosRole: claims.role ?? null,
+        operatorosPlanSlug: claims.plan_slug ?? null,
+        operatorosOrganizationId: claims.organization_id ?? null,
+      } as any);
       provisioned = true;
+    } else {
+      // Refresh OperatorOS-owned attributes on every successful launch so the
+      // local copy stays in sync with the parent platform.
+      const patch: Record<string, unknown> = {};
+      if (user.email !== emailNormalized) patch.email = emailNormalized;
+      if ((user as any).operatorosRole !== (claims.role ?? null)) {
+        patch.operatorosRole = claims.role ?? null;
+      }
+      if ((user as any).operatorosPlanSlug !== (claims.plan_slug ?? null)) {
+        patch.operatorosPlanSlug = claims.plan_slug ?? null;
+      }
+      if ((user as any).operatorosOrganizationId !== (claims.organization_id ?? null)) {
+        patch.operatorosOrganizationId = claims.organization_id ?? null;
+      }
+      if (Object.keys(patch).length > 0) {
+        const updated = await storage.updateUser(user.id, patch as any);
+        if (updated) user = updated;
+      }
     }
 
     req.session.userId = user.id;
@@ -226,15 +251,16 @@ router.get("/sso", async (req: Request, res: Response) => {
     req.session.save((err) => {
       if (err) {
         reqLog.error({ outcome: "session_failed", jti: claims.jti, userId: user!.id }, "SSO session save failed");
-        return sendError(res, "session");
+        return sendError(req, res, "session");
       }
       reqLog.info(
         {
           outcome: "success",
           jti: claims.jti,
           userId: user!.id,
-          email: emailNormalized,
+          sub: claims.sub,
           provisioned,
+          backfilled,
           hasOrg: userOrgs.length > 0,
         },
         "SSO sign-in succeeded"
@@ -250,7 +276,7 @@ router.get("/sso", async (req: Request, res: Response) => {
       },
       "SSO sign-in failed with unexpected error"
     );
-    sendError(res, "internal");
+    sendError(req, res, "internal");
   }
 });
 
