@@ -104,16 +104,14 @@ const FAILURE_META: Record<Reason, FailureMeta> = {
  * explicitly prefer JSON get the canonical `{ "code": "<reason>" }` body.
  */
 function prefersJson(req: Request): boolean {
-  const accept = (req.headers.accept || "").toLowerCase();
-  if (!accept || accept.includes("*/*") && !accept.includes("application/json")) {
-    // No explicit preference (or only `*/*`) → assume HTML for browser UX.
-    return false;
-  }
-  if (accept.includes("application/json") && !accept.includes("text/html")) {
-    return true;
-  }
-  // If both are listed, prefer HTML (browser's default Accept header lists both).
-  return false;
+  // Use Express's standards-based content negotiation, which honors q-values
+  // and the explicit ordering rules from RFC 9110.
+  // - No Accept header (or only `*/*`) → first preference wins → HTML.
+  // - `Accept: application/json` only → JSON.
+  // - `Accept: application/json, text/html;q=0.8` → JSON wins by q-value.
+  // - Browser default `text/html,application/xhtml+xml,...,*/*;q=0.8` → HTML.
+  const best = req.accepts(["html", "json"]);
+  return best === "json";
 }
 
 function sendError(req: Request, res: Response, reason: Reason): void {
@@ -194,8 +192,26 @@ router.get("/sso", async (req: Request, res: Response) => {
       // Backfill path: a user provisioned by the original task #66 implementation
       // was keyed on email and has no operatorosUserId yet. Match by email and
       // attach the sub so subsequent launches go through the sub-keyed path.
+      //
+      // CRITICAL: only backfill when the existing record has no
+      // operatorosUserId. If the email already belongs to a user bound to a
+      // *different* sub, refuse the launch — silently rebinding would let an
+      // attacker who controls a new OperatorOS account with the same email
+      // take over the existing TradeFlowKit user.
       const byEmail = await storage.getUserByEmail(emailNormalized);
       if (byEmail) {
+        if (byEmail.operatorosUserId && byEmail.operatorosUserId !== claims.sub) {
+          reqLog.warn(
+            {
+              outcome: "identity_conflict",
+              jti: claims.jti,
+              existingUserId: byEmail.id,
+              tokenSub: claims.sub,
+            },
+            "SSO refused: email maps to a user already bound to a different OperatorOS sub"
+          );
+          return sendError(req, res, "consume_failed");
+        }
         const backfillPatch: Partial<User> = { operatorosUserId: claims.sub };
         user = (await storage.updateUser(byEmail.id, backfillPatch)) || byEmail;
         backfilled = true;

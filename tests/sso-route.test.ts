@@ -190,6 +190,79 @@ describe("/sso route", () => {
     expect(sessions.get("sid-second")?.userId).toBe(user!.id);
   });
 
+  it("refuses to rebind when an existing user with the same email is already bound to a different sub", async () => {
+    (consumeSsoToken as any).mockResolvedValue({ ok: true });
+    const baseEmail = `conflict-${crypto.randomBytes(4).toString("hex")}@example.com`;
+    const originalSub = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString("hex")}`;
+    const existing = await storage.createUser({
+      username: `pre-conflict-${crypto.randomBytes(4).toString("hex")}`,
+      password: "hash-x",
+      fullName: "Already Bound",
+      phone: "",
+      email: baseEmail,
+      operatorosUserId: originalSub,
+    });
+    trackUser(existing.id);
+
+    const attackerSub = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString("hex")}`;
+    const claims = validClaims({ sub: attackerSub, user_id: attackerSub, email: baseEmail });
+    const sid = `sid-conflict-${Date.now()}`;
+    const res = await request(app).get(`/sso?token=${signToken(claims)}`).set("x-test-sid", sid);
+    expect(res.status).toBe(401);
+    expect(res.text).toContain("consume_failed");
+    const after = await storage.getUser(existing.id);
+    expect(after?.operatorosUserId).toBe(originalSub);
+    const sessions = (app as any).__sessions as Map<string, any>;
+    expect(sessions.get(sid)?.userId).toBeUndefined();
+  });
+
+  it("allows email change for an existing user that's already bound to the same sub", async () => {
+    (consumeSsoToken as any).mockResolvedValue({ ok: true });
+    const sub = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString("hex")}`;
+    const oldEmail = `old-${crypto.randomBytes(4).toString("hex")}@example.com`;
+    const newEmail = `new-${crypto.randomBytes(4).toString("hex")}@example.com`;
+    const existing = await storage.createUser({
+      username: `same-sub-${crypto.randomBytes(4).toString("hex")}`,
+      password: "hash-x",
+      fullName: "Same Sub",
+      phone: "",
+      email: oldEmail,
+      operatorosUserId: sub,
+    });
+    trackUser(existing.id);
+
+    const claims = validClaims({ sub, user_id: sub, email: newEmail });
+    const sid = `sid-emailchange-${Date.now()}`;
+    const res = await request(app).get(`/sso?token=${signToken(claims)}`).set("x-test-sid", sid);
+    expect(res.status).toBe(302);
+    const after = await storage.getUser(existing.id);
+    expect(after?.email).toBe(newEmail.toLowerCase());
+    expect(after?.operatorosUserId).toBe(sub);
+    const sessions = (app as any).__sessions as Map<string, any>;
+    expect(sessions.get(sid)?.userId).toBe(existing.id);
+  });
+
+  it("respects q-value ordering in Accept (application/json;q=1, text/html;q=0.8 -> JSON)", async () => {
+    const res = await request(app)
+      .get("/sso")
+      .set("accept", "application/json;q=1, text/html;q=0.8");
+    expect(res.status).toBe(400);
+    expect(res.headers["content-type"]).toMatch(/application\/json/);
+    expect(res.body).toEqual({ code: "missing_token" });
+  });
+
+  it("returns HTML for the default browser Accept header (text/html;q=0.9 outranks */*)", async () => {
+    const res = await request(app)
+      .get("/sso")
+      .set(
+        "accept",
+        "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+      );
+    expect(res.status).toBe(400);
+    expect(res.headers["content-type"]).toMatch(/text\/html/);
+    expect(res.text).toContain("missing_token");
+  });
+
   it("backfills sub onto an existing email-keyed user from the previous implementation", async () => {
     (consumeSsoToken as any).mockResolvedValue({ ok: true });
     const baseEmail = `legacy-${crypto.randomBytes(4).toString("hex")}@example.com`;
