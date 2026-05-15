@@ -370,6 +370,17 @@ router.post("/api/jobs/bulk-delete", requireAuth, requireOrg, async (req: Reques
   }
 });
 
+router.post("/api/jobs/bulk-restore", requireAuth, requireOrg, async (req: Request, res: Response) => {
+  try {
+    const parsed = bulkIdsSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: "Invalid ids" });
+    const restored = await storage.bulkRestoreJobs(req.session.orgId!, parsed.data.ids);
+    res.json({ restored });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post("/api/jobs/bulk-status", requireAuth, requireOrg, async (req: Request, res: Response) => {
   try {
     const parsed = bulkStatusSchema.safeParse(req.body);

@@ -197,4 +197,15 @@ router.post("/api/customers/bulk-delete", requireAuth, requireOrg, async (req: R
   }
 });
 
+router.post("/api/customers/bulk-restore", requireAuth, requireOrg, async (req: Request, res: Response) => {
+  try {
+    const parsed = bulkIdsSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: "Invalid ids" });
+    const restored = await storage.bulkRestoreCustomers(req.session.orgId!, parsed.data.ids);
+    res.json({ restored });
+  } catch (err) {
+    res.status(500).json({ error: errMsg(err) });
+  }
+});
+
 export default router;

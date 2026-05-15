@@ -33,6 +33,7 @@ import { Plus, Wrench, Search, Filter, LayoutGrid, List, RefreshCw, Download, Up
 import { CsvImportDialog, type CsvImportField } from "@/components/csv-import-dialog";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { ToastAction } from "@/components/ui/toast";
 import { useAuth } from "@/lib/auth";
 import { useRowSelection } from "@/hooks/use-row-selection";
 import { BulkActionBar } from "@/components/bulk-action-bar";
@@ -228,15 +229,42 @@ export default function JobsPage() {
 
   const selection = useRowSelection(filteredJobs);
 
-  const bulkDeleteMutation = useMutation({
+  const bulkRestoreMutation = useMutation({
     mutationFn: async (ids: string[]) => {
-      const res = await apiRequest("POST", "/api/jobs/bulk-delete", { ids });
+      const res = await apiRequest("POST", "/api/jobs/bulk-restore", { ids });
       return res.json();
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
-      toast({ title: `${data.updated} job${data.updated !== 1 ? "s" : ""} deleted` });
+      toast({ title: `${data.restored} job${data.restored !== 1 ? "s" : ""} restored` });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Restore failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const bulkDeleteMutation = useMutation({
+    mutationFn: async (ids: string[]) => {
+      const res = await apiRequest("POST", "/api/jobs/bulk-delete", { ids });
+      return res.json();
+    },
+    onSuccess: (data, ids) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
+      toast({
+        title: `${data.updated} job${data.updated !== 1 ? "s" : ""} deleted`,
+        duration: 10000,
+        action: (
+          <ToastAction
+            altText="Undo delete"
+            data-testid="button-undo-bulk-delete-jobs"
+            onClick={() => bulkRestoreMutation.mutate(ids)}
+          >
+            Undo
+          </ToastAction>
+        ),
+      });
       selection.clear();
       setConfirmBulkDelete(false);
     },

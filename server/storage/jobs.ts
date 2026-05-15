@@ -1,4 +1,4 @@
-import { eq, and, desc, inArray } from "drizzle-orm";
+import { eq, and, desc, inArray, isNull } from "drizzle-orm";
 import { db } from "../db";
 import {
   customers,
@@ -19,7 +19,7 @@ async function getJobInternal(orgId: string, id: string): Promise<(Job & { custo
   const [j] = await db
     .select()
     .from(jobs)
-    .where(and(eq(jobs.orgId, orgId), eq(jobs.id, id)));
+    .where(and(eq(jobs.orgId, orgId), eq(jobs.id, id), isNull(jobs.deletedAt)));
   if (!j) return undefined;
 
   let customerName: string | undefined;
@@ -50,8 +50,8 @@ async function createJobEventInternal(
 export const jobsStorage = {
   async getJobs(orgId: string, recurringOnly?: boolean): Promise<(Job & { customerName?: string })[]> {
     const whereClause = recurringOnly
-      ? and(eq(jobs.orgId, orgId), eq(jobs.isRecurring, true))
-      : eq(jobs.orgId, orgId);
+      ? and(eq(jobs.orgId, orgId), eq(jobs.isRecurring, true), isNull(jobs.deletedAt))
+      : and(eq(jobs.orgId, orgId), isNull(jobs.deletedAt));
     const allJobs = await db
       .select()
       .from(jobs)
@@ -80,7 +80,7 @@ export const jobsStorage = {
     return db
       .select()
       .from(jobs)
-      .where(and(eq(jobs.orgId, orgId), eq(jobs.customerId, customerId)))
+      .where(and(eq(jobs.orgId, orgId), eq(jobs.customerId, customerId), isNull(jobs.deletedAt)))
       .orderBy(desc(jobs.createdAt));
   },
 
@@ -129,26 +129,19 @@ export const jobsStorage = {
 
   async bulkDeleteJobs(orgId: string, ids: string[]): Promise<number> {
     if (ids.length === 0) return 0;
-    await db
-      .delete(jobEvents)
-      .where(and(eq(jobEvents.orgId, orgId), inArray(jobEvents.jobId, ids)));
-    await db
-      .delete(reviewRequests)
-      .where(and(eq(reviewRequests.orgId, orgId), inArray(reviewRequests.jobId, ids)));
-    await db
-      .update(invoices)
-      .set({ jobId: null })
-      .where(and(eq(invoices.orgId, orgId), inArray(invoices.jobId, ids)));
-    await db
-      .update(quotes)
-      .set({ jobId: null })
-      .where(and(eq(quotes.orgId, orgId), inArray(quotes.jobId, ids)));
-    await db
-      .update(missedCalls)
-      .set({ jobId: null })
-      .where(and(eq(missedCalls.orgId, orgId), inArray(missedCalls.jobId, ids)));
     const result = await db
-      .delete(jobs)
+      .update(jobs)
+      .set({ deletedAt: new Date() })
+      .where(and(eq(jobs.orgId, orgId), inArray(jobs.id, ids), isNull(jobs.deletedAt)))
+      .returning({ id: jobs.id });
+    return result.length;
+  },
+
+  async bulkRestoreJobs(orgId: string, ids: string[]): Promise<number> {
+    if (ids.length === 0) return 0;
+    const result = await db
+      .update(jobs)
+      .set({ deletedAt: null })
       .where(and(eq(jobs.orgId, orgId), inArray(jobs.id, ids)))
       .returning({ id: jobs.id });
     return result.length;

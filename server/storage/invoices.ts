@@ -1,4 +1,4 @@
-import { eq, and, desc, sql, inArray, lt } from "drizzle-orm";
+import { eq, and, desc, sql, inArray, lt, isNull } from "drizzle-orm";
 import { db } from "../db";
 import {
   orgs,
@@ -34,7 +34,7 @@ export const invoicesStorage = {
     const allInvoices = await db
       .select()
       .from(invoices)
-      .where(eq(invoices.orgId, orgId))
+      .where(and(eq(invoices.orgId, orgId), isNull(invoices.deletedAt)))
       .orderBy(desc(invoices.createdAt));
 
     const results = [];
@@ -57,7 +57,7 @@ export const invoicesStorage = {
     const [inv] = await db
       .select()
       .from(invoices)
-      .where(and(eq(invoices.orgId, orgId), eq(invoices.id, id)));
+      .where(and(eq(invoices.orgId, orgId), eq(invoices.id, id), isNull(invoices.deletedAt)));
     if (!inv) return undefined;
 
     const items = await db.select().from(invoiceItems).where(eq(invoiceItems.invoiceId, id));
@@ -80,7 +80,7 @@ export const invoicesStorage = {
   },
 
   async getInvoicePublic(id: string): Promise<(Invoice & { items?: InvoiceItem[]; customerName?: string; customer?: Customer; org?: Org }) | undefined> {
-    const [inv] = await db.select().from(invoices).where(eq(invoices.id, id));
+    const [inv] = await db.select().from(invoices).where(and(eq(invoices.id, id), isNull(invoices.deletedAt)));
     if (!inv) return undefined;
 
     const items = await db.select().from(invoiceItems).where(eq(invoiceItems.invoiceId, id));
@@ -99,7 +99,7 @@ export const invoicesStorage = {
     return db
       .select()
       .from(invoices)
-      .where(and(eq(invoices.orgId, orgId), eq(invoices.customerId, customerId)))
+      .where(and(eq(invoices.orgId, orgId), eq(invoices.customerId, customerId), isNull(invoices.deletedAt)))
       .orderBy(desc(invoices.createdAt));
   },
 
@@ -265,11 +265,19 @@ export const invoicesStorage = {
 
   async bulkDeleteInvoices(orgId: string, ids: string[]): Promise<number> {
     if (ids.length === 0) return 0;
-    await db
-      .delete(invoiceItems)
-      .where(and(eq(invoiceItems.orgId, orgId), inArray(invoiceItems.invoiceId, ids)));
     const result = await db
-      .delete(invoices)
+      .update(invoices)
+      .set({ deletedAt: new Date() })
+      .where(and(eq(invoices.orgId, orgId), inArray(invoices.id, ids), isNull(invoices.deletedAt)))
+      .returning({ id: invoices.id });
+    return result.length;
+  },
+
+  async bulkRestoreInvoices(orgId: string, ids: string[]): Promise<number> {
+    if (ids.length === 0) return 0;
+    const result = await db
+      .update(invoices)
+      .set({ deletedAt: null })
       .where(and(eq(invoices.orgId, orgId), inArray(invoices.id, ids)))
       .returning({ id: invoices.id });
     return result.length;

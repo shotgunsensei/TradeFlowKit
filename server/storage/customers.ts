@@ -1,4 +1,4 @@
-import { eq, and, desc, ilike, or, gte } from "drizzle-orm";
+import { eq, and, desc, ilike, or, gte, isNull, inArray } from "drizzle-orm";
 import { randomBytes } from "crypto";
 import { db } from "../db";
 import {
@@ -19,7 +19,7 @@ import {
 
 export const customersStorage = {
   async getCustomers(orgId: string, search?: string): Promise<Customer[]> {
-    const baseWhere = eq(customers.orgId, orgId);
+    const baseWhere = and(eq(customers.orgId, orgId), isNull(customers.deletedAt));
     const where = search
       ? and(baseWhere, or(
           ilike(customers.name, `%${search}%`),
@@ -38,7 +38,7 @@ export const customersStorage = {
     const [c] = await db
       .select()
       .from(customers)
-      .where(and(eq(customers.orgId, orgId), eq(customers.id, id)));
+      .where(and(eq(customers.orgId, orgId), eq(customers.id, id), isNull(customers.deletedAt)));
     return c;
   },
 
@@ -51,12 +51,12 @@ export const customersStorage = {
   },
 
   async getCustomerByPortalToken(token: string): Promise<Customer | undefined> {
-    const [c] = await db.select().from(customers).where(eq(customers.portalToken, token));
+    const [c] = await db.select().from(customers).where(and(eq(customers.portalToken, token), isNull(customers.deletedAt)));
     return c;
   },
 
   async getCustomerPortalData(customerId: string) {
-    const [c] = await db.select().from(customers).where(eq(customers.id, customerId));
+    const [c] = await db.select().from(customers).where(and(eq(customers.id, customerId), isNull(customers.deletedAt)));
     if (!c) return undefined;
     const [org] = await db.select().from(orgs).where(eq(orgs.id, c.orgId));
 
@@ -78,7 +78,7 @@ export const customersStorage = {
     const customerInvs = await db
       .select()
       .from(invoices)
-      .where(and(eq(invoices.orgId, c.orgId), eq(invoices.customerId, c.id)))
+      .where(and(eq(invoices.orgId, c.orgId), eq(invoices.customerId, c.id), isNull(invoices.deletedAt)))
       .orderBy(desc(invoices.createdAt));
 
     const invoicesWithTotals: (Invoice & { total: number })[] = [];
@@ -97,6 +97,7 @@ export const customersStorage = {
       .where(and(
         eq(jobs.orgId, c.orgId),
         eq(jobs.customerId, c.id),
+        isNull(jobs.deletedAt),
         gte(jobs.createdAt, ninetyDaysAgo),
       ))
       .orderBy(desc(jobs.createdAt))
@@ -130,9 +131,19 @@ export const customersStorage = {
 
   async bulkDeleteCustomers(orgId: string, ids: string[]): Promise<number> {
     if (ids.length === 0) return 0;
-    const { inArray } = await import("drizzle-orm");
     const result = await db
-      .delete(customers)
+      .update(customers)
+      .set({ deletedAt: new Date() })
+      .where(and(eq(customers.orgId, orgId), inArray(customers.id, ids), isNull(customers.deletedAt)))
+      .returning({ id: customers.id });
+    return result.length;
+  },
+
+  async bulkRestoreCustomers(orgId: string, ids: string[]): Promise<number> {
+    if (ids.length === 0) return 0;
+    const result = await db
+      .update(customers)
+      .set({ deletedAt: null })
       .where(and(eq(customers.orgId, orgId), inArray(customers.id, ids)))
       .returning({ id: customers.id });
     return result.length;

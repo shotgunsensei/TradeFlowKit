@@ -220,6 +220,7 @@ export const customers = pgTable("customers", {
   smsOptOut: boolean("sms_opt_out").default(false).notNull(),
   portalToken: text("portal_token").unique().default(sql`gen_random_uuid()`),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+  deletedAt: timestamp("deleted_at"),
 }, (t) => [
   index("customers_org_created_idx").on(t.orgId, t.createdAt),
 ]);
@@ -246,6 +247,7 @@ export const jobs = pgTable("jobs", {
   recurringSeriesId: varchar("recurring_series_id"),
   createdBy: varchar("created_by").references(() => users.id),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+  deletedAt: timestamp("deleted_at"),
 }, (t) => [
   index("jobs_org_status_idx").on(t.orgId, t.status),
   index("jobs_org_customer_idx").on(t.orgId, t.customerId),
@@ -331,6 +333,7 @@ export const invoices = pgTable("invoices", {
   parentInvoiceId: varchar("parent_invoice_id"),
   createdBy: varchar("created_by").references(() => users.id),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+  deletedAt: timestamp("deleted_at"),
 }, (t) => [
   index("invoices_org_status_idx").on(t.orgId, t.status),
   index("invoices_recurring_next_run_idx").on(t.nextRunAt),

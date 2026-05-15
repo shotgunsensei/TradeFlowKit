@@ -588,6 +588,17 @@ router.post("/api/invoices/bulk-delete", requireAuth, requireOrg, async (req: Re
   }
 });
 
+router.post("/api/invoices/bulk-restore", requireAuth, requireOrg, async (req: Request, res: Response) => {
+  try {
+    const parsed = bulkIdsSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: "Invalid ids" });
+    const restored = await storage.bulkRestoreInvoices(req.session.orgId!, parsed.data.ids);
+    res.json({ restored });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post("/api/invoices/bulk-mark-paid", requireAuth, requireOrg, async (req: Request, res: Response) => {
   try {
     const parsed = bulkIdsSchema.safeParse(req.body);

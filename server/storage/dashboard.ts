@@ -1,4 +1,4 @@
-import { eq, count, sql } from "drizzle-orm";
+import { eq, count, sql, and, isNull } from "drizzle-orm";
 import { db } from "../db";
 import {
   customers,
@@ -10,10 +10,10 @@ import {
 
 export const dashboardStorage = {
   async getOrgCounts(orgId: string): Promise<{ customers: number; jobs: number; quotes: number; invoices: number; members: number }> {
-    const [custCount] = await db.select({ c: count() }).from(customers).where(eq(customers.orgId, orgId));
-    const [jobCount] = await db.select({ c: count() }).from(jobs).where(eq(jobs.orgId, orgId));
+    const [custCount] = await db.select({ c: count() }).from(customers).where(and(eq(customers.orgId, orgId), isNull(customers.deletedAt)));
+    const [jobCount] = await db.select({ c: count() }).from(jobs).where(and(eq(jobs.orgId, orgId), isNull(jobs.deletedAt)));
     const [quoteCount] = await db.select({ c: count() }).from(quotes).where(eq(quotes.orgId, orgId));
-    const [invoiceCount] = await db.select({ c: count() }).from(invoices).where(eq(invoices.orgId, orgId));
+    const [invoiceCount] = await db.select({ c: count() }).from(invoices).where(and(eq(invoices.orgId, orgId), isNull(invoices.deletedAt)));
     const [memberCount] = await db.select({ c: count() }).from(memberships).where(eq(memberships.orgId, orgId));
     return {
       customers: custCount.c,
@@ -103,7 +103,7 @@ export const dashboardStorage = {
             (COALESCE((SELECT SUM(qty::numeric * unit_price::numeric) FROM invoice_items ii WHERE ii.invoice_id = inv.id), 0)
               * (1 + COALESCE(inv.tax_rate::numeric, 0) / 100)
               - COALESCE(inv.discount::numeric, 0)) AS total
-          FROM invoices inv WHERE inv.org_id = ${orgId}
+          FROM invoices inv WHERE inv.org_id = ${orgId} AND inv.deleted_at IS NULL
         ),
         quote_data AS (
           SELECT q.status,
@@ -113,10 +113,10 @@ export const dashboardStorage = {
           FROM quotes q WHERE q.org_id = ${orgId}
         )
         SELECT
-          (SELECT COUNT(*)::int FROM customers WHERE org_id = ${orgId}) AS customer_count,
-          (SELECT COALESCE(json_object_agg(status, c), '{}'::json) FROM (SELECT status, COUNT(*)::int AS c FROM jobs WHERE org_id = ${orgId} GROUP BY status) x) AS job_counts,
-          (SELECT COUNT(*)::int FROM jobs WHERE org_id = ${orgId}) AS total_jobs,
-          (SELECT COUNT(*)::int FROM jobs WHERE org_id = ${orgId} AND status IN ('lead','quoted','scheduled','in_progress')) AS active_jobs,
+          (SELECT COUNT(*)::int FROM customers WHERE org_id = ${orgId} AND deleted_at IS NULL) AS customer_count,
+          (SELECT COALESCE(json_object_agg(status, c), '{}'::json) FROM (SELECT status, COUNT(*)::int AS c FROM jobs WHERE org_id = ${orgId} AND deleted_at IS NULL GROUP BY status) x) AS job_counts,
+          (SELECT COUNT(*)::int FROM jobs WHERE org_id = ${orgId} AND deleted_at IS NULL) AS total_jobs,
+          (SELECT COUNT(*)::int FROM jobs WHERE org_id = ${orgId} AND deleted_at IS NULL AND status IN ('lead','quoted','scheduled','in_progress')) AS active_jobs,
           (SELECT COUNT(*)::int FROM quote_data) AS quote_count,
           (SELECT COUNT(*)::int FROM quote_data WHERE status = 'sent') AS quotes_awaiting_count,
           COALESCE((SELECT SUM(total) FROM quote_data WHERE status = 'sent'), 0) AS quotes_awaiting_value,
@@ -146,6 +146,7 @@ export const dashboardStorage = {
                    j.priority, j.is_recurring, j.recurring_frequency
             FROM jobs j LEFT JOIN customers c ON c.id = j.customer_id
             WHERE j.org_id = ${orgId}
+              AND j.deleted_at IS NULL
               AND j.scheduled_start >= ${todayStart}
               AND j.scheduled_start < ${todayEnd}
             ORDER BY j.created_at DESC
@@ -155,24 +156,24 @@ export const dashboardStorage = {
                    j.assigned_user_ids, j.customer_id, c.name AS customer_name, j.created_at,
                    j.priority, j.is_recurring, j.recurring_frequency
             FROM jobs j LEFT JOIN customers c ON c.id = j.customer_id
-            WHERE j.org_id = ${orgId}
+            WHERE j.org_id = ${orgId} AND j.deleted_at IS NULL
             ORDER BY j.created_at DESC LIMIT 5
           ) t) AS recent_jobs,
           (SELECT COALESCE(json_agg(t), '[]'::json) FROM (
             SELECT inv.id, inv.status, inv.customer_id, c.name AS customer_name,
                    inv.due_date, inv.paid_at, inv.sent_at, inv.created_at, inv.paid_via_stripe
             FROM invoices inv LEFT JOIN customers c ON c.id = inv.customer_id
-            WHERE inv.org_id = ${orgId}
+            WHERE inv.org_id = ${orgId} AND inv.deleted_at IS NULL
             ORDER BY inv.created_at DESC LIMIT 5
           ) t) AS recent_invoices,
           (SELECT COALESCE(json_agg(t), '[]'::json) FROM (
             SELECT id, title, status, created_at FROM jobs
-            WHERE org_id = ${orgId} ORDER BY created_at DESC LIMIT 10
+            WHERE org_id = ${orgId} AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 10
           ) t) AS activity_jobs,
           (SELECT COALESCE(json_agg(t), '[]'::json) FROM (
             SELECT inv.id, inv.status, c.name AS customer_name, inv.paid_at, inv.sent_at, inv.created_at
             FROM invoices inv LEFT JOIN customers c ON c.id = inv.customer_id
-            WHERE inv.org_id = ${orgId} AND inv.status IN ('paid','sent')
+            WHERE inv.org_id = ${orgId} AND inv.deleted_at IS NULL AND inv.status IN ('paid','sent')
             ORDER BY inv.created_at DESC LIMIT 5
           ) t) AS activity_invoices,
           (SELECT COALESCE(json_agg(t), '[]'::json) FROM (
@@ -187,12 +188,13 @@ export const dashboardStorage = {
                 * (1 + COALESCE(inv.tax_rate::numeric, 0) / 100)
                 - COALESCE(inv.discount::numeric, 0)) AS amount
             FROM invoices inv
-            WHERE inv.org_id = ${orgId} AND inv.status = 'paid' AND inv.paid_at >= ${thirtyDaysAgo}
+            WHERE inv.org_id = ${orgId} AND inv.deleted_at IS NULL AND inv.status = 'paid' AND inv.paid_at >= ${thirtyDaysAgo}
           ) t) AS chart_rows,
           (SELECT COALESCE(json_agg(t), '[]'::json) FROM (
             SELECT uid AS user_id, COUNT(DISTINCT j.id)::int AS active_count
             FROM jobs j, UNNEST(COALESCE(j.assigned_user_ids, ARRAY[]::varchar[])) AS uid
             WHERE j.org_id = ${orgId}
+              AND j.deleted_at IS NULL
               AND j.status IN ('scheduled','in_progress','lead','quoted')
             GROUP BY uid
           ) t) AS workload

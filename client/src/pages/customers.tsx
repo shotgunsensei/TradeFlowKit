@@ -30,6 +30,7 @@ import {
 import { Plus, Users, Search, Download, Upload, CheckCircle2, AlertCircle, Trash2 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { ToastAction } from "@/components/ui/toast";
 import { useRowSelection } from "@/hooks/use-row-selection";
 import { BulkActionBar } from "@/components/bulk-action-bar";
 import { toCSV, downloadCSV } from "@/lib/csv";
@@ -168,14 +169,40 @@ export default function CustomersPage() {
 
   const selection = useRowSelection(filtered);
 
+  const bulkRestoreMutation = useMutation({
+    mutationFn: async (ids: string[]) => {
+      const res = await apiRequest("POST", "/api/customers/bulk-restore", { ids });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/customers"] });
+      toast({ title: `${data.restored} customer${data.restored !== 1 ? "s" : ""} restored` });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Restore failed", description: err.message, variant: "destructive" });
+    },
+  });
+
   const bulkDeleteMutation = useMutation({
     mutationFn: async (ids: string[]) => {
       const res = await apiRequest("POST", "/api/customers/bulk-delete", { ids });
       return res.json();
     },
-    onSuccess: (data) => {
+    onSuccess: (data, ids) => {
       queryClient.invalidateQueries({ queryKey: ["/api/customers"] });
-      toast({ title: `${data.updated} customer${data.updated !== 1 ? "s" : ""} deleted` });
+      toast({
+        title: `${data.updated} customer${data.updated !== 1 ? "s" : ""} deleted`,
+        duration: 10000,
+        action: (
+          <ToastAction
+            altText="Undo delete"
+            data-testid="button-undo-bulk-delete-customers"
+            onClick={() => bulkRestoreMutation.mutate(ids)}
+          >
+            Undo
+          </ToastAction>
+        ),
+      });
       selection.clear();
       setConfirmBulkDelete(false);
     },

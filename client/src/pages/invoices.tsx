@@ -3,6 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { ToastAction } from "@/components/ui/toast";
 import { useRowSelection } from "@/hooks/use-row-selection";
 import { BulkActionBar } from "@/components/bulk-action-bar";
 import { toCSV, downloadCSV } from "@/lib/csv";
@@ -94,15 +95,42 @@ export default function InvoicesPage() {
 
   const selection = useRowSelection(filtered);
 
-  const bulkDeleteMutation = useMutation({
+  const bulkRestoreMutation = useMutation({
     mutationFn: async (ids: string[]) => {
-      const res = await apiRequest("POST", "/api/invoices/bulk-delete", { ids });
+      const res = await apiRequest("POST", "/api/invoices/bulk-restore", { ids });
       return res.json();
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
-      toast({ title: `${data.updated} invoice${data.updated !== 1 ? "s" : ""} deleted` });
+      toast({ title: `${data.restored} invoice${data.restored !== 1 ? "s" : ""} restored` });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Restore failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const bulkDeleteMutation = useMutation({
+    mutationFn: async (ids: string[]) => {
+      const res = await apiRequest("POST", "/api/invoices/bulk-delete", { ids });
+      return res.json();
+    },
+    onSuccess: (data, ids) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
+      toast({
+        title: `${data.updated} invoice${data.updated !== 1 ? "s" : ""} deleted`,
+        duration: 10000,
+        action: (
+          <ToastAction
+            altText="Undo delete"
+            data-testid="button-undo-bulk-delete-invoices"
+            onClick={() => bulkRestoreMutation.mutate(ids)}
+          >
+            Undo
+          </ToastAction>
+        ),
+      });
       selection.clear();
       setConfirmBulkDelete(false);
     },
