@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, Fragment } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
-import { Lock, ScrollText, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Lock, ScrollText, X } from "lucide-react";
 
 interface AuditEntry {
   id: string;
@@ -14,6 +14,8 @@ interface AuditEntry {
   action: string;
   entity: string;
   entityId: string | null;
+  before: Record<string, any> | null;
+  after: Record<string, any> | null;
   createdAt: string;
   userName: string | null;
   userUsername: string | null;
@@ -41,11 +43,176 @@ const ACTION_OPTIONS = [
 
 const ALL = "__all__";
 
+const SENSITIVE_FIELDS = new Set([
+  "password",
+  "passwordhash",
+  "password_hash",
+  "passwordsalt",
+  "salt",
+  "token",
+  "accesstoken",
+  "access_token",
+  "refreshtoken",
+  "refresh_token",
+  "sessiontoken",
+  "session_token",
+  "apikey",
+  "api_key",
+  "secret",
+  "client_secret",
+  "clientsecret",
+  "recoverycodehash",
+  "recovery_code_hash",
+  "codehash",
+  "code_hash",
+  "totpsecret",
+  "totp_secret",
+  "stripecustomerid",
+  "stripesubscriptionid",
+]);
+
+function isSensitive(key: string): boolean {
+  const k = key.toLowerCase();
+  if (SENSITIVE_FIELDS.has(k)) return true;
+  return /password|secret|token|apikey|api_key|hash/.test(k);
+}
+
+function sanitizeValue(v: any): any {
+  if (v == null) return v;
+  if (Array.isArray(v)) return v.map(sanitizeValue);
+  if (typeof v === "object") {
+    const out: Record<string, any> = {};
+    for (const [k, val] of Object.entries(v)) {
+      if (isSensitive(k)) continue;
+      out[k] = sanitizeValue(val);
+    }
+    return out;
+  }
+  return v;
+}
+
+function sanitize(obj: Record<string, any> | null | undefined): Record<string, any> {
+  if (!obj || typeof obj !== "object") return {};
+  const result = sanitizeValue(obj);
+  return (result && typeof result === "object" && !Array.isArray(result)) ? result : {};
+}
+
+function formatValue(v: any): string {
+  if (v === null || v === undefined) return "—";
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  try {
+    return JSON.stringify(v);
+  } catch {
+    return String(v);
+  }
+}
+
+function valuesEqual(a: any, b: any): boolean {
+  if (a === b) return true;
+  if (a == null && b == null) return true;
+  try {
+    return JSON.stringify(a) === JSON.stringify(b);
+  } catch {
+    return false;
+  }
+}
+
+interface DiffField {
+  key: string;
+  before: any;
+  after: any;
+}
+
+function computeDiff(before: Record<string, any>, after: Record<string, any>): DiffField[] {
+  const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+  const diffs: DiffField[] = [];
+  for (const key of keys) {
+    if (!valuesEqual(before[key], after[key])) {
+      diffs.push({ key, before: before[key], after: after[key] });
+    }
+  }
+  return diffs.sort((a, b) => a.key.localeCompare(b.key));
+}
+
+function AuditDetail({ entry }: { entry: AuditEntry }) {
+  const before = sanitize(entry.before);
+  const after = sanitize(entry.after);
+  const action = entry.action.toLowerCase();
+  const isCreate = !entry.before && !!entry.after;
+  const isDelete = !!entry.before && !entry.after;
+  const explicitCreate = /create|insert|add/.test(action);
+  const explicitDelete = /delete|remove/.test(action);
+
+  if (isCreate || (explicitCreate && Object.keys(after).length > 0 && Object.keys(before).length === 0)) {
+    const entries = Object.entries(after);
+    if (entries.length === 0) {
+      return <p className="text-xs text-muted-foreground">No additional details recorded.</p>;
+    }
+    return (
+      <div data-testid={`audit-detail-create-${entry.id}`}>
+        <p className="text-xs font-medium mb-2">New {entry.entity} record:</p>
+        <dl className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-xs">
+          {entries.map(([k, v]) => (
+            <Fragment key={k}>
+              <dt className="font-mono text-muted-foreground">{k}</dt>
+              <dd className="font-mono break-all">{formatValue(v)}</dd>
+            </Fragment>
+          ))}
+        </dl>
+      </div>
+    );
+  }
+
+  if (isDelete || (explicitDelete && Object.keys(before).length > 0 && Object.keys(after).length === 0)) {
+    const entries = Object.entries(before);
+    if (entries.length === 0) {
+      return <p className="text-xs text-muted-foreground">No additional details recorded.</p>;
+    }
+    return (
+      <div data-testid={`audit-detail-delete-${entry.id}`}>
+        <p className="text-xs font-medium mb-2">Deleted {entry.entity} record:</p>
+        <dl className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-xs">
+          {entries.map(([k, v]) => (
+            <Fragment key={k}>
+              <dt className="font-mono text-muted-foreground">{k}</dt>
+              <dd className="font-mono break-all line-through opacity-70">{formatValue(v)}</dd>
+            </Fragment>
+          ))}
+        </dl>
+      </div>
+    );
+  }
+
+  const diffs = computeDiff(before, after);
+  if (diffs.length === 0) {
+    return <p className="text-xs text-muted-foreground" data-testid={`audit-detail-empty-${entry.id}`}>No field changes recorded.</p>;
+  }
+  return (
+    <div data-testid={`audit-detail-diff-${entry.id}`}>
+      <p className="text-xs font-medium mb-2">Changed fields:</p>
+      <div className="grid grid-cols-[max-content_1fr_1fr] gap-x-4 gap-y-1 text-xs">
+        <div className="font-medium text-muted-foreground">Field</div>
+        <div className="font-medium text-muted-foreground">Before</div>
+        <div className="font-medium text-muted-foreground">After</div>
+        {diffs.map((d) => (
+          <Fragment key={d.key}>
+            <div className="font-mono">{d.key}</div>
+            <div className="font-mono break-all text-red-700 dark:text-red-400">{formatValue(d.before)}</div>
+            <div className="font-mono break-all text-green-700 dark:text-green-400">{formatValue(d.after)}</div>
+          </Fragment>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function AuditTab({ plan }: { plan: string }) {
   const isEnterprise = plan === "enterprise";
   const [limit, setLimit] = useState(50);
   const [entity, setEntity] = useState<string>(ALL);
   const [action, setAction] = useState<string>(ALL);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const params = new URLSearchParams({ limit: String(limit) });
   if (entity !== ALL) params.set("entity", entity);
@@ -66,6 +233,14 @@ export default function AuditTab({ plan }: { plan: string }) {
     setEntity(ALL);
     setAction(ALL);
     setLimit(50);
+  };
+
+  const toggle = (id: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
   };
 
   if (!isEnterprise) {
@@ -97,7 +272,7 @@ export default function AuditTab({ plan }: { plan: string }) {
         <CardTitle className="text-base flex items-center gap-2">
           <ScrollText className="h-4 w-4" /> Audit log
         </CardTitle>
-        <CardDescription>Recent changes recorded across your organization.</CardDescription>
+        <CardDescription>Recent changes recorded across your organization. Click a row to see what changed.</CardDescription>
       </CardHeader>
       <CardContent>
         <div className="flex flex-wrap items-end gap-3 mb-4">
@@ -163,6 +338,7 @@ export default function AuditTab({ plan }: { plan: string }) {
             <Table data-testid="table-audit">
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-8"></TableHead>
                   <TableHead>When</TableHead>
                   <TableHead>User</TableHead>
                   <TableHead>Action</TableHead>
@@ -171,15 +347,48 @@ export default function AuditTab({ plan }: { plan: string }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {data.items.map((row) => (
-                  <TableRow key={row.id} data-testid={`row-audit-${row.id}`}>
-                    <TableCell className="text-xs whitespace-nowrap">{new Date(row.createdAt).toLocaleString()}</TableCell>
-                    <TableCell className="text-xs">{row.userName || row.userUsername || <span className="text-muted-foreground">—</span>}</TableCell>
-                    <TableCell><Badge variant="outline" className="text-xs">{row.action}</Badge></TableCell>
-                    <TableCell className="text-xs">{row.entity}</TableCell>
-                    <TableCell className="font-mono text-xs">{row.entityId?.slice(0, 8) || "—"}</TableCell>
-                  </TableRow>
-                ))}
+                {data.items.map((row) => {
+                  const isOpen = expanded.has(row.id);
+                  return (
+                    <Fragment key={row.id}>
+                      <TableRow
+                        data-testid={`row-audit-${row.id}`}
+                        className="cursor-pointer hover-elevate"
+                        onClick={() => toggle(row.id)}
+                        aria-expanded={isOpen}
+                      >
+                        <TableCell className="w-8">
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="ghost"
+                            className="h-6 w-6"
+                            onClick={(e) => { e.stopPropagation(); toggle(row.id); }}
+                            data-testid={`button-toggle-audit-${row.id}`}
+                            aria-label={isOpen ? "Collapse" : "Expand"}
+                          >
+                            {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                          </Button>
+                        </TableCell>
+                        <TableCell className="text-xs whitespace-nowrap">{new Date(row.createdAt).toLocaleString()}</TableCell>
+                        <TableCell className="text-xs">{row.userName || row.userUsername || <span className="text-muted-foreground">—</span>}</TableCell>
+                        <TableCell><Badge variant="outline" className="text-xs">{row.action}</Badge></TableCell>
+                        <TableCell className="text-xs">{row.entity}</TableCell>
+                        <TableCell className="font-mono text-xs">{row.entityId?.slice(0, 8) || "—"}</TableCell>
+                      </TableRow>
+                      {isOpen && (
+                        <TableRow data-testid={`row-audit-detail-${row.id}`}>
+                          <TableCell></TableCell>
+                          <TableCell colSpan={5} className="bg-muted/30">
+                            <div className="py-2">
+                              <AuditDetail entry={row} />
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </Fragment>
+                  );
+                })}
               </TableBody>
             </Table>
             <div className="flex items-center justify-between mt-3">
