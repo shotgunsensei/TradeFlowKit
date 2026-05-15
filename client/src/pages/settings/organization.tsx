@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/lib/auth";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -31,12 +32,36 @@ export default function OrganizationTab() {
   const [operatorosOrgIdInput, setOperatorosOrgIdInput] = useState<string>(
     org?.operatorosOrganizationId ?? ""
   );
+  const [operatorosManualEntry, setOperatorosManualEntry] = useState(false);
 
   useEffect(() => {
     setOperatorosOrgIdInput(org?.operatorosOrganizationId ?? "");
   }, [org?.id, org?.operatorosOrganizationId]);
 
   const canManageOperatorosLink = membership?.role === "owner" || !!user?.isSuperAdmin;
+
+  type OperatorosOrgList =
+    | { available: false; reason: "not_configured" | "not_linked" | "unavailable" }
+    | { available: true; organizations: Array<{ id: string; name: string }> };
+
+  const operatorosOrgsQuery = useQuery<OperatorosOrgList>({
+    queryKey: ["/api/operatoros/organizations"],
+    enabled: canManageOperatorosLink,
+    staleTime: 60_000,
+  });
+
+  const availableOperatorosOrgs =
+    operatorosOrgsQuery.data && operatorosOrgsQuery.data.available
+      ? operatorosOrgsQuery.data.organizations
+      : [];
+
+  const linkedOperatorosOrgName = (() => {
+    if (!org?.operatorosOrganizationId) return null;
+    const match = availableOperatorosOrgs.find(
+      (o) => o.id === org.operatorosOrganizationId
+    );
+    return match?.name ?? null;
+  })();
 
   const updateOperatorosLinkMutation = useMutation({
     mutationFn: async (value: string | null) => {
@@ -344,21 +369,82 @@ export default function OrganizationTab() {
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="space-y-2">
-          <Label htmlFor="input-operatoros-org-id">OperatorOS Organization ID</Label>
-          <Input
-            id="input-operatoros-org-id"
-            value={operatorosOrgIdInput}
-            onChange={(e) => setOperatorosOrgIdInput(e.target.value)}
-            placeholder="e.g. org_abc123"
-            disabled={!canManageOperatorosLink || updateOperatorosLinkMutation.isPending}
-            data-testid="input-operatoros-org-id"
-          />
+          <Label htmlFor="input-operatoros-org-id">OperatorOS Organization</Label>
+          {canManageOperatorosLink &&
+          !operatorosManualEntry &&
+          operatorosOrgsQuery.data?.available &&
+          availableOperatorosOrgs.length > 0 ? (
+            <>
+              <Select
+                value={operatorosOrgIdInput || undefined}
+                onValueChange={(v) => setOperatorosOrgIdInput(v)}
+                disabled={updateOperatorosLinkMutation.isPending}
+              >
+                <SelectTrigger
+                  id="input-operatoros-org-id"
+                  data-testid="select-operatoros-org-id"
+                >
+                  <SelectValue placeholder="Choose an OperatorOS organization…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableOperatorosOrgs.map((o) => (
+                    <SelectItem
+                      key={o.id}
+                      value={o.id}
+                      data-testid={`option-operatoros-org-${o.id}`}
+                    >
+                      <span>{o.name}</span>
+                      <span className="ml-2 text-xs text-muted-foreground font-mono">
+                        {o.id}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <button
+                type="button"
+                className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+                onClick={() => setOperatorosManualEntry(true)}
+                data-testid="button-operatoros-manual-entry"
+              >
+                Enter an organization id manually instead
+              </button>
+            </>
+          ) : (
+            <>
+              <Input
+                id="input-operatoros-org-id"
+                value={operatorosOrgIdInput}
+                onChange={(e) => setOperatorosOrgIdInput(e.target.value)}
+                placeholder="e.g. org_abc123"
+                disabled={!canManageOperatorosLink || updateOperatorosLinkMutation.isPending}
+                data-testid="input-operatoros-org-id"
+              />
+              {canManageOperatorosLink &&
+                operatorosManualEntry &&
+                availableOperatorosOrgs.length > 0 && (
+                  <button
+                    type="button"
+                    className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+                    onClick={() => setOperatorosManualEntry(false)}
+                    data-testid="button-operatoros-pick-from-list"
+                  >
+                    Pick from your OperatorOS organizations instead
+                  </button>
+                )}
+            </>
+          )}
           <p className="text-xs text-muted-foreground">
             {org?.operatorosOrganizationId ? (
               <>
                 Currently linked to{" "}
+                {linkedOperatorosOrgName && (
+                  <span data-testid="text-current-operatoros-link-name">
+                    {linkedOperatorosOrgName}{" "}
+                  </span>
+                )}
                 <span className="font-mono" data-testid="text-current-operatoros-link">
-                  {org.operatorosOrganizationId}
+                  ({org.operatorosOrganizationId})
                 </span>
                 .
               </>
@@ -366,6 +452,20 @@ export default function OrganizationTab() {
               "Not linked to any OperatorOS organization yet."
             )}
           </p>
+          {canManageOperatorosLink &&
+            operatorosOrgsQuery.data &&
+            !operatorosOrgsQuery.data.available && (
+              <p
+                className="text-xs text-muted-foreground"
+                data-testid="text-operatoros-list-unavailable"
+              >
+                {operatorosOrgsQuery.data.reason === "not_linked"
+                  ? "Sign in via OperatorOS once to load your available organizations."
+                  : operatorosOrgsQuery.data.reason === "not_configured"
+                    ? "OperatorOS sign-in isn't configured on this server, so we can't list your organizations."
+                    : "Couldn't reach OperatorOS to load your organizations — enter the id manually."}
+              </p>
+            )}
           {!canManageOperatorosLink && (
             <p className="text-xs text-muted-foreground">
               Only the organization owner can change this.

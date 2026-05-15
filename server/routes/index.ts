@@ -25,6 +25,7 @@ import searchRouter from "./search";
 import twoFactorRouter from "./twoFactor";
 import exportsRouter from "./exports";
 import auditLogRouter from "./auditLog";
+import operatorosRouter from "./operatoros";
 
 declare module "express-session" {
   interface SessionData {
@@ -87,6 +88,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.use(twoFactorRouter);
   app.use(exportsRouter);
   app.use(auditLogRouter);
+  app.use(operatorosRouter);
 
   return httpServer;
 }
