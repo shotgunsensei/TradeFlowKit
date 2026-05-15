@@ -1,0 +1,12 @@
+{
+  "url": "http://localhost:5000/dashboard",
+  "scannedAt": "2026-05-15T13:37:17.391Z",
+  "axeVersion": "4.10.0",
+  "lighthouseRulesChecked": 51,
+  "totalAxeViolations": 1,
+  "lighthouseRuleViolations": 0,
+  "affectedNodes": 0,
+  "passes": 36,
+  "estimatedLighthouseAccessibilityScore": 100,
+  "violations": []
+}

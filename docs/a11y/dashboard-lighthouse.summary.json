@@ -1,0 +1,8 @@
+{
+  "url": "http://localhost:5000/dashboard",
+  "runAt": "2026-05-15T13:42:14.358Z",
+  "lighthouseVersion": "12.8.2",
+  "formFactor": "desktop",
+  "accessibilityScore": 100,
+  "failingAudits": []
+}

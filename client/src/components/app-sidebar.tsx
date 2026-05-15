@@ -205,9 +205,11 @@ export function AppSidebar() {
             <button
               data-testid="button-logout"
               onClick={logout}
-              className="text-muted-foreground transition-colors"
+              aria-label="Log out"
+              type="button"
+              className="text-muted-foreground hover:text-foreground transition-colors"
             >
-              <LogOut className="h-4 w-4" />
+              <LogOut className="h-4 w-4" aria-hidden="true" />
             </button>
           </div>
         )}
@@ -215,7 +217,7 @@ export function AppSidebar() {
           href="https://shotgunninjas.com"
           target="_blank"
           rel="noopener noreferrer"
-          className="block text-[10px] text-muted-foreground/70 hover:text-muted-foreground transition-colors text-center pt-1 border-t border-sidebar-border"
+          className="block text-[11px] text-muted-foreground hover:text-foreground transition-colors text-center pt-1 border-t border-sidebar-border"
           data-testid="link-shotgun-ninjas"
         >
           Built by Shotgun Ninjas Productions

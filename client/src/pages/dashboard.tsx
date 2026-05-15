@@ -93,8 +93,8 @@ function TrendBadge({ thisMonth, lastMonth }: { thisMonth: number; lastMonth: nu
   const pct = ((thisMonth - lastMonth) / lastMonth) * 100;
   const up = pct >= 0;
   return (
-    <span className={`flex items-center gap-0.5 text-xs font-medium ${up ? "text-emerald-600" : "text-red-500"}`}>
-      {up ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+    <span className={`flex items-center gap-0.5 text-xs font-medium ${up ? "text-emerald-700 dark:text-emerald-400" : "text-red-700 dark:text-red-400"}`}>
+      {up ? <TrendingUp className="h-3 w-3" aria-hidden="true" /> : <TrendingDown className="h-3 w-3" aria-hidden="true" />}
       {Math.abs(pct).toFixed(0)}%
     </span>
   );
@@ -247,12 +247,12 @@ export default function Dashboard() {
           <Link href="/invoices?status=sent">
             <div className={`rounded-xl border p-4 hover-elevate cursor-pointer ${stats.overdueCount > 0 ? "border-red-200 bg-red-50 dark:bg-red-950/20" : "bg-card"}`} data-testid="kpi-overdue">
               <div className="flex items-center justify-between mb-1">
-                <span className={`text-xs font-medium ${stats.overdueCount > 0 ? "text-red-600" : "text-muted-foreground"}`}>Overdue</span>
-                <AlertTriangle className={`h-4 w-4 ${stats.overdueCount > 0 ? "text-red-500" : "text-muted-foreground"}`} />
+                <span className={`text-xs font-medium ${stats.overdueCount > 0 ? "text-red-700 dark:text-red-400" : "text-muted-foreground"}`}>Overdue</span>
+                <AlertTriangle aria-hidden="true" className={`h-4 w-4 ${stats.overdueCount > 0 ? "text-red-600 dark:text-red-400" : "text-muted-foreground"}`} />
               </div>
-              <p className={`text-2xl font-bold ${stats.overdueCount > 0 ? "text-red-600" : ""}`}>{stats.overdueCount}</p>
+              <p className={`text-2xl font-bold ${stats.overdueCount > 0 ? "text-red-700 dark:text-red-400" : ""}`}>{stats.overdueCount}</p>
               {stats.overdueAmount > 0 && (
-                <p className="text-xs text-red-500 mt-0.5 font-medium">{fmt(stats.overdueAmount)}</p>
+                <p className="text-xs text-red-700 dark:text-red-400 mt-0.5 font-medium">{fmt(stats.overdueAmount)}</p>
               )}
               {stats.overdueCount === 0 && <p className="text-xs text-muted-foreground mt-0.5">all current</p>}
             </div>
@@ -262,11 +262,11 @@ export default function Dashboard() {
             <div className="rounded-xl border bg-card p-4 hover-elevate cursor-pointer" data-testid="kpi-quotes-awaiting">
               <div className="flex items-center justify-between mb-1">
                 <span className="text-xs text-muted-foreground font-medium">Awaiting Approval</span>
-                <FileText className="h-4 w-4 text-amber-600" />
+                <FileText aria-hidden="true" className="h-4 w-4 text-amber-700 dark:text-amber-400" />
               </div>
               <p className="text-2xl font-bold">{stats.quotesAwaitingCount}</p>
               {stats.quotesAwaitingValue > 0 && (
-                <p className="text-xs text-amber-600 mt-0.5 font-medium">{fmt(stats.quotesAwaitingValue)}</p>
+                <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5 font-medium">{fmt(stats.quotesAwaitingValue)}</p>
               )}
               {stats.quotesAwaitingCount === 0 && <p className="text-xs text-muted-foreground mt-0.5">quotes pending</p>}
             </div>
@@ -305,7 +305,7 @@ export default function Dashboard() {
               <div className="rounded-xl border bg-card p-4 hover-elevate cursor-pointer col-span-1" data-testid="kpi-review-requests">
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-xs text-muted-foreground font-medium">Reviews Sent</span>
-                  <Star className="h-4 w-4 text-amber-500" />
+                  <Star aria-hidden="true" className="h-4 w-4 text-amber-700 dark:text-amber-400" />
                 </div>
                 <p className="text-2xl font-bold">{reviewStats.countThisMonth}</p>
                 <p className="text-xs text-muted-foreground mt-0.5">this month</p>
