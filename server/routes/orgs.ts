@@ -20,6 +20,8 @@ router.post("/api/orgs", requireAuth, async (req: Request, res: Response) => {
 
     await storage.createMembership(org.id, req.session.userId!, "owner");
     req.session.orgId = org.id;
+    await storage.recordAudit({ orgId: org.id, userId: req.session.userId, action: "create", entity: "organization", entityId: org.id, after: org });
+    await storage.recordAudit({ orgId: org.id, userId: req.session.userId, action: "create", entity: "membership", entityId: req.session.userId!, after: { userId: req.session.userId, role: "owner" } });
     res.json(org);
   } catch (err) {
     res.status(500).send(errMsg(err));
@@ -40,7 +42,9 @@ router.patch("/api/orgs/:id", requireAuth, requireOrg, async (req: Request, res:
       operatorosOrganizationId,
       ...safeData
     } = req.body;
+    const before = await storage.getOrg(req.params.id as string);
     const org = await storage.updateOrg(req.params.id as string, safeData);
+    await storage.recordAudit({ orgId: req.params.id as string, userId: req.session.userId, action: "update", entity: "organization", entityId: req.params.id as string, before, after: org });
     res.json(org);
   } catch (err) {
     res.status(500).send(errMsg(err));
@@ -123,6 +127,7 @@ router.post("/api/orgs/join", requireAuth, async (req: Request, res: Response) =
 
     await storage.createMembership(invite.orgId, req.session.userId!, invite.role);
     req.session.orgId = invite.orgId;
+    await storage.recordAudit({ orgId: invite.orgId, userId: req.session.userId, action: "create", entity: "membership", entityId: req.session.userId!, after: { userId: req.session.userId, role: invite.role, viaInvite: invite.code } });
     res.json({ ok: true });
   } catch (err) {
     res.status(500).send(errMsg(err));
@@ -203,6 +208,7 @@ router.patch("/api/memberships/:userId/role", requireAuth, requireOrg, async (re
       return res.status(403).send("Only the owner can change another owner's role");
     }
     await storage.updateMembershipRole(req.session.orgId!, userId, role);
+    await storage.recordAudit({ orgId: req.session.orgId!, userId: req.session.userId, action: "update", entity: "membership", entityId: userId, before: { userId, role: targetMembership.role }, after: { userId, role } });
     res.json({ ok: true });
   } catch (err) {
     res.status(500).send(errMsg(err));
@@ -225,6 +231,7 @@ router.delete("/api/memberships/:userId", requireAuth, requireOrg, async (req: R
       return res.status(403).send("Cannot remove the organization owner");
     }
     await storage.deleteMembership(req.session.orgId!, userId);
+    await storage.recordAudit({ orgId: req.session.orgId!, userId: req.session.userId, action: "delete", entity: "membership", entityId: userId, before: { userId, role: targetMembership.role } });
     res.json({ ok: true });
   } catch (err) {
     res.status(500).send(errMsg(err));

@@ -70,6 +70,7 @@ router.post("/api/quotes", requireAuth, requireOrg, async (req: Request, res: Re
       });
     }
     const q = await storage.createQuote(req.session.orgId!, req.body, req.session.userId!);
+    await storage.recordAudit({ orgId: req.session.orgId!, userId: req.session.userId, action: "create", entity: "quote", entityId: q.id, after: q });
     res.json(q);
   } catch (err) {
     res.status(500).send(errMsg(err));
@@ -78,8 +79,10 @@ router.post("/api/quotes", requireAuth, requireOrg, async (req: Request, res: Re
 
 router.patch("/api/quotes/:id", requireAuth, requireOrg, async (req: Request, res: Response) => {
   try {
+    const before = await storage.getQuote(req.session.orgId!, req.params.id as string);
     const q = await storage.updateQuote(req.session.orgId!, req.params.id as string, req.body);
     if (!q) return res.status(404).send("Quote not found");
+    await storage.recordAudit({ orgId: req.session.orgId!, userId: req.session.userId, action: "update", entity: "quote", entityId: q.id, before, after: q });
     res.json(q);
   } catch (err) {
     res.status(500).send(errMsg(err));
@@ -88,7 +91,9 @@ router.patch("/api/quotes/:id", requireAuth, requireOrg, async (req: Request, re
 
 router.delete("/api/quotes/:id", requireAuth, requireOrg, async (req: Request, res: Response) => {
   try {
+    const before = await storage.getQuote(req.session.orgId!, req.params.id as string);
     await storage.deleteQuote(req.session.orgId!, req.params.id as string);
+    await storage.recordAudit({ orgId: req.session.orgId!, userId: req.session.userId, action: "delete", entity: "quote", entityId: req.params.id as string, before });
     res.json({ ok: true });
   } catch (err) {
     res.status(500).send(errMsg(err));

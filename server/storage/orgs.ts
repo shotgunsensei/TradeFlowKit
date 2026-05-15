@@ -19,6 +19,7 @@ import {
   reviewRequests,
   orgAutomations,
   reminderLog,
+  auditLog,
   type Org,
   type InsertOrg,
   type Membership,
@@ -73,6 +74,7 @@ export const orgsStorage = {
     await db.delete(orgAutomations).where(eq(orgAutomations.orgId, id));
     await db.delete(reminderLog).where(eq(reminderLog.orgId, id));
     await db.delete(reviewRequests).where(eq(reviewRequests.orgId, id));
+    await db.delete(auditLog).where(eq(auditLog.orgId, id));
     await db.delete(orgs).where(eq(orgs.id, id));
   },
 

@@ -28,8 +28,10 @@ router.patch("/api/admin/orgs/:id", requireAuth, requireSuperAdmin, async (req: 
     if (plan) updateData.plan = plan;
     if (subscriptionStatus !== undefined) updateData.subscriptionStatus = subscriptionStatus;
 
+    const before = await storage.getOrg(req.params.id as string);
     const org = await storage.updateOrg(req.params.id as string, updateData);
     if (!org) return res.status(404).send("Organization not found");
+    await storage.recordAudit({ orgId: org.id, userId: req.session.userId, action: "update", entity: "organization", entityId: org.id, before, after: org });
     res.json(org);
   } catch (err) {
     res.status(500).send(errMsg(err));
@@ -66,7 +68,9 @@ router.delete(
   requireSuperAdmin,
   async (req: Request, res: Response) => {
     try {
+      const before = await storage.getMembership(req.params.orgId as string, req.params.userId as string);
       await storage.deleteMembership(req.params.orgId as string, req.params.userId as string);
+      await storage.recordAudit({ orgId: req.params.orgId as string, userId: req.session.userId, action: "delete", entity: "membership", entityId: req.params.userId as string, before: before ? { userId: before.userId, role: before.role } : undefined });
       res.json({ ok: true });
     } catch (err) {
       res.status(500).send(errMsg(err));

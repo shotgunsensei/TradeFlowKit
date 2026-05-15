@@ -116,6 +116,7 @@ router.post("/api/jobs", requireAuth, requireOrg, async (req: Request, res: Resp
     }
 
     const j = await storage.createJob(req.session.orgId!, data, req.session.userId!);
+    await storage.recordAudit({ orgId: req.session.orgId!, userId: req.session.userId, action: "create", entity: "job", entityId: j.id, after: j });
     res.json(j);
   } catch (err) {
     res.status(500).send(errMsg(err));
@@ -130,6 +131,7 @@ router.patch("/api/jobs/:id", requireAuth, requireOrg, async (req: Request, res:
     const existingJob = await storage.getJob(orgId, jobId);
     if (!existingJob) return res.status(404).send("Job not found");
     const oldStatus = existingJob.status;
+    const before = existingJob;
 
     const data = { ...req.body };
     if ("scheduledStart" in data) data.scheduledStart = data.scheduledStart ? new Date(data.scheduledStart) : null;
@@ -146,6 +148,7 @@ router.patch("/api/jobs/:id", requireAuth, requireOrg, async (req: Request, res:
 
     const j = await storage.updateJob(orgId, jobId, data);
     if (!j) return res.status(404).send("Job not found");
+    await storage.recordAudit({ orgId, userId: req.session.userId, action: "update", entity: "job", entityId: j.id, before, after: j });
 
     const newStatus = data.status;
     const wasAlreadyTerminal = TERMINAL_STATUSES.has(oldStatus);
@@ -245,7 +248,9 @@ router.patch("/api/jobs/:id", requireAuth, requireOrg, async (req: Request, res:
 
 router.delete("/api/jobs/:id", requireAuth, requireOrg, async (req: Request, res: Response) => {
   try {
+    const before = await storage.getJob(req.session.orgId!, req.params.id as string);
     await storage.deleteJob(req.session.orgId!, req.params.id as string);
+    await storage.recordAudit({ orgId: req.session.orgId!, userId: req.session.userId, action: "delete", entity: "job", entityId: req.params.id as string, before });
     res.json({ ok: true });
   } catch (err) {
     res.status(500).send(errMsg(err));
