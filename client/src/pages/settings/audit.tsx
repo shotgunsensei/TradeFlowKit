@@ -4,7 +4,9 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Lock, ScrollText } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
+import { Lock, ScrollText, X } from "lucide-react";
 
 interface AuditEntry {
   id: string;
@@ -17,18 +19,54 @@ interface AuditEntry {
   userUsername: string | null;
 }
 
+const ENTITY_OPTIONS = [
+  { value: "customer", label: "Customer" },
+  { value: "invoice", label: "Invoice" },
+  { value: "job", label: "Job" },
+  { value: "quote", label: "Quote" },
+  { value: "organization", label: "Organization" },
+  { value: "org", label: "Organization (SSO)" },
+  { value: "membership", label: "Team membership" },
+];
+
+const ACTION_OPTIONS = [
+  { value: "create", label: "Create" },
+  { value: "update", label: "Update" },
+  { value: "delete", label: "Delete" },
+  { value: "paid", label: "Paid" },
+  { value: "payment_failed", label: "Payment failed" },
+  { value: "sso_auto_join", label: "SSO auto-join" },
+  { value: "sso_auto_provision", label: "SSO auto-provision" },
+];
+
+const ALL = "__all__";
+
 export default function AuditTab({ plan }: { plan: string }) {
   const isEnterprise = plan === "enterprise";
   const [limit, setLimit] = useState(50);
+  const [entity, setEntity] = useState<string>(ALL);
+  const [action, setAction] = useState<string>(ALL);
+
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (entity !== ALL) params.set("entity", entity);
+  if (action !== ALL) params.set("action", action);
+
   const { data, isLoading } = useQuery<{ items: AuditEntry[]; total: number }>({
-    queryKey: ["/api/audit-log", limit],
+    queryKey: ["/api/audit-log", limit, entity, action],
     queryFn: async () => {
-      const res = await fetch(`/api/audit-log?limit=${limit}`, { credentials: "include" });
+      const res = await fetch(`/api/audit-log?${params.toString()}`, { credentials: "include" });
       if (!res.ok) throw new Error(await res.text());
       return res.json();
     },
     enabled: isEnterprise,
   });
+
+  const hasActiveFilters = entity !== ALL || action !== ALL;
+  const clearFilters = () => {
+    setEntity(ALL);
+    setAction(ALL);
+    setLimit(50);
+  };
 
   if (!isEnterprise) {
     return (
@@ -62,10 +100,64 @@ export default function AuditTab({ plan }: { plan: string }) {
         <CardDescription>Recent changes recorded across your organization.</CardDescription>
       </CardHeader>
       <CardContent>
+        <div className="flex flex-wrap items-end gap-3 mb-4">
+          <div className="space-y-1">
+            <Label htmlFor="audit-filter-entity" className="text-xs">Entity</Label>
+            <Select
+              value={entity}
+              onValueChange={(v) => { setEntity(v); setLimit(50); }}
+            >
+              <SelectTrigger id="audit-filter-entity" className="h-8 w-[180px]" data-testid="select-audit-entity">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL} data-testid="option-audit-entity-all">All entities</SelectItem>
+                {ENTITY_OPTIONS.map((o) => (
+                  <SelectItem key={o.value} value={o.value} data-testid={`option-audit-entity-${o.value}`}>
+                    {o.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="audit-filter-action" className="text-xs">Action</Label>
+            <Select
+              value={action}
+              onValueChange={(v) => { setAction(v); setLimit(50); }}
+            >
+              <SelectTrigger id="audit-filter-action" className="h-8 w-[180px]" data-testid="select-audit-action">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL} data-testid="option-audit-action-all">All actions</SelectItem>
+                {ACTION_OPTIONS.map((o) => (
+                  <SelectItem key={o.value} value={o.value} data-testid={`option-audit-action-${o.value}`}>
+                    {o.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          {hasActiveFilters && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={clearFilters}
+              className="h-8"
+              data-testid="button-clear-audit-filters"
+            >
+              <X className="h-3.5 w-3.5 mr-1" /> Clear
+            </Button>
+          )}
+        </div>
         {isLoading ? (
           <p className="text-sm text-muted-foreground py-4 text-center">Loading...</p>
         ) : !data || data.items.length === 0 ? (
-          <p className="text-sm text-muted-foreground py-4 text-center" data-testid="text-audit-empty">No activity yet.</p>
+          <p className="text-sm text-muted-foreground py-4 text-center" data-testid="text-audit-empty">
+            {hasActiveFilters ? "No activity matches these filters." : "No activity yet."}
+          </p>
         ) : (
           <div className="overflow-x-auto">
             <Table data-testid="table-audit">
