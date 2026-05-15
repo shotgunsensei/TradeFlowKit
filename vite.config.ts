@@ -34,11 +34,20 @@ export default defineConfig({
       output: {
         manualChunks(id) {
           if (!id.includes("node_modules")) return undefined;
-          if (id.includes("recharts") || id.includes("d3-")) {
-            return "charts";
-          }
+          if (id.includes("/recharts/")) return "recharts";
+          if (id.includes("/victory-vendor/") || id.includes("/d3-")) return "d3";
           if (id.includes("lucide-react")) return "icons";
           if (id.includes("date-fns")) return "date-fns";
+          if (id.includes("@radix-ui")) return "radix";
+          if (
+            id.includes("/react/") ||
+            id.includes("/react-dom/") ||
+            id.includes("/scheduler/") ||
+            id.includes("/react-hook-form/") ||
+            id.includes("/@tanstack/")
+          ) {
+            return "react-vendor";
+          }
         },
       },
     },
