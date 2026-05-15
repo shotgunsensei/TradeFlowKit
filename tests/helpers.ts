@@ -29,12 +29,16 @@ export async function setupOrg(plan: Org["plan"] = "free") {
 
 const cleanupOrgs: string[] = [];
 const cleanupUsers: string[] = [];
+const cleanupStripeEvents: string[] = [];
 
 export function trackOrg(orgId: string) {
   cleanupOrgs.push(orgId);
 }
 export function trackUser(userId: string) {
   cleanupUsers.push(userId);
+}
+export function trackStripeEvent(eventId: string) {
+  cleanupStripeEvents.push(eventId);
 }
 
 export async function cleanupAll() {
@@ -46,6 +50,11 @@ export async function cleanupAll() {
   for (const id of cleanupUsers.splice(0)) {
     try {
       await storage.deleteUser(id);
+    } catch {}
+  }
+  for (const id of cleanupStripeEvents.splice(0)) {
+    try {
+      await storage.deleteProcessedStripeEvent(id);
     } catch {}
   }
 }

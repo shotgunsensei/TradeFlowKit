@@ -11,10 +11,11 @@ vi.mock("../server/stripeClient", () => ({
 
 import { WebhookHandlers } from "../server/webhookHandlers";
 import { storage } from "../server/storage";
-import { setupOrg, trackOrg, trackUser, cleanupAll } from "./helpers";
+import { setupOrg, trackOrg, trackUser, trackStripeEvent, cleanupAll } from "./helpers";
 import { pool } from "../server/db";
 
 function makeEvent(type: string, object: any, id = `evt_test_${Math.random().toString(36).slice(2)}`) {
+  trackStripeEvent(id);
   return Buffer.from(JSON.stringify({ id, type, data: { object } }));
 }
 
