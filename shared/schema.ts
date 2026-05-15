@@ -174,8 +174,13 @@ export const orgs = pgTable("orgs", {
   reviewRequestEnabled: boolean("review_request_enabled").default(false).notNull(),
   reviewRequestUrl: varchar("review_request_url"),
   reviewRequestTemplate: text("review_request_template"),
+  operatorosOrganizationId: text("operatoros_organization_id"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (t) => [
+  uniqueIndex("orgs_operatoros_organization_id_idx")
+    .on(t.operatorosOrganizationId)
+    .where(sql`${t.operatorosOrganizationId} IS NOT NULL`),
+]);
 
 export const memberships = pgTable("memberships", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -472,6 +477,7 @@ export const insertOrgSchema = createInsertSchema(orgs).pick({
   phone: true,
   email: true,
   address: true,
+  operatorosOrganizationId: true,
 });
 
 export const insertMembershipSchema = createInsertSchema(memberships).pick({

@@ -136,6 +136,52 @@ function deriveFullName(claims: Pick<SsoTokenClaims, "name" | "email">): string 
   return local.charAt(0).toUpperCase() + local.slice(1);
 }
 
+/**
+ * Map an OperatorOS role claim to a TradeFlowKit membership role when
+ * auto-joining a user to an existing linked org. We deliberately avoid
+ * minting "owner" via this path — the existing org already has its own
+ * owner, and a fresh sub-tenant launch shouldn't elevate to that level.
+ */
+function mapOperatorosRoleToMembershipRole(role: string | null | undefined): "admin" | "tech" | "viewer" {
+  switch ((role ?? "").toLowerCase()) {
+    case "owner":
+    case "admin":
+      return "admin";
+    case "viewer":
+    case "read":
+    case "readonly":
+      return "viewer";
+    default:
+      return "tech";
+  }
+}
+
+function deriveOrgNameFromClaims(claims: SsoTokenClaims): string {
+  const fromName = claims.name?.trim();
+  if (fromName) return `${fromName}'s Organization`;
+  const local = claims.email.split("@")[0] || "";
+  const pretty = local.charAt(0).toUpperCase() + local.slice(1);
+  return pretty ? `${pretty}'s Organization` : "My Organization";
+}
+
+function slugifyBase(input: string): string {
+  return input
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
+}
+
+async function pickUniqueOrgSlug(claims: SsoTokenClaims, operatorosOrgId: string): Promise<string> {
+  const base =
+    slugifyBase(claims.name ?? "") ||
+    slugifyBase(claims.email.split("@")[0] ?? "") ||
+    "org";
+  // Use a short suffix derived from the OperatorOS org id for stability/uniqueness.
+  const suffix = operatorosOrgId.replace(/-/g, "").slice(0, 8) || crypto.randomBytes(4).toString("hex");
+  return `${base}-${suffix}`;
+}
+
 async function pickUniqueUsername(emailNormalized: string): Promise<string> {
   const existing = await storage.getUserByUsername(emailNormalized);
   if (!existing) return emailNormalized;
@@ -271,9 +317,81 @@ router.get("/sso", async (req: Request, res: Response) => {
     req.session.userId = user.id;
     delete req.session.pending2faUserId;
 
-    const userOrgs = await storage.getUserOrgs(user.id);
+    let userOrgs = await storage.getUserOrgs(user.id);
+    let autoJoinedOrgId: string | null = null;
+    let autoProvisionedOrgId: string | null = null;
+
+    const operatorosOrgId = claims.organization_id ?? null;
+    if (operatorosOrgId) {
+      const linkedOrg = await storage.getOrgByOperatorosOrganizationId(operatorosOrgId);
+      if (linkedOrg) {
+        // Auto-join the user to the matching org if they're not already a member.
+        const existingMembership = await storage.getMembership(linkedOrg.id, user.id);
+        if (!existingMembership) {
+          const role = mapOperatorosRoleToMembershipRole(claims.role);
+          await storage.createMembership(linkedOrg.id, user.id, role);
+          autoJoinedOrgId = linkedOrg.id;
+          userOrgs = await storage.getUserOrgs(user.id);
+          reqLog.info(
+            { outcome: "auto_joined_org", userId: user.id, orgId: linkedOrg.id, role },
+            "SSO auto-joined user to linked TradeFlowKit org"
+          );
+        }
+      } else if (userOrgs.length === 0) {
+        // First-time user with no TradeFlowKit org and no existing link: provision one.
+        // Two concurrent first launches for the same OperatorOS tenant can race on the
+        // unique index over `operatoros_organization_id` (and the slug unique index).
+        // If we lose the race, fall back to joining the org the winner created.
+        try {
+          const newOrg = await storage.createOrg({
+            name: deriveOrgNameFromClaims(claims),
+            slug: await pickUniqueOrgSlug(claims, operatorosOrgId),
+            phone: "",
+            email: emailNormalized,
+            address: "",
+            operatorosOrganizationId: operatorosOrgId,
+          });
+          await storage.createMembership(newOrg.id, user.id, "owner");
+          autoProvisionedOrgId = newOrg.id;
+          userOrgs = await storage.getUserOrgs(user.id);
+          reqLog.info(
+            { outcome: "auto_provisioned_org", userId: user.id, orgId: newOrg.id, operatorosOrgId },
+            "SSO auto-provisioned a TradeFlowKit org for new OperatorOS tenant"
+          );
+        } catch (provisionErr) {
+          const code = (provisionErr as { code?: string })?.code;
+          // 23505 = unique_violation in PostgreSQL.
+          if (code !== "23505") throw provisionErr;
+          const winner = await storage.getOrgByOperatorosOrganizationId(operatorosOrgId);
+          if (winner) {
+            const existing = await storage.getMembership(winner.id, user.id);
+            if (!existing) {
+              const role = mapOperatorosRoleToMembershipRole(claims.role);
+              await storage.createMembership(winner.id, user.id, role);
+            }
+            autoJoinedOrgId = winner.id;
+            userOrgs = await storage.getUserOrgs(user.id);
+            reqLog.info(
+              { outcome: "auto_joined_after_race", userId: user.id, orgId: winner.id, operatorosOrgId },
+              "SSO lost provision race; joined the org the winner created"
+            );
+          } else {
+            // Unique violation but no linked org found — likely a slug collision against
+            // an unrelated org. Surface as an internal error so the user sees a clean retry.
+            throw provisionErr;
+          }
+        }
+      }
+    }
+
+    // Prefer the org linked to the user's OperatorOS tenant when picking the active org.
+    // This keeps the auto-pick safe for users with multiple TradeFlowKit orgs — it only
+    // fires when there's a clean OperatorOS-linked match.
     if (userOrgs.length > 0) {
-      req.session.orgId = userOrgs[0].id;
+      const linked = operatorosOrgId
+        ? userOrgs.find((o) => o.operatorosOrganizationId === operatorosOrgId)
+        : undefined;
+      req.session.orgId = (linked ?? userOrgs[0]).id;
     } else {
       delete req.session.orgId;
     }
@@ -292,6 +410,9 @@ router.get("/sso", async (req: Request, res: Response) => {
           provisioned,
           backfilled,
           hasOrg: userOrgs.length > 0,
+          autoJoinedOrgId,
+          autoProvisionedOrgId,
+          activeOrgId: req.session.orgId ?? null,
         },
         "SSO sign-in succeeded"
       );

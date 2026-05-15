@@ -19,7 +19,7 @@ import ssoRouter from "../server/routes/sso";
 import { consumeSsoToken } from "../server/sso/consume";
 import { storage } from "../server/storage";
 import { pool } from "../server/db";
-import { trackUser, cleanupAll } from "./helpers";
+import { trackUser, trackOrg, cleanupAll } from "./helpers";
 
 function b64url(buf: Buffer | string): string {
   const b = Buffer.isBuffer(buf) ? buf : Buffer.from(buf);
@@ -294,6 +294,126 @@ describe("/sso route", () => {
     expect(res.status).toBe(400);
     expect(res.headers["content-type"]).toMatch(/text\/html/);
     expect(res.text).toContain("missing_token");
+  });
+
+  it("auto-joins the user to an existing TradeFlowKit org linked to the OperatorOS organization_id", async () => {
+    (consumeSsoToken as any).mockResolvedValue({ ok: true });
+    const operatorosOrgId = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString("hex")}`;
+    const org = await storage.createOrg({
+      name: `Linked Org ${crypto.randomBytes(3).toString("hex")}`,
+      slug: `linked-${crypto.randomBytes(4).toString("hex")}`,
+      operatorosOrganizationId: operatorosOrgId,
+    } as any);
+    trackOrg(org.id);
+
+    const claims = validClaims({ organization_id: operatorosOrgId, role: "admin" });
+    const sid = `sid-autojoin-${Date.now()}`;
+    const res = await request(app).get(`/sso?token=${signToken(claims)}`).set("x-test-sid", sid);
+    expect(res.status).toBe(302);
+
+    const user = await storage.getUserByOperatorosUserId(claims.sub);
+    expect(user).toBeDefined();
+    if (user) trackUser(user.id);
+
+    const membership = await storage.getMembership(org.id, user!.id);
+    expect(membership).toBeDefined();
+    expect(membership?.role).toBe("admin");
+
+    const sessions = (app as any).__sessions as Map<string, any>;
+    expect(sessions.get(sid)?.orgId).toBe(org.id);
+  });
+
+  it("auto-provisions a new TradeFlowKit org for a brand-new OperatorOS tenant", async () => {
+    (consumeSsoToken as any).mockResolvedValue({ ok: true });
+    const operatorosOrgId = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString("hex")}`;
+    const claims = validClaims({ organization_id: operatorosOrgId, name: "Pat Provisioner" });
+    const sid = `sid-autoprov-${Date.now()}`;
+    const res = await request(app).get(`/sso?token=${signToken(claims)}`).set("x-test-sid", sid);
+    expect(res.status).toBe(302);
+
+    const user = await storage.getUserByOperatorosUserId(claims.sub);
+    expect(user).toBeDefined();
+    if (user) trackUser(user.id);
+
+    const linked = await storage.getOrgByOperatorosOrganizationId(operatorosOrgId);
+    expect(linked).toBeDefined();
+    if (linked) trackOrg(linked.id);
+
+    const membership = await storage.getMembership(linked!.id, user!.id);
+    expect(membership?.role).toBe("owner");
+
+    const sessions = (app as any).__sessions as Map<string, any>;
+    expect(sessions.get(sid)?.orgId).toBe(linked!.id);
+  });
+
+  it("does not auto-pick when user has multiple orgs and none match the OperatorOS tenant", async () => {
+    (consumeSsoToken as any).mockResolvedValue({ ok: true });
+    const sub = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString("hex")}`;
+    const email = `multi-${crypto.randomBytes(4).toString("hex")}@example.com`;
+    const existing = await storage.createUser({
+      username: `multi-${crypto.randomBytes(4).toString("hex")}`,
+      password: "hash-x",
+      fullName: "Multi Org",
+      phone: "",
+      email,
+      operatorosUserId: sub,
+    });
+    trackUser(existing.id);
+
+    const orgA = await storage.createOrg({ name: "A", slug: `a-${crypto.randomBytes(4).toString("hex")}` } as any);
+    const orgB = await storage.createOrg({ name: "B", slug: `b-${crypto.randomBytes(4).toString("hex")}` } as any);
+    trackOrg(orgA.id);
+    trackOrg(orgB.id);
+    await storage.createMembership(orgA.id, existing.id, "owner");
+    await storage.createMembership(orgB.id, existing.id, "tech");
+
+    const operatorosOrgId = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString("hex")}`;
+    const claims = validClaims({ sub, user_id: sub, email, organization_id: operatorosOrgId });
+    const sid = `sid-multi-${Date.now()}`;
+    const res = await request(app).get(`/sso?token=${signToken(claims)}`).set("x-test-sid", sid);
+    expect(res.status).toBe(302);
+
+    // No matching linked org exists; user already had >0 orgs, so we must not provision a new one.
+    const linked = await storage.getOrgByOperatorosOrganizationId(operatorosOrgId);
+    expect(linked).toBeUndefined();
+
+    const sessions = (app as any).__sessions as Map<string, any>;
+    expect([orgA.id, orgB.id]).toContain(sessions.get(sid)?.orgId);
+  });
+
+  it("prefers the OperatorOS-linked org when the user belongs to multiple TradeFlowKit orgs", async () => {
+    (consumeSsoToken as any).mockResolvedValue({ ok: true });
+    const sub = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString("hex")}`;
+    const email = `prefer-${crypto.randomBytes(4).toString("hex")}@example.com`;
+    const existing = await storage.createUser({
+      username: `prefer-${crypto.randomBytes(4).toString("hex")}`,
+      password: "hash-x",
+      fullName: "Prefer Linked",
+      phone: "",
+      email,
+      operatorosUserId: sub,
+    });
+    trackUser(existing.id);
+
+    const operatorosOrgId = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString("hex")}`;
+    const orgUnlinked = await storage.createOrg({ name: "Unlinked", slug: `un-${crypto.randomBytes(4).toString("hex")}` } as any);
+    const orgLinked = await storage.createOrg({
+      name: "Linked",
+      slug: `ln-${crypto.randomBytes(4).toString("hex")}`,
+      operatorosOrganizationId: operatorosOrgId,
+    } as any);
+    trackOrg(orgUnlinked.id);
+    trackOrg(orgLinked.id);
+    await storage.createMembership(orgUnlinked.id, existing.id, "owner");
+    await storage.createMembership(orgLinked.id, existing.id, "tech");
+
+    const claims = validClaims({ sub, user_id: sub, email, organization_id: operatorosOrgId });
+    const sid = `sid-prefer-${Date.now()}`;
+    const res = await request(app).get(`/sso?token=${signToken(claims)}`).set("x-test-sid", sid);
+    expect(res.status).toBe(302);
+
+    const sessions = (app as any).__sessions as Map<string, any>;
+    expect(sessions.get(sid)?.orgId).toBe(orgLinked.id);
   });
 
   it("backfills sub onto an existing email-keyed user from the previous implementation", async () => {

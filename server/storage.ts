@@ -57,6 +57,7 @@ export interface IStorage {
   getAllOrgs(): Promise<Org[]>;
   deleteOrg(id: string): Promise<void>;
   getOrgByStripeCustomerId(stripeCustomerId: string): Promise<Org | undefined>;
+  getOrgByOperatorosOrganizationId(operatorosOrganizationId: string): Promise<Org | undefined>;
 
   createMembership(orgId: string, userId: string, role: string): Promise<Membership>;
   getMembership(orgId: string, userId: string): Promise<Membership | undefined>;

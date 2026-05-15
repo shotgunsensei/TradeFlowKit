@@ -81,6 +81,15 @@ export const orgsStorage = {
     return org;
   },
 
+  async getOrgByOperatorosOrganizationId(operatorosOrganizationId: string): Promise<Org | undefined> {
+    if (!operatorosOrganizationId) return undefined;
+    const [org] = await db
+      .select()
+      .from(orgs)
+      .where(eq(orgs.operatorosOrganizationId, operatorosOrganizationId));
+    return org;
+  },
+
   async deleteUser(userId: string): Promise<void> {
     await db.transaction(async (tx) => {
       const userMemberships = await tx.select().from(memberships).where(eq(memberships.userId, userId));
