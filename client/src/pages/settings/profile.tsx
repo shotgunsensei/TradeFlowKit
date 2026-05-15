@@ -48,11 +48,19 @@ export default function ProfileTab() {
       toast({ title: "Profile updated" });
     },
     onError: (err: any) => {
-      toast({ title: "Couldn't save profile", description: err.message || "Please try again.", variant: "destructive" });
+      const message: string = err?.message || "";
+      if (message.startsWith("409:")) {
+        const detail = message.slice(4).trim() || "That email is already in use by another account";
+        profileForm.setError("email", { type: "server", message: detail });
+        profileForm.setFocus("email");
+        return;
+      }
+      toast({ title: "Couldn't save profile", description: message || "Please try again.", variant: "destructive" });
     },
   });
 
   const handleProfileSubmit = (data: ProfileFormValues) => {
+    profileForm.clearErrors("email");
     updateProfileMutation.mutate({
       fullName: data.fullName,
       phone: data.phone || "",
