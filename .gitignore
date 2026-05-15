@@ -4,3 +4,7 @@ dist
 server/public
 vite.config.ts.*
 *.tar.gz
+# Playwright
+test-results/
+playwright-report/
+.last-run.json
