@@ -332,6 +332,14 @@ router.get("/sso", async (req: Request, res: Response) => {
           await storage.createMembership(linkedOrg.id, user.id, role);
           autoJoinedOrgId = linkedOrg.id;
           userOrgs = await storage.getUserOrgs(user.id);
+          await storage.recordAudit({
+            orgId: linkedOrg.id,
+            userId: user.id,
+            action: "sso_auto_join",
+            entity: "membership",
+            entityId: user.id,
+            after: { userId: user.id, role, source: "operatoros_sso", operatorosOrgId },
+          });
           reqLog.info(
             { outcome: "auto_joined_org", userId: user.id, orgId: linkedOrg.id, role },
             "SSO auto-joined user to linked TradeFlowKit org"
@@ -354,6 +362,14 @@ router.get("/sso", async (req: Request, res: Response) => {
           await storage.createMembership(newOrg.id, user.id, "owner");
           autoProvisionedOrgId = newOrg.id;
           userOrgs = await storage.getUserOrgs(user.id);
+          await storage.recordAudit({
+            orgId: newOrg.id,
+            userId: user.id,
+            action: "sso_auto_provision",
+            entity: "org",
+            entityId: newOrg.id,
+            after: { userId: user.id, role: "owner", source: "operatoros_sso", operatorosOrgId },
+          });
           reqLog.info(
             { outcome: "auto_provisioned_org", userId: user.id, orgId: newOrg.id, operatorosOrgId },
             "SSO auto-provisioned a TradeFlowKit org for new OperatorOS tenant"
@@ -368,6 +384,14 @@ router.get("/sso", async (req: Request, res: Response) => {
             if (!existing) {
               const role = mapOperatorosRoleToMembershipRole(claims.role);
               await storage.createMembership(winner.id, user.id, role);
+              await storage.recordAudit({
+                orgId: winner.id,
+                userId: user.id,
+                action: "sso_auto_join",
+                entity: "membership",
+                entityId: user.id,
+                after: { userId: user.id, role, source: "operatoros_sso", operatorosOrgId },
+              });
             }
             autoJoinedOrgId = winner.id;
             userOrgs = await storage.getUserOrgs(user.id);
@@ -416,7 +440,15 @@ router.get("/sso", async (req: Request, res: Response) => {
         },
         "SSO sign-in succeeded"
       );
-      res.redirect(302, "/dashboard");
+      let dest = "/dashboard";
+      if (autoProvisionedOrgId) {
+        dest += "?sso=provisioned";
+      } else if (autoJoinedOrgId) {
+        dest += "?sso=joined";
+      } else if (operatorosOrgId && req.session.orgId) {
+        dest += "?sso=signed_in";
+      }
+      res.redirect(302, dest);
     });
   } catch (err) {
     reqLog.error(

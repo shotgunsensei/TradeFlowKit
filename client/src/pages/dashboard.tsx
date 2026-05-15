@@ -1,5 +1,6 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useToast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/page-header";
 import { StatusBadge } from "@/components/status-badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -154,6 +155,39 @@ const STATUS_COLORS: Record<string, string> = {
 
 export default function Dashboard() {
   const { org } = useAuth();
+  const { toast } = useToast();
+  const ssoNoticeShown = useRef(false);
+
+  useEffect(() => {
+    if (ssoNoticeShown.current) return;
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const notice = params.get("sso");
+    if (!notice) return;
+    if (!org) return;
+    ssoNoticeShown.current = true;
+
+    if (notice === "provisioned") {
+      toast({
+        title: `Signed in to ${org.name} via OperatorOS`,
+        description: "We created this organization for you.",
+      });
+    } else if (notice === "joined") {
+      toast({
+        title: `Signed in to ${org.name} via OperatorOS`,
+        description: "You've been added to this organization.",
+      });
+    } else if (notice === "signed_in") {
+      toast({
+        title: `Signed in to ${org.name} via OperatorOS`,
+      });
+    }
+
+    params.delete("sso");
+    const qs = params.toString();
+    const newUrl = window.location.pathname + (qs ? `?${qs}` : "") + window.location.hash;
+    window.history.replaceState({}, "", newUrl);
+  }, [org, toast]);
 
   const { data: stats, isLoading } = useQuery<DashboardStats>({
     queryKey: ["/api/dashboard"],
