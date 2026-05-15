@@ -11,7 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { useAuth } from "@/lib/auth";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { Building2 } from "lucide-react";
+import { Building2, Link2 } from "lucide-react";
 
 const orgFormSchema = z.object({
   name: z.string().trim().min(1, "Business name is required"),
@@ -24,10 +24,44 @@ const orgFormSchema = z.object({
 type OrgFormValues = z.infer<typeof orgFormSchema>;
 
 export default function OrganizationTab() {
-  const { org, refreshAuth } = useAuth();
+  const { org, user, membership, refreshAuth } = useAuth();
   const { toast } = useToast();
   const [logoUrl, setLogoUrl] = useState<string>(org?.logoUrl ?? "");
   const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [operatorosOrgIdInput, setOperatorosOrgIdInput] = useState<string>(
+    org?.operatorosOrganizationId ?? ""
+  );
+
+  useEffect(() => {
+    setOperatorosOrgIdInput(org?.operatorosOrganizationId ?? "");
+  }, [org?.id, org?.operatorosOrganizationId]);
+
+  const canManageOperatorosLink = membership?.role === "owner" || !!user?.isSuperAdmin;
+
+  const updateOperatorosLinkMutation = useMutation({
+    mutationFn: async (value: string | null) => {
+      await apiRequest("PATCH", `/api/orgs/${org?.id}/operatoros-link`, {
+        operatorosOrganizationId: value,
+      });
+    },
+    onSuccess: (_data, variables) => {
+      refreshAuth();
+      toast({
+        title: variables === null ? "OperatorOS link removed" : "OperatorOS organization linked",
+        description:
+          variables === null
+            ? "Future SSO launches from that tenant will provision a new org."
+            : "Teammates launching from this OperatorOS tenant will join this org.",
+      });
+    },
+    onError: (err: any) => {
+      toast({
+        title: "Couldn't update link",
+        description: err.message || "Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
 
   const orgForm = useForm<OrgFormValues>({
     resolver: zodResolver(orgFormSchema),
@@ -132,6 +166,7 @@ export default function OrganizationTab() {
   if (!org) return null;
 
   return (
+    <>
     <Card>
       <CardHeader>
         <CardTitle className="text-base">{org.name}</CardTitle>
@@ -295,5 +330,79 @@ export default function OrganizationTab() {
         </Form>
       </CardContent>
     </Card>
+    <Card className="mt-4" data-testid="card-operatoros-link">
+      <CardHeader>
+        <CardTitle className="text-base flex items-center gap-2">
+          <Link2 className="h-4 w-4" />
+          OperatorOS Link
+        </CardTitle>
+        <CardDescription>
+          Connect this TradeFlowKit org to an OperatorOS organization. Once linked,
+          teammates launching from that OperatorOS tenant via SSO will automatically
+          join this org instead of getting a new one.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="space-y-2">
+          <Label htmlFor="input-operatoros-org-id">OperatorOS Organization ID</Label>
+          <Input
+            id="input-operatoros-org-id"
+            value={operatorosOrgIdInput}
+            onChange={(e) => setOperatorosOrgIdInput(e.target.value)}
+            placeholder="e.g. org_abc123"
+            disabled={!canManageOperatorosLink || updateOperatorosLinkMutation.isPending}
+            data-testid="input-operatoros-org-id"
+          />
+          <p className="text-xs text-muted-foreground">
+            {org?.operatorosOrganizationId ? (
+              <>
+                Currently linked to{" "}
+                <span className="font-mono" data-testid="text-current-operatoros-link">
+                  {org.operatorosOrganizationId}
+                </span>
+                .
+              </>
+            ) : (
+              "Not linked to any OperatorOS organization yet."
+            )}
+          </p>
+          {!canManageOperatorosLink && (
+            <p className="text-xs text-muted-foreground">
+              Only the organization owner can change this.
+            </p>
+          )}
+        </div>
+        <div className="flex gap-2">
+          <Button
+            type="button"
+            disabled={
+              !canManageOperatorosLink ||
+              updateOperatorosLinkMutation.isPending ||
+              operatorosOrgIdInput.trim() === (org?.operatorosOrganizationId ?? "")
+            }
+            onClick={() =>
+              updateOperatorosLinkMutation.mutate(
+                operatorosOrgIdInput.trim() === "" ? null : operatorosOrgIdInput.trim()
+              )
+            }
+            data-testid="button-save-operatoros-link"
+          >
+            {updateOperatorosLinkMutation.isPending ? "Saving..." : "Save Link"}
+          </Button>
+          {org?.operatorosOrganizationId && (
+            <Button
+              type="button"
+              variant="outline"
+              disabled={!canManageOperatorosLink || updateOperatorosLinkMutation.isPending}
+              onClick={() => updateOperatorosLinkMutation.mutate(null)}
+              data-testid="button-remove-operatoros-link"
+            >
+              Remove Link
+            </Button>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+    </>
   );
 }

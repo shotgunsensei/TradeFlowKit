@@ -31,13 +31,74 @@ router.patch("/api/orgs/:id", requireAuth, requireOrg, async (req: Request, res:
     if (req.params.id !== req.session.orgId) {
       return res.status(403).send("Cannot edit another organization");
     }
-    const { plan, stripeCustomerId, stripeSubscriptionId, subscriptionStatus, currentPeriodEnd, ...safeData } = req.body;
+    const {
+      plan,
+      stripeCustomerId,
+      stripeSubscriptionId,
+      subscriptionStatus,
+      currentPeriodEnd,
+      operatorosOrganizationId,
+      ...safeData
+    } = req.body;
     const org = await storage.updateOrg(req.params.id as string, safeData);
     res.json(org);
   } catch (err) {
     res.status(500).send(errMsg(err));
   }
 });
+
+router.patch(
+  "/api/orgs/:id/operatoros-link",
+  requireAuth,
+  requireOrg,
+  async (req: Request, res: Response) => {
+    try {
+      if (req.params.id !== req.session.orgId) {
+        return res.status(403).send("Cannot edit another organization");
+      }
+      const user = await storage.getUser(req.session.userId!);
+      const membership = await storage.getMembership(req.session.orgId!, req.session.userId!);
+      const isOwner = membership?.role === "owner";
+      const isSuperAdmin = !!user?.isSuperAdmin;
+      if (!isOwner && !isSuperAdmin) {
+        return res.status(403).send("Only the organization owner can change the OperatorOS link");
+      }
+
+      const raw = req.body?.operatorosOrganizationId;
+      let value: string | null;
+      if (raw === null || raw === undefined || (typeof raw === "string" && raw.trim() === "")) {
+        value = null;
+      } else if (typeof raw === "string") {
+        value = raw.trim();
+      } else {
+        return res.status(400).send("OperatorOS organization id must be a string");
+      }
+
+      if (value !== null) {
+        const existing = await storage.getOrgByOperatorosOrganizationId(value);
+        if (existing && existing.id !== req.session.orgId) {
+          return res
+            .status(409)
+            .send("That OperatorOS organization is already linked to another TradeFlowKit org.");
+        }
+      }
+
+      try {
+        const org = await storage.updateOrg(req.session.orgId!, { operatorosOrganizationId: value });
+        res.json(org);
+      } catch (err: any) {
+        if (err?.code === "23505") {
+          return res
+            .status(409)
+            .send("That OperatorOS organization is already linked to another TradeFlowKit org.");
+        }
+        throw err;
+      }
+    } catch (err) {
+      res.status(500).send(errMsg(err));
+    }
+  }
+);
 
 router.post("/api/orgs/join", requireAuth, async (req: Request, res: Response) => {
   try {
