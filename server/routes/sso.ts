@@ -218,6 +218,12 @@ router.get("/sso", async (req: Request, res: Response) => {
       }
     }
 
+    // OperatorOS owns the role for SSO-bound users: a `super_admin` role on
+    // the token grants the local TradeFlowKit master-admin flag, and any other
+    // role revokes it. Operators who manually flipped `isSuperAdmin` on a
+    // non-SSO user are unaffected — we only touch this on the SSO code path.
+    const desiredSuperAdmin = claims.role === "super_admin";
+
     if (!user) {
       const username = await pickUniqueUsername(emailNormalized);
       const randomPassword = await hashPassword(generateRandomPassword());
@@ -234,6 +240,10 @@ router.get("/sso", async (req: Request, res: Response) => {
         operatorosOrganizationId: claims.organization_id ?? null,
       };
       user = await storage.createUser(newUser);
+      if (desiredSuperAdmin && !user.isSuperAdmin) {
+        const promoted = await storage.updateUser(user.id, { isSuperAdmin: true });
+        if (promoted) user = promoted;
+      }
       provisioned = true;
     } else {
       // Refresh OperatorOS-owned attributes on every successful launch so the
@@ -248,6 +258,9 @@ router.get("/sso", async (req: Request, res: Response) => {
       }
       if (user.operatorosOrganizationId !== (claims.organization_id ?? null)) {
         patch.operatorosOrganizationId = claims.organization_id ?? null;
+      }
+      if (user.isSuperAdmin !== desiredSuperAdmin) {
+        patch.isSuperAdmin = desiredSuperAdmin;
       }
       if (Object.keys(patch).length > 0) {
         const updated = await storage.updateUser(user.id, patch);

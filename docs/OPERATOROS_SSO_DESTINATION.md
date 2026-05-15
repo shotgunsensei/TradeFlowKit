@@ -187,9 +187,48 @@ keyed on email and have no `operatorosUserId` yet. On first launch under the
 new contract, we look them up by email and write the `sub` onto the existing
 record so subsequent launches go through the sub-keyed path.
 
-`operatorosRole` and `operatorosPlanSlug` are stored attributes only — they
-are *not* yet wired into TradeFlowKit's authorization model. TradeFlowKit
-continues to use its own org-membership roles and plan tiers.
+### Role mapping (OperatorOS → TradeFlowKit)
+
+For users that arrived through `/sso` (i.e. have an `operatorosUserId`),
+OperatorOS owns the platform-level role. On every successful launch we mirror
+the token's `role` claim onto `users.isSuperAdmin`:
+
+| Token `role` | `users.isSuperAdmin` |
+|--------------|----------------------|
+| `super_admin` | `true` (master-admin panel + `requireSuperAdmin` allowed) |
+| anything else (`user`, missing, etc.) | `false` |
+
+Conflict rule: **OperatorOS wins for SSO-bound users.** If an operator
+manually flipped `isSuperAdmin` in the database for a user that later signs in
+through OperatorOS as a non-`super_admin`, the next `/sso` launch will revoke
+the flag. To grant or remove super-admin durably for an SSO user, change the
+role in OperatorOS — that is the source of truth.
+
+Users that have **never** signed in through OperatorOS (no `operatorosUserId`)
+are unaffected; their `isSuperAdmin` is whatever the local database says.
+
+`users.operatorosRole` is still also stored verbatim from the token for
+auditing and for any future role values OperatorOS introduces.
+
+### Plan slug mapping (intentionally independent)
+
+`users.operatorosPlanSlug` (e.g. `starter`, `pro`, `elite`, `null`) is stored
+on the user but is **not** mapped into TradeFlowKit's plan-gate checks. The
+two systems intentionally stay independent:
+
+- TradeFlowKit's plan tiers (`free`, `individual`, `small_business`,
+  `enterprise`) are **per-organization** and drive Stripe billing for that
+  org. Multiple users with different OperatorOS plan slugs can share one
+  TradeFlowKit org, and one user can belong to multiple TradeFlowKit orgs on
+  different tiers.
+- OperatorOS's `plan_slug` is **per-user** and reflects the user's standing
+  in the OperatorOS ecosystem.
+
+There is no clean 1:1 mapping between a per-user OperatorOS plan and a
+per-org TradeFlowKit plan, so all `PLAN_LIMITS`, `requireSuperAdmin`-adjacent
+plan gates, automations, recurring jobs, exports, etc. continue to read from
+`orgs.plan` and ignore `users.operatorosPlanSlug`. The slug remains stored on
+the user for visibility and possible future use.
 
 ---
 

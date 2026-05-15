@@ -242,6 +242,39 @@ describe("/sso route", () => {
     expect(sessions.get(sid)?.userId).toBe(existing.id);
   });
 
+  it("promotes a provisioned user to isSuperAdmin when role=super_admin", async () => {
+    (consumeSsoToken as any).mockResolvedValue({ ok: true });
+    const claims = validClaims({ role: "super_admin" });
+    const res = await request(app).get(`/sso?token=${signToken(claims)}`).set("x-test-sid", `sid-promote-${Date.now()}`);
+    expect(res.status).toBe(302);
+    const provisioned = await storage.getUserByOperatorosUserId(claims.sub);
+    expect(provisioned).toBeDefined();
+    expect(provisioned?.isSuperAdmin).toBe(true);
+    expect(provisioned?.operatorosRole).toBe("super_admin");
+    if (provisioned) trackUser(provisioned.id);
+  });
+
+  it("revokes isSuperAdmin on the next launch when OperatorOS role drops to user", async () => {
+    (consumeSsoToken as any).mockResolvedValue({ ok: true });
+    const sub = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString("hex")}`;
+    const email = `demote-${crypto.randomBytes(4).toString("hex")}@example.com`;
+    const first = await request(app)
+      .get(`/sso?token=${signToken(validClaims({ sub, user_id: sub, email, role: "super_admin" }))}`)
+      .set("x-test-sid", "sid-demote-1");
+    expect(first.status).toBe(302);
+    const promoted = await storage.getUserByOperatorosUserId(sub);
+    expect(promoted?.isSuperAdmin).toBe(true);
+    if (promoted) trackUser(promoted.id);
+
+    const second = await request(app)
+      .get(`/sso?token=${signToken(validClaims({ sub, user_id: sub, email, role: "user" }))}`)
+      .set("x-test-sid", "sid-demote-2");
+    expect(second.status).toBe(302);
+    const after = await storage.getUserByOperatorosUserId(sub);
+    expect(after?.isSuperAdmin).toBe(false);
+    expect(after?.operatorosRole).toBe("user");
+  });
+
   it("respects q-value ordering in Accept (application/json;q=1, text/html;q=0.8 -> JSON)", async () => {
     const res = await request(app)
       .get("/sso")
