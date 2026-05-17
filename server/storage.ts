@@ -193,6 +193,7 @@ export interface IStorage {
     after?: any;
   }): Promise<void>;
   getAuditLog(orgId: string, opts: { limit: number; offset: number; entity?: string; action?: string; userId?: string }): Promise<{ items: (AuditLogEntry & { userName: string | null; userUsername: string | null })[]; total: number }>;
+  getAuditLogForExport(orgId: string, opts: { entity?: string; action?: string; userId?: string }): Promise<(AuditLogEntry & { userName: string | null; userUsername: string | null })[]>;
 }
 
 export const storage: IStorage = {

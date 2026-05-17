@@ -6,7 +6,8 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
-import { ChevronDown, ChevronRight, Lock, ScrollText, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Download, Lock, ScrollText, X } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
 interface AuditEntry {
   id: string;
@@ -215,10 +216,38 @@ export default function AuditTab({ plan }: { plan: string }) {
   const [entity, setEntity] = useState<string>(ALL);
   const [action, setAction] = useState<string>(ALL);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [isExporting, setIsExporting] = useState(false);
+  const { toast } = useToast();
 
   const params = new URLSearchParams({ limit: String(limit) });
   if (entity !== ALL) params.set("entity", entity);
   if (action !== ALL) params.set("action", action);
+
+  const exportCsv = async () => {
+    setIsExporting(true);
+    try {
+      const exportParams = new URLSearchParams();
+      if (entity !== ALL) exportParams.set("entity", entity);
+      if (action !== ALL) exportParams.set("action", action);
+      const qs = exportParams.toString();
+      const res = await fetch(`/api/audit-log/export.csv${qs ? `?${qs}` : ""}`, { credentials: "include" });
+      if (!res.ok) throw new Error(await res.text());
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      const stamp = new Date().toISOString().slice(0, 10);
+      link.download = `audit-log-${stamp}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      toast({ title: "Export failed", description: err?.message || "Could not export audit log.", variant: "destructive" });
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
   const { data, isLoading } = useQuery<{ items: AuditEntry[]; total: number }>({
     queryKey: ["/api/audit-log", limit, entity, action],
@@ -328,6 +357,20 @@ export default function AuditTab({ plan }: { plan: string }) {
               <X className="h-3.5 w-3.5 mr-1" /> Clear
             </Button>
           )}
+          <div className="ml-auto">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={exportCsv}
+              disabled={isExporting || !data || data.total === 0}
+              className="h-8"
+              data-testid="button-export-audit-csv"
+            >
+              <Download className="h-3.5 w-3.5 mr-1" />
+              {isExporting ? "Exporting..." : "Export CSV"}
+            </Button>
+          </div>
         </div>
         {isLoading ? (
           <p className="text-sm text-muted-foreground py-4 text-center">Loading...</p>
