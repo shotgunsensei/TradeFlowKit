@@ -39,6 +39,8 @@ const ACTION_OPTIONS = [
   { value: "payment_failed", label: "Payment failed" },
   { value: "sso_auto_join", label: "SSO auto-join" },
   { value: "sso_auto_provision", label: "SSO auto-provision" },
+  { value: "link_operatoros", label: "Link OperatorOS org" },
+  { value: "unlink_operatoros", label: "Unlink OperatorOS org" },
 ];
 
 const ALL = "__all__";

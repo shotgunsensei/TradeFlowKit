@@ -87,8 +87,21 @@ router.patch(
         }
       }
 
+      const beforeOrg = await storage.getOrg(req.session.orgId!);
+      const previousValue = beforeOrg?.operatorosOrganizationId ?? null;
       try {
         const org = await storage.updateOrg(req.session.orgId!, { operatorosOrganizationId: value });
+        if (previousValue !== value) {
+          await storage.recordAudit({
+            orgId: req.session.orgId!,
+            userId: req.session.userId,
+            action: value === null ? "unlink_operatoros" : previousValue === null ? "link_operatoros" : "update",
+            entity: "organization",
+            entityId: req.session.orgId!,
+            before: { operatorosOrganizationId: previousValue },
+            after: { operatorosOrganizationId: value },
+          });
+        }
         res.json(org);
       } catch (err: any) {
         if (err?.code === "23505") {
