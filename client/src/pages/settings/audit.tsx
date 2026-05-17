@@ -74,6 +74,161 @@ const SENSITIVE_FIELDS = new Set([
   "stripesubscriptionid",
 ]);
 
+const COMMON_LABELS: Record<string, string> = {
+  id: "ID",
+  orgId: "Organization",
+  org_id: "Organization",
+  userId: "User",
+  user_id: "User",
+  createdAt: "Created",
+  created_at: "Created",
+  updatedAt: "Updated",
+  updated_at: "Updated",
+  deletedAt: "Deleted",
+  deleted_at: "Deleted",
+  notes: "Notes",
+  status: "Status",
+  name: "Name",
+};
+
+const ENTITY_FIELD_LABELS: Record<string, Record<string, string>> = {
+  customer: {
+    fullName: "Full name",
+    full_name: "Full name",
+    firstName: "First name",
+    first_name: "First name",
+    lastName: "Last name",
+    last_name: "Last name",
+    email: "Email",
+    phone: "Phone",
+    address: "Address",
+    city: "City",
+    state: "State",
+    zip: "ZIP code",
+    postalCode: "Postal code",
+    postal_code: "Postal code",
+    company: "Company",
+    tags: "Tags",
+  },
+  job: {
+    title: "Title",
+    description: "Description",
+    customerId: "Customer",
+    customer_id: "Customer",
+    assignedTo: "Assigned to",
+    assigned_to: "Assigned to",
+    scheduledAt: "Scheduled for",
+    scheduled_at: "Scheduled for",
+    startedAt: "Started",
+    started_at: "Started",
+    completedAt: "Completed",
+    completed_at: "Completed",
+    priority: "Priority",
+    address: "Address",
+    recurring: "Recurring",
+    recurringInterval: "Recurring interval",
+    recurring_interval: "Recurring interval",
+    recurringParentId: "Recurring parent",
+    recurring_parent_id: "Recurring parent",
+  },
+  quote: {
+    number: "Quote number",
+    customerId: "Customer",
+    customer_id: "Customer",
+    jobId: "Job",
+    job_id: "Job",
+    subtotal: "Subtotal",
+    tax: "Tax",
+    taxRate: "Tax rate",
+    tax_rate: "Tax rate",
+    discount: "Discount",
+    total: "Total",
+    validUntil: "Valid until",
+    valid_until: "Valid until",
+    sentAt: "Sent",
+    sent_at: "Sent",
+    acceptedAt: "Accepted",
+    accepted_at: "Accepted",
+  },
+  invoice: {
+    number: "Invoice number",
+    customerId: "Customer",
+    customer_id: "Customer",
+    jobId: "Job",
+    job_id: "Job",
+    quoteId: "Quote",
+    quote_id: "Quote",
+    subtotal: "Subtotal",
+    tax: "Tax",
+    taxRate: "Tax rate",
+    tax_rate: "Tax rate",
+    discount: "Discount",
+    total: "Total",
+    amountPaid: "Amount paid",
+    amount_paid: "Amount paid",
+    dueDate: "Due date",
+    due_date: "Due date",
+    sentAt: "Sent",
+    sent_at: "Sent",
+    paidAt: "Paid",
+    paid_at: "Paid",
+    stripePaymentIntentId: "Stripe payment",
+    stripe_payment_intent_id: "Stripe payment",
+  },
+  membership: {
+    userId: "User",
+    user_id: "User",
+    orgId: "Organization",
+    org_id: "Organization",
+    role: "Role",
+    invitedBy: "Invited by",
+    invited_by: "Invited by",
+    acceptedAt: "Accepted",
+    accepted_at: "Accepted",
+  },
+  organization: {
+    name: "Name",
+    slug: "URL slug",
+    logoUrl: "Logo URL",
+    logo_url: "Logo URL",
+    website: "Website",
+    businessHours: "Business hours",
+    business_hours: "Business hours",
+    phone: "Phone",
+    email: "Email",
+    address: "Address",
+    plan: "Plan",
+    planSlug: "Plan",
+    plan_slug: "Plan",
+    subscriptionStatus: "Subscription status",
+    subscription_status: "Subscription status",
+    smsRemindersEnabled: "SMS reminders enabled",
+    sms_reminders_enabled: "SMS reminders enabled",
+    overdueReminderDays: "Overdue reminder days",
+    overdue_reminder_days: "Overdue reminder days",
+    pendingQuoteReminderDays: "Pending quote reminder days",
+    pending_quote_reminder_days: "Pending quote reminder days",
+    callRecoveryEnabled: "Call recovery enabled",
+    call_recovery_enabled: "Call recovery enabled",
+    callRecoveryMessage: "Call recovery message",
+    call_recovery_message: "Call recovery message",
+    quietHoursStart: "Quiet hours start",
+    quiet_hours_start: "Quiet hours start",
+    quietHoursEnd: "Quiet hours end",
+    quiet_hours_end: "Quiet hours end",
+  },
+  org: {
+    name: "Name",
+    operatorosOrgId: "OperatorOS organization",
+    operatoros_org_id: "OperatorOS organization",
+  },
+};
+
+function fieldLabel(entity: string, key: string): string {
+  const entityMap = ENTITY_FIELD_LABELS[entity?.toLowerCase()];
+  return entityMap?.[key] ?? COMMON_LABELS[key] ?? key;
+}
+
 function isSensitive(key: string): boolean {
   const k = key.toLowerCase();
   if (SENSITIVE_FIELDS.has(k)) return true;
@@ -158,7 +313,7 @@ function AuditDetail({ entry }: { entry: AuditEntry }) {
         <dl className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-xs">
           {entries.map(([k, v]) => (
             <Fragment key={k}>
-              <dt className="font-mono text-muted-foreground">{k}</dt>
+              <dt className="text-muted-foreground">{fieldLabel(entry.entity, k)}</dt>
               <dd className="font-mono break-all">{formatValue(v)}</dd>
             </Fragment>
           ))}
@@ -178,7 +333,7 @@ function AuditDetail({ entry }: { entry: AuditEntry }) {
         <dl className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-xs">
           {entries.map(([k, v]) => (
             <Fragment key={k}>
-              <dt className="font-mono text-muted-foreground">{k}</dt>
+              <dt className="text-muted-foreground">{fieldLabel(entry.entity, k)}</dt>
               <dd className="font-mono break-all line-through opacity-70">{formatValue(v)}</dd>
             </Fragment>
           ))}
@@ -200,7 +355,7 @@ function AuditDetail({ entry }: { entry: AuditEntry }) {
         <div className="font-medium text-muted-foreground">After</div>
         {diffs.map((d) => (
           <Fragment key={d.key}>
-            <div className="font-mono">{d.key}</div>
+            <div>{fieldLabel(entry.entity, d.key)}</div>
             <div className="font-mono break-all text-red-700 dark:text-red-400">{formatValue(d.before)}</div>
             <div className="font-mono break-all text-green-700 dark:text-green-400">{formatValue(d.after)}</div>
           </Fragment>
