@@ -1,4 +1,4 @@
-import { useState, Fragment } from "react";
+import { useState, useEffect, Fragment } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -366,14 +366,39 @@ function AuditDetail({ entry }: { entry: AuditEntry }) {
   );
 }
 
+const FILTER_STORAGE_KEY = "audit-log-filters-v1";
+
+interface PersistedFilters {
+  entity?: string;
+  action?: string;
+  fromDate?: string;
+  toDate?: string;
+  search?: string;
+  activePreset?: string | null;
+}
+
+function loadPersistedFilters(): PersistedFilters {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(FILTER_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") return parsed;
+  } catch {
+    // ignore
+  }
+  return {};
+}
+
 export default function AuditTab({ plan }: { plan: string }) {
   const isEnterprise = plan === "enterprise";
+  const persisted = loadPersistedFilters();
   const [limit, setLimit] = useState(50);
-  const [entity, setEntity] = useState<string>(ALL);
-  const [action, setAction] = useState<string>(ALL);
-  const [fromDate, setFromDate] = useState<string>("");
-  const [toDate, setToDate] = useState<string>("");
-  const [search, setSearch] = useState<string>("");
+  const [entity, setEntity] = useState<string>(persisted.entity ?? ALL);
+  const [action, setAction] = useState<string>(persisted.action ?? ALL);
+  const [fromDate, setFromDate] = useState<string>(persisted.fromDate ?? "");
+  const [toDate, setToDate] = useState<string>(persisted.toDate ?? "");
+  const [search, setSearch] = useState<string>(persisted.search ?? "");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [isExporting, setIsExporting] = useState(false);
   const { toast } = useToast();
@@ -415,7 +440,24 @@ export default function AuditTab({ plan }: { plan: string }) {
     },
   ];
 
-  const [activePreset, setActivePreset] = useState<string | null>(null);
+  const [activePreset, setActivePreset] = useState<string | null>(persisted.activePreset ?? null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const hasAny = entity !== ALL || action !== ALL || !!fromDate || !!toDate || !!activePreset || search.trim() !== "";
+      if (hasAny) {
+        window.localStorage.setItem(
+          FILTER_STORAGE_KEY,
+          JSON.stringify({ entity, action, fromDate, toDate, search, activePreset })
+        );
+      } else {
+        window.localStorage.removeItem(FILTER_STORAGE_KEY);
+      }
+    } catch {
+      // ignore
+    }
+  }, [entity, action, fromDate, toDate, search, activePreset]);
 
   const applyPreset = (preset: typeof DATE_PRESETS[number]) => {
     const { from, to } = preset.range();
