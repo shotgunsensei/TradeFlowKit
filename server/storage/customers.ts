@@ -206,8 +206,8 @@ export const customersStorage = {
     await db.update(jobs).set({ customerId: null }).where(inArray(jobs.customerId, ids));
     await db.update(quotes).set({ customerId: null }).where(inArray(quotes.customerId, ids));
     await db.update(invoices).set({ customerId: null }).where(inArray(invoices.customerId, ids));
-    await db.execute(sql`UPDATE missed_calls SET customer_id = NULL WHERE customer_id = ANY(${ids})`);
-    await db.execute(sql`UPDATE review_requests SET customer_id = NULL WHERE customer_id = ANY(${ids})`);
+    await db.update(missedCalls).set({ customerId: null }).where(inArray(missedCalls.customerId, ids));
+    await db.update(reviewRequests).set({ customerId: null }).where(inArray(reviewRequests.customerId, ids));
 
     const result = await db
       .delete(customers)

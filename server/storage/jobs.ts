@@ -216,10 +216,10 @@ export const jobsStorage = {
     // Null out FKs on referencing tables.
     await db.update(quotes).set({ jobId: null }).where(inArray(quotes.jobId, ids));
     await db.update(invoices).set({ jobId: null }).where(inArray(invoices.jobId, ids));
-    await db.execute(sql`UPDATE missed_calls SET job_id = NULL WHERE job_id = ANY(${ids})`);
+    await db.update(missedCalls).set({ jobId: null }).where(inArray(missedCalls.jobId, ids));
 
     // Detach any child jobs from a soft-deleted recurring parent.
-    await db.execute(sql`UPDATE jobs SET parent_job_id = NULL WHERE parent_job_id = ANY(${ids})`);
+    await db.update(jobs).set({ parentJobId: null }).where(inArray(jobs.parentJobId, ids));
 
     const result = await db
       .delete(jobs)

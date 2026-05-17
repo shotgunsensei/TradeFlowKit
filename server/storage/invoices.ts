@@ -332,7 +332,7 @@ export const invoicesStorage = {
     await db.delete(invoiceItems).where(inArray(invoiceItems.invoiceId, ids));
 
     // Detach recurring children pointing at a soft-deleted template.
-    await db.execute(sql`UPDATE invoices SET parent_invoice_id = NULL WHERE parent_invoice_id = ANY(${ids})`);
+    await db.update(invoices).set({ parentInvoiceId: null }).where(inArray(invoices.parentInvoiceId, ids));
 
     const result = await db
       .delete(invoices)
