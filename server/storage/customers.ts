@@ -1,4 +1,4 @@
-import { eq, and, desc, ilike, or, gte, isNull, isNotNull, inArray } from "drizzle-orm";
+import { eq, and, desc, ilike, or, gte, isNull, isNotNull, inArray, lt, sql } from "drizzle-orm";
 import { randomBytes } from "crypto";
 import { db } from "../db";
 import {
@@ -192,5 +192,27 @@ export const customersStorage = {
       .where(and(eq(customers.orgId, orgId), eq(customers.id, id), isNotNull(customers.deletedAt)))
       .returning({ id: customers.id });
     return result.length > 0;
+  },
+
+  async purgeSoftDeletedCustomers(cutoff: Date): Promise<number> {
+    const due = await db
+      .select({ id: customers.id })
+      .from(customers)
+      .where(and(isNotNull(customers.deletedAt), lt(customers.deletedAt, cutoff)));
+    if (due.length === 0) return 0;
+    const ids = due.map((r) => r.id);
+
+    // Null out FKs on dependent tables to satisfy FK constraints.
+    await db.update(jobs).set({ customerId: null }).where(inArray(jobs.customerId, ids));
+    await db.update(quotes).set({ customerId: null }).where(inArray(quotes.customerId, ids));
+    await db.update(invoices).set({ customerId: null }).where(inArray(invoices.customerId, ids));
+    await db.execute(sql`UPDATE missed_calls SET customer_id = NULL WHERE customer_id = ANY(${ids})`);
+    await db.execute(sql`UPDATE review_requests SET customer_id = NULL WHERE customer_id = ANY(${ids})`);
+
+    const result = await db
+      .delete(customers)
+      .where(inArray(customers.id, ids))
+      .returning({ id: customers.id });
+    return result.length;
   },
 };

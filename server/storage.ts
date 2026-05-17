@@ -177,6 +177,10 @@ export interface IStorage {
   hardDeleteInvoice(orgId: string, id: string): Promise<boolean>;
   bulkMarkInvoicesPaid(orgId: string, ids: string[]): Promise<number>;
 
+  purgeSoftDeletedCustomers(cutoff: Date): Promise<number>;
+  purgeSoftDeletedJobs(cutoff: Date): Promise<number>;
+  purgeSoftDeletedInvoices(cutoff: Date): Promise<number>;
+
   setUserTotpSecret(userId: string, secret: string): Promise<void>;
   enableUserTotp(userId: string): Promise<void>;
   disableUserTotp(userId: string): Promise<void>;

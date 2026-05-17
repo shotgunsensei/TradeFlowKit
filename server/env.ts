@@ -13,6 +13,7 @@ const envSchema = z.object({
   // Legacy aliases (kept for backward compatibility with existing deployments).
   APP_ENV: z.string().optional(),
   MODULE_SLUG: z.string().optional(),
+  SOFT_DELETE_RETENTION_DAYS: z.coerce.number().int().positive().default(30),
 });
 
 export type Env = z.infer<typeof envSchema>;

@@ -178,6 +178,9 @@ app.use(httpLogger);
   const { startReminderWorker } = await import("./reminderWorker");
   startReminderWorker();
 
+  const { startPurgeWorker } = await import("./purgeWorker");
+  startPurgeWorker();
+
   app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
     if (res.headersSent) {
       return next(err);

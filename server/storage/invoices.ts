@@ -319,6 +319,28 @@ export const invoicesStorage = {
     return result.length > 0;
   },
 
+  async purgeSoftDeletedInvoices(cutoff: Date): Promise<number> {
+    const due = await db
+      .select({ id: invoices.id })
+      .from(invoices)
+      .where(and(isNotNull(invoices.deletedAt), lt(invoices.deletedAt, cutoff)));
+    if (due.length === 0) return 0;
+    const ids = due.map((r) => r.id);
+
+    // invoice_items has ON DELETE CASCADE, but delete explicitly for clarity
+    // (and to keep the cascade logic in one obvious place).
+    await db.delete(invoiceItems).where(inArray(invoiceItems.invoiceId, ids));
+
+    // Detach recurring children pointing at a soft-deleted template.
+    await db.execute(sql`UPDATE invoices SET parent_invoice_id = NULL WHERE parent_invoice_id = ANY(${ids})`);
+
+    const result = await db
+      .delete(invoices)
+      .where(inArray(invoices.id, ids))
+      .returning({ id: invoices.id });
+    return result.length;
+  },
+
   async bulkMarkInvoicesPaid(orgId: string, ids: string[]): Promise<number> {
     if (ids.length === 0) return 0;
     const now = new Date();

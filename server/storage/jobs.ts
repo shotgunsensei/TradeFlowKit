@@ -1,4 +1,4 @@
-import { eq, and, desc, inArray, isNull, isNotNull } from "drizzle-orm";
+import { eq, and, desc, inArray, isNull, isNotNull, lt, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
   customers,
@@ -199,6 +199,33 @@ export const jobsStorage = {
       .where(and(eq(jobs.orgId, orgId), eq(jobs.id, id), isNotNull(jobs.deletedAt)))
       .returning({ id: jobs.id });
     return result.length > 0;
+  },
+
+  async purgeSoftDeletedJobs(cutoff: Date): Promise<number> {
+    const due = await db
+      .select({ id: jobs.id })
+      .from(jobs)
+      .where(and(isNotNull(jobs.deletedAt), lt(jobs.deletedAt, cutoff)));
+    if (due.length === 0) return 0;
+    const ids = due.map((r) => r.id);
+
+    // Delete dependent rows that reference jobs without ON DELETE cascade.
+    await db.delete(jobEvents).where(inArray(jobEvents.jobId, ids));
+    await db.delete(reviewRequests).where(inArray(reviewRequests.jobId, ids));
+
+    // Null out FKs on referencing tables.
+    await db.update(quotes).set({ jobId: null }).where(inArray(quotes.jobId, ids));
+    await db.update(invoices).set({ jobId: null }).where(inArray(invoices.jobId, ids));
+    await db.execute(sql`UPDATE missed_calls SET job_id = NULL WHERE job_id = ANY(${ids})`);
+
+    // Detach any child jobs from a soft-deleted recurring parent.
+    await db.execute(sql`UPDATE jobs SET parent_job_id = NULL WHERE parent_job_id = ANY(${ids})`);
+
+    const result = await db
+      .delete(jobs)
+      .where(inArray(jobs.id, ids))
+      .returning({ id: jobs.id });
+    return result.length;
   },
 
   async bulkUpdateJobStatus(orgId: string, ids: string[], status: string, userId: string | null): Promise<number> {
