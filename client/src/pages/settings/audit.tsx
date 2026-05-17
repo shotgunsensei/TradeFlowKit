@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ChevronDown, ChevronRight, Download, Lock, ScrollText, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -370,13 +371,23 @@ export default function AuditTab({ plan }: { plan: string }) {
   const [limit, setLimit] = useState(50);
   const [entity, setEntity] = useState<string>(ALL);
   const [action, setAction] = useState<string>(ALL);
+  const [fromDate, setFromDate] = useState<string>("");
+  const [toDate, setToDate] = useState<string>("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [isExporting, setIsExporting] = useState(false);
   const { toast } = useToast();
 
+  const dateRangeInvalid = !!fromDate && !!toDate && fromDate > toDate;
+
   const params = new URLSearchParams({ limit: String(limit) });
   if (entity !== ALL) params.set("entity", entity);
   if (action !== ALL) params.set("action", action);
+  if (fromDate && !dateRangeInvalid) {
+    params.set("from", new Date(fromDate + "T00:00:00").toISOString());
+  }
+  if (toDate && !dateRangeInvalid) {
+    params.set("to", new Date(toDate + "T23:59:59.999").toISOString());
+  }
 
   const exportCsv = async () => {
     setIsExporting(true);
@@ -405,19 +416,21 @@ export default function AuditTab({ plan }: { plan: string }) {
   };
 
   const { data, isLoading } = useQuery<{ items: AuditEntry[]; total: number }>({
-    queryKey: ["/api/audit-log", limit, entity, action],
+    queryKey: ["/api/audit-log", limit, entity, action, fromDate, toDate],
     queryFn: async () => {
       const res = await fetch(`/api/audit-log?${params.toString()}`, { credentials: "include" });
       if (!res.ok) throw new Error(await res.text());
       return res.json();
     },
-    enabled: isEnterprise,
+    enabled: isEnterprise && !dateRangeInvalid,
   });
 
-  const hasActiveFilters = entity !== ALL || action !== ALL;
+  const hasActiveFilters = entity !== ALL || action !== ALL || !!fromDate || !!toDate;
   const clearFilters = () => {
     setEntity(ALL);
     setAction(ALL);
+    setFromDate("");
+    setToDate("");
     setLimit(50);
   };
 
@@ -500,6 +513,30 @@ export default function AuditTab({ plan }: { plan: string }) {
               </SelectContent>
             </Select>
           </div>
+          <div className="space-y-1">
+            <Label htmlFor="audit-filter-from" className="text-xs">From</Label>
+            <Input
+              id="audit-filter-from"
+              type="date"
+              value={fromDate}
+              onChange={(e) => { setFromDate(e.target.value); setLimit(50); }}
+              max={toDate || undefined}
+              className="h-8 w-[160px]"
+              data-testid="input-audit-from"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="audit-filter-to" className="text-xs">To</Label>
+            <Input
+              id="audit-filter-to"
+              type="date"
+              value={toDate}
+              onChange={(e) => { setToDate(e.target.value); setLimit(50); }}
+              min={fromDate || undefined}
+              className="h-8 w-[160px]"
+              data-testid="input-audit-to"
+            />
+          </div>
           {hasActiveFilters && (
             <Button
               type="button"
@@ -527,6 +564,11 @@ export default function AuditTab({ plan }: { plan: string }) {
             </Button>
           </div>
         </div>
+        {dateRangeInvalid && (
+          <p className="text-xs text-destructive mb-3" data-testid="text-audit-date-error">
+            "From" date must be on or before "To" date.
+          </p>
+        )}
         {isLoading ? (
           <p className="text-sm text-muted-foreground py-4 text-center">Loading...</p>
         ) : !data || data.items.length === 0 ? (

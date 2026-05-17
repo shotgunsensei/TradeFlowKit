@@ -124,7 +124,23 @@ router.get("/api/audit-log", requireAuth, requireOrg, async (req: Request, res: 
     const action = req.query.action ? String(req.query.action) : undefined;
     const userId = req.query.userId ? String(req.query.userId) : undefined;
 
-    const result = await storage.getAuditLog(orgId, { limit, offset, entity, action, userId });
+    let from: Date | undefined;
+    let to: Date | undefined;
+    if (req.query.from) {
+      const d = new Date(String(req.query.from));
+      if (isNaN(d.getTime())) return res.status(400).json({ error: "Invalid 'from' date" });
+      from = d;
+    }
+    if (req.query.to) {
+      const d = new Date(String(req.query.to));
+      if (isNaN(d.getTime())) return res.status(400).json({ error: "Invalid 'to' date" });
+      to = d;
+    }
+    if (from && to && from > to) {
+      return res.status(400).json({ error: "'from' must be on or before 'to'" });
+    }
+
+    const result = await storage.getAuditLog(orgId, { limit, offset, entity, action, userId, from, to });
     res.json(result);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
