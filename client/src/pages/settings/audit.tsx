@@ -379,6 +379,51 @@ export default function AuditTab({ plan }: { plan: string }) {
 
   const dateRangeInvalid = !!fromDate && !!toDate && fromDate > toDate;
 
+  const toIsoDate = (d: Date) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  };
+
+  const DATE_PRESETS: { value: string; label: string; range: () => { from: string; to: string } }[] = [
+    {
+      value: "today",
+      label: "Today",
+      range: () => { const t = toIsoDate(new Date()); return { from: t, to: t }; },
+    },
+    {
+      value: "yesterday",
+      label: "Yesterday",
+      range: () => { const d = new Date(); d.setDate(d.getDate() - 1); const t = toIsoDate(d); return { from: t, to: t }; },
+    },
+    {
+      value: "last7",
+      label: "Last 7 days",
+      range: () => { const to = new Date(); const from = new Date(); from.setDate(from.getDate() - 6); return { from: toIsoDate(from), to: toIsoDate(to) }; },
+    },
+    {
+      value: "last30",
+      label: "Last 30 days",
+      range: () => { const to = new Date(); const from = new Date(); from.setDate(from.getDate() - 29); return { from: toIsoDate(from), to: toIsoDate(to) }; },
+    },
+    {
+      value: "this_month",
+      label: "This month",
+      range: () => { const now = new Date(); const from = new Date(now.getFullYear(), now.getMonth(), 1); return { from: toIsoDate(from), to: toIsoDate(now) }; },
+    },
+  ];
+
+  const [activePreset, setActivePreset] = useState<string | null>(null);
+
+  const applyPreset = (preset: typeof DATE_PRESETS[number]) => {
+    const { from, to } = preset.range();
+    setFromDate(from);
+    setToDate(to);
+    setActivePreset(preset.value);
+    setLimit(50);
+  };
+
   const params = new URLSearchParams({ limit: String(limit) });
   if (entity !== ALL) params.set("entity", entity);
   if (action !== ALL) params.set("action", action);
@@ -431,6 +476,7 @@ export default function AuditTab({ plan }: { plan: string }) {
     setAction(ALL);
     setFromDate("");
     setToDate("");
+    setActivePreset(null);
     setLimit(50);
   };
 
@@ -519,7 +565,7 @@ export default function AuditTab({ plan }: { plan: string }) {
               id="audit-filter-from"
               type="date"
               value={fromDate}
-              onChange={(e) => { setFromDate(e.target.value); setLimit(50); }}
+              onChange={(e) => { setFromDate(e.target.value); setActivePreset(null); setLimit(50); }}
               max={toDate || undefined}
               className="h-8 w-[160px]"
               data-testid="input-audit-from"
@@ -531,11 +577,30 @@ export default function AuditTab({ plan }: { plan: string }) {
               id="audit-filter-to"
               type="date"
               value={toDate}
-              onChange={(e) => { setToDate(e.target.value); setLimit(50); }}
+              onChange={(e) => { setToDate(e.target.value); setActivePreset(null); setLimit(50); }}
               min={fromDate || undefined}
               className="h-8 w-[160px]"
               data-testid="input-audit-to"
             />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Quick range</Label>
+            <div className="flex flex-wrap gap-1" data-testid="audit-date-presets">
+              {DATE_PRESETS.map((preset) => (
+                <Button
+                  key={preset.value}
+                  type="button"
+                  size="sm"
+                  variant={activePreset === preset.value ? "default" : "outline"}
+                  onClick={() => applyPreset(preset)}
+                  className="h-8"
+                  data-testid={`button-audit-preset-${preset.value}`}
+                  aria-pressed={activePreset === preset.value}
+                >
+                  {preset.label}
+                </Button>
+              ))}
+            </div>
           </div>
           {hasActiveFilters && (
             <Button
