@@ -220,19 +220,36 @@ export default function InvoicePayPage() {
             Online payments are not available for this invoice.
           </div>
         ) : (
-          <Button
-            className="w-full gap-2"
-            size="lg"
-            onClick={() => {
-              setPaymentError(null);
-              payMutation.mutate();
-            }}
-            disabled={payMutation.isPending}
-            data-testid="button-pay-now"
-          >
-            <CreditCard className="h-4 w-4" />
-            {payMutation.isPending ? "Redirecting to payment..." : `Pay $${totals.total.toFixed(2)}`}
-          </Button>
+          <div className="space-y-2">
+            <Button
+              className="w-full gap-2"
+              size="lg"
+              onClick={() => {
+                setPaymentError(null);
+                payMutation.mutate();
+              }}
+              disabled={payMutation.isPending}
+              data-testid="button-pay-now"
+            >
+              <CreditCard className="h-4 w-4" />
+              {payMutation.isPending ? "Redirecting to payment..." : `Pay $${totals.total.toFixed(2)}`}
+            </Button>
+            <div
+              className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground"
+              data-testid="text-payment-methods"
+            >
+              <CreditCard className="h-3.5 w-3.5" />
+              <span>Pay by credit/debit card or</span>
+              <Building2 className="h-3.5 w-3.5" />
+              <span>ACH bank transfer</span>
+            </div>
+            <p
+              className="text-xs text-center text-muted-foreground"
+              data-testid="text-ach-notice"
+            >
+              ACH bank transfers typically take 3–5 business days to clear.
+            </p>
+          </div>
         )}
 
         <p className="text-xs text-center text-muted-foreground">
