@@ -39,6 +39,7 @@ const AnalyticsPage = lazy(() => import("@/pages/analytics"));
 const SmsConsentPage = lazy(() => import("@/pages/sms-consent"));
 const GuidePage = lazy(() => import("@/pages/guide"));
 const CustomerPortalPage = lazy(() => import("@/pages/customer-portal"));
+const TrashPage = lazy(() => import("@/pages/trash"));
 
 function RouteFallback() {
   return (
@@ -121,6 +122,7 @@ function AppContent() {
                 <Route path="/subscription" component={SubscriptionPage} />
                 <Route path="/analytics" component={AnalyticsPage} />
                 <Route path="/call-recovery" component={CallRecoveryPage} />
+                <Route path="/trash" component={TrashPage} />
                 <Route path="/admin" component={AdminPage} />
                 <Route path="/guide" component={GuidePage} />
                 <Route path="/privacy" component={PrivacyPage} />

@@ -26,6 +26,7 @@ import {
   Lock,
   BookOpen,
   BarChart3,
+  Trash2,
 } from "lucide-react";
 import { useLocation, Link } from "wouter";
 import { useAuth } from "@/lib/auth";
@@ -50,6 +51,7 @@ const mainNav = [
 const settingsNav = [
   { title: "Settings", url: "/settings", icon: Settings },
   { title: "Subscription", url: "/subscription", icon: CreditCard },
+  { title: "Trash", url: "/trash", icon: Trash2 },
   { title: "Help & Guide", url: "/guide", icon: BookOpen },
 ];
 

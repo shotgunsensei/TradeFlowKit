@@ -164,11 +164,17 @@ export interface IStorage {
 
   bulkDeleteCustomers(orgId: string, ids: string[]): Promise<number>;
   bulkRestoreCustomers(orgId: string, ids: string[]): Promise<number>;
+  getDeletedCustomers(orgId: string): Promise<Customer[]>;
+  hardDeleteCustomer(orgId: string, id: string): Promise<boolean>;
   bulkDeleteJobs(orgId: string, ids: string[]): Promise<number>;
   bulkRestoreJobs(orgId: string, ids: string[]): Promise<number>;
+  getDeletedJobs(orgId: string): Promise<(Job & { customerName?: string })[]>;
+  hardDeleteJob(orgId: string, id: string): Promise<boolean>;
   bulkUpdateJobStatus(orgId: string, ids: string[], status: string, userId: string | null): Promise<number>;
   bulkDeleteInvoices(orgId: string, ids: string[]): Promise<number>;
   bulkRestoreInvoices(orgId: string, ids: string[]): Promise<number>;
+  getDeletedInvoices(orgId: string): Promise<(Invoice & { customerName?: string; total?: number })[]>;
+  hardDeleteInvoice(orgId: string, id: string): Promise<boolean>;
   bulkMarkInvoicesPaid(orgId: string, ids: string[]): Promise<number>;
 
   setUserTotpSecret(userId: string, secret: string): Promise<void>;

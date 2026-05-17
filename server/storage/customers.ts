@@ -1,4 +1,4 @@
-import { eq, and, desc, ilike, or, gte, isNull, inArray } from "drizzle-orm";
+import { eq, and, desc, ilike, or, gte, isNull, isNotNull, inArray } from "drizzle-orm";
 import { randomBytes } from "crypto";
 import { db } from "../db";
 import {
@@ -9,6 +9,8 @@ import {
   quoteItems,
   invoices,
   invoiceItems,
+  missedCalls,
+  reviewRequests,
   type Customer,
   type InsertCustomer,
   type Job,
@@ -144,8 +146,51 @@ export const customersStorage = {
     const result = await db
       .update(customers)
       .set({ deletedAt: null })
-      .where(and(eq(customers.orgId, orgId), inArray(customers.id, ids)))
+      .where(and(eq(customers.orgId, orgId), inArray(customers.id, ids), isNotNull(customers.deletedAt)))
       .returning({ id: customers.id });
     return result.length;
+  },
+
+  async getDeletedCustomers(orgId: string): Promise<Customer[]> {
+    return db
+      .select()
+      .from(customers)
+      .where(and(eq(customers.orgId, orgId), isNotNull(customers.deletedAt)))
+      .orderBy(desc(customers.deletedAt));
+  },
+
+  async hardDeleteCustomer(orgId: string, id: string): Promise<boolean> {
+    const [existing] = await db
+      .select({ id: customers.id })
+      .from(customers)
+      .where(and(eq(customers.orgId, orgId), eq(customers.id, id), isNotNull(customers.deletedAt)));
+    if (!existing) return false;
+
+    await db
+      .update(jobs)
+      .set({ customerId: null })
+      .where(and(eq(jobs.orgId, orgId), eq(jobs.customerId, id)));
+    await db
+      .update(quotes)
+      .set({ customerId: null })
+      .where(and(eq(quotes.orgId, orgId), eq(quotes.customerId, id)));
+    await db
+      .update(invoices)
+      .set({ customerId: null })
+      .where(and(eq(invoices.orgId, orgId), eq(invoices.customerId, id)));
+    await db
+      .update(missedCalls)
+      .set({ customerId: null })
+      .where(and(eq(missedCalls.orgId, orgId), eq(missedCalls.customerId, id)));
+    await db
+      .update(reviewRequests)
+      .set({ customerId: null })
+      .where(and(eq(reviewRequests.orgId, orgId), eq(reviewRequests.customerId, id)));
+
+    const result = await db
+      .delete(customers)
+      .where(and(eq(customers.orgId, orgId), eq(customers.id, id), isNotNull(customers.deletedAt)))
+      .returning({ id: customers.id });
+    return result.length > 0;
   },
 };

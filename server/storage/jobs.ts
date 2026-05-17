@@ -1,4 +1,4 @@
-import { eq, and, desc, inArray, isNull } from "drizzle-orm";
+import { eq, and, desc, inArray, isNull, isNotNull } from "drizzle-orm";
 import { db } from "../db";
 import {
   customers,
@@ -142,9 +142,63 @@ export const jobsStorage = {
     const result = await db
       .update(jobs)
       .set({ deletedAt: null })
-      .where(and(eq(jobs.orgId, orgId), inArray(jobs.id, ids)))
+      .where(and(eq(jobs.orgId, orgId), inArray(jobs.id, ids), isNotNull(jobs.deletedAt)))
       .returning({ id: jobs.id });
     return result.length;
+  },
+
+  async getDeletedJobs(orgId: string): Promise<(Job & { customerName?: string })[]> {
+    const rows = await db
+      .select()
+      .from(jobs)
+      .where(and(eq(jobs.orgId, orgId), isNotNull(jobs.deletedAt)))
+      .orderBy(desc(jobs.deletedAt));
+    const customerIds = [...new Set(rows.filter((j) => j.customerId).map((j) => j.customerId!))];
+    let customerMap: Record<string, string> = {};
+    if (customerIds.length > 0) {
+      const custs = await db
+        .select({ id: customers.id, name: customers.name })
+        .from(customers)
+        .where(inArray(customers.id, customerIds));
+      customerMap = Object.fromEntries(custs.map((c) => [c.id, c.name]));
+    }
+    return rows.map((j) => ({
+      ...j,
+      customerName: j.customerId ? customerMap[j.customerId] : undefined,
+    }));
+  },
+
+  async hardDeleteJob(orgId: string, id: string): Promise<boolean> {
+    const [existing] = await db
+      .select({ id: jobs.id })
+      .from(jobs)
+      .where(and(eq(jobs.orgId, orgId), eq(jobs.id, id), isNotNull(jobs.deletedAt)));
+    if (!existing) return false;
+
+    await db.delete(jobEvents).where(and(eq(jobEvents.orgId, orgId), eq(jobEvents.jobId, id)));
+    await db
+      .update(quotes)
+      .set({ jobId: null })
+      .where(and(eq(quotes.orgId, orgId), eq(quotes.jobId, id)));
+    await db
+      .update(invoices)
+      .set({ jobId: null })
+      .where(and(eq(invoices.orgId, orgId), eq(invoices.jobId, id)));
+    await db
+      .update(missedCalls)
+      .set({ jobId: null })
+      .where(and(eq(missedCalls.orgId, orgId), eq(missedCalls.jobId, id)));
+    await db
+      .update(jobs)
+      .set({ parentJobId: null })
+      .where(and(eq(jobs.orgId, orgId), eq(jobs.parentJobId, id)));
+    await db.delete(reviewRequests).where(and(eq(reviewRequests.orgId, orgId), eq(reviewRequests.jobId, id)));
+
+    const result = await db
+      .delete(jobs)
+      .where(and(eq(jobs.orgId, orgId), eq(jobs.id, id), isNotNull(jobs.deletedAt)))
+      .returning({ id: jobs.id });
+    return result.length > 0;
   },
 
   async bulkUpdateJobStatus(orgId: string, ids: string[], status: string, userId: string | null): Promise<number> {
