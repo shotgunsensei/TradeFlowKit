@@ -232,6 +232,80 @@ the user for visibility and possible future use.
 
 ---
 
+## Listing a user's organizations
+
+After a user has signed in through `/sso` at least once (so we have their
+OperatorOS `sub` stored as `users.operatorosUserId`), TradeFlowKit can ask
+OperatorOS which organizations that user belongs to. This powers the "pick
+from your OperatorOS organizations" picker in `/settings#organization`.
+
+### Outbound request
+
+```
+GET {OPERATOROS_API_URL}/v1/modules/users/{sub}/organizations
+Accept: application/json
+Authorization: Bearer {MODULE_SSO_SECRET}
+X-Module-Slug: {OPERATOROS_SSO_AUDIENCE}
+X-Module-Env: {OPERATOROS_SSO_ENV}
+```
+
+- `{sub}` is the URL-encoded OperatorOS user id (`users.operatorosUserId`).
+- Auth scheme is the same shared HS256 secret used for
+  `/v1/modules/sso/consume`. It is server-only and never reaches the browser.
+- The call has a **5 second** timeout; on timeout/network failure we surface
+  `{ available: false, reason: "unavailable" }` to the client (we do not
+  throw).
+- No query parameters. No request body.
+
+### Success response (HTTP 200)
+
+The response body MUST be a JSON object with a single `organizations` array.
+Each entry MUST have a non-empty string `id` and a non-empty string `name`:
+
+```json
+{
+  "organizations": [
+    { "id": "ae1f-uuid", "name": "Acme Electric" },
+    { "id": "b220-uuid", "name": "Bravo HVAC" }
+  ]
+}
+```
+
+- `id` is the OperatorOS organization id and is what gets written to
+  `users.operatorosOrganizationId` / `orgs.operatorosOrganizationId` when
+  the user links a TradeFlowKit org to it.
+- `name` is the human-readable label shown in the picker.
+- Entries with a missing/empty `id` or `name` are dropped by the child.
+- An empty `organizations: []` array is valid and means "user has no
+  OperatorOS organizations" — the picker shows an empty state.
+- Any extra keys (per-entry or top-level) are ignored.
+
+### Error responses
+
+| API HTTP | Meaning | Child surfaces |
+|----------|---------|----------------|
+| 200, well-formed body | Success | `{ available: true, organizations: [...] }` |
+| 200, body is not the documented shape | Treated as upstream bug | `{ available: false, reason: "unavailable" }` (logged) |
+| 401 / 403 | Bad/expired `MODULE_SSO_SECRET`, wrong slug/env | `{ available: false, reason: "unavailable" }` (logged with status) |
+| 404 | Unknown `sub` | `{ available: false, reason: "unavailable" }` (logged with status) |
+| 5xx / network / timeout | Upstream unavailable | `{ available: false, reason: "unavailable" }` (logged) |
+
+The child endpoint never throws to the browser — the picker degrades to a
+manual "enter organization id" input whenever the response is anything other
+than a well-formed 200.
+
+### Local-only response shapes
+
+The child endpoint `GET /api/operatoros/organizations` also returns two
+local-only outcomes that do not involve an upstream call:
+
+| `reason` | When |
+|----------|------|
+| `not_configured` | SSO env vars are unset (dev only). |
+| `not_linked` | The current user has no `operatorosUserId` (they have never come through `/sso`). |
+
+---
+
 ## What's intentionally out of scope
 
 - JWKS / RS256 — the contract is shared HS256, rotated by changing

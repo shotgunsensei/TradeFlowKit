@@ -14,29 +14,16 @@ type ListResponse =
   | { available: true; organizations: Array<{ id: string; name: string }> };
 
 function parseOrgs(payload: unknown): Array<{ id: string; name: string }> | null {
-  let arr: unknown = payload;
-  if (payload && typeof payload === "object" && !Array.isArray(payload)) {
-    const obj = payload as Record<string, unknown>;
-    if (Array.isArray(obj.organizations)) arr = obj.organizations;
-    else if (Array.isArray(obj.data)) arr = obj.data;
-    else if (Array.isArray(obj.items)) arr = obj.items;
-    else return null;
-  }
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+  const arr = (payload as Record<string, unknown>).organizations;
   if (!Array.isArray(arr)) return null;
   const out: Array<{ id: string; name: string }> = [];
   for (const item of arr) {
     if (!item || typeof item !== "object") continue;
     const o = item as Record<string, unknown>;
-    const id = typeof o.id === "string" ? o.id : typeof o.organization_id === "string" ? o.organization_id : null;
-    const name =
-      typeof o.name === "string"
-        ? o.name
-        : typeof o.organization_name === "string"
-          ? o.organization_name
-          : typeof o.display_name === "string"
-            ? o.display_name
-            : null;
-    if (id && name) out.push({ id, name });
+    if (typeof o.id !== "string" || !o.id) continue;
+    if (typeof o.name !== "string" || !o.name) continue;
+    out.push({ id: o.id, name: o.name });
   }
   return out;
 }
