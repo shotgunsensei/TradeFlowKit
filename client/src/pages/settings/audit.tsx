@@ -7,7 +7,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ChevronDown, ChevronRight, Download, Lock, ScrollText, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Download, Lock, ScrollText, Search, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 interface AuditEntry {
@@ -373,6 +373,7 @@ export default function AuditTab({ plan }: { plan: string }) {
   const [action, setAction] = useState<string>(ALL);
   const [fromDate, setFromDate] = useState<string>("");
   const [toDate, setToDate] = useState<string>("");
+  const [search, setSearch] = useState<string>("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [isExporting, setIsExporting] = useState(false);
   const { toast } = useToast();
@@ -470,15 +471,34 @@ export default function AuditTab({ plan }: { plan: string }) {
     enabled: isEnterprise && !dateRangeInvalid,
   });
 
-  const hasActiveFilters = entity !== ALL || action !== ALL || !!fromDate || !!toDate;
+  const hasActiveFilters = entity !== ALL || action !== ALL || !!fromDate || !!toDate || search.trim() !== "";
   const clearFilters = () => {
     setEntity(ALL);
     setAction(ALL);
     setFromDate("");
     setToDate("");
     setActivePreset(null);
+    setSearch("");
     setLimit(50);
   };
+
+  const searchTerm = search.trim().toLowerCase();
+  const matchesSearch = (entry: AuditEntry): boolean => {
+    if (!searchTerm) return true;
+    const before = sanitize(entry.before);
+    const after = sanitize(entry.after);
+    const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+    for (const key of keys) {
+      if (key.toLowerCase().includes(searchTerm)) return true;
+      const b = before[key];
+      const a = after[key];
+      if (b !== undefined && formatValue(b).toLowerCase().includes(searchTerm)) return true;
+      if (a !== undefined && formatValue(a).toLowerCase().includes(searchTerm)) return true;
+    }
+    return false;
+  };
+
+  const filteredItems = data?.items.filter(matchesSearch) ?? [];
 
   const toggle = (id: string) => {
     setExpanded((prev) => {
@@ -602,6 +622,21 @@ export default function AuditTab({ plan }: { plan: string }) {
               ))}
             </div>
           </div>
+          <div className="space-y-1 flex-1 min-w-[200px] max-w-xs">
+            <Label htmlFor="audit-filter-search" className="text-xs">Search changes</Label>
+            <div className="relative">
+              <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+              <Input
+                id="audit-filter-search"
+                type="search"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Field name or value..."
+                className="h-8 pl-7"
+                data-testid="input-audit-search"
+              />
+            </div>
+          </div>
           {hasActiveFilters && (
             <Button
               type="button"
@@ -636,7 +671,7 @@ export default function AuditTab({ plan }: { plan: string }) {
         )}
         {isLoading ? (
           <p className="text-sm text-muted-foreground py-4 text-center">Loading...</p>
-        ) : !data || data.items.length === 0 ? (
+        ) : !data || filteredItems.length === 0 ? (
           <p className="text-sm text-muted-foreground py-4 text-center" data-testid="text-audit-empty">
             {hasActiveFilters ? "No activity matches these filters." : "No activity yet."}
           </p>
@@ -654,7 +689,7 @@ export default function AuditTab({ plan }: { plan: string }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {data.items.map((row) => {
+                {filteredItems.map((row) => {
                   const isOpen = expanded.has(row.id);
                   return (
                     <Fragment key={row.id}>
@@ -700,7 +735,9 @@ export default function AuditTab({ plan }: { plan: string }) {
             </Table>
             <div className="flex items-center justify-between mt-3">
               <p className="text-xs text-muted-foreground" data-testid="text-audit-count">
-                Showing {data.items.length} of {data.total}
+                {searchTerm
+                  ? `Showing ${filteredItems.length} of ${data.items.length} loaded (${data.total} total)`
+                  : `Showing ${filteredItems.length} of ${data.total}`}
               </p>
               {data.total > data.items.length && (
                 <Button
