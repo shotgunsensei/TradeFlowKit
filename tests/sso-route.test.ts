@@ -310,6 +310,7 @@ describe("/sso route", () => {
     const sid = `sid-autojoin-${Date.now()}`;
     const res = await request(app).get(`/sso?token=${signToken(claims)}`).set("x-test-sid", sid);
     expect(res.status).toBe(302);
+    expect(res.headers.location).toBe("/dashboard?sso=joined");
 
     const user = await storage.getUserByOperatorosUserId(claims.sub);
     expect(user).toBeDefined();
@@ -321,6 +322,71 @@ describe("/sso route", () => {
 
     const sessions = (app as any).__sessions as Map<string, any>;
     expect(sessions.get(sid)?.orgId).toBe(org.id);
+
+    const audit = await storage.getAuditLog(org.id, {
+      limit: 10,
+      offset: 0,
+      entity: "membership",
+      action: "sso_auto_join",
+    });
+    const row = audit.items.find((r) => r.userId === user!.id);
+    expect(row).toBeDefined();
+    expect(row?.entityId).toBe(user!.id);
+    expect((row?.after as any)?.source).toBe("operatoros_sso");
+    expect((row?.after as any)?.role).toBe("admin");
+    expect((row?.after as any)?.operatorosOrgId).toBe(operatorosOrgId);
+  });
+
+  it("redirects to /dashboard?sso=signed_in when user is already a member of the linked org", async () => {
+    (consumeSsoToken as any).mockResolvedValue({ ok: true });
+    const operatorosOrgId = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString("hex")}`;
+    const sub = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString("hex")}`;
+    const email = `member-${crypto.randomBytes(4).toString("hex")}@example.com`;
+
+    const user = await storage.createUser({
+      username: `member-${crypto.randomBytes(4).toString("hex")}`,
+      password: "hash-x",
+      fullName: "Existing Member",
+      phone: "",
+      email,
+      operatorosUserId: sub,
+    });
+    trackUser(user.id);
+
+    const org = await storage.createOrg({
+      name: `Already Linked ${crypto.randomBytes(3).toString("hex")}`,
+      slug: `already-${crypto.randomBytes(4).toString("hex")}`,
+      operatorosOrganizationId: operatorosOrgId,
+    } as any);
+    trackOrg(org.id);
+    await storage.createMembership(org.id, user.id, "owner");
+
+    const claims = validClaims({ sub, user_id: sub, email, organization_id: operatorosOrgId, role: "admin" });
+    const sid = `sid-signedin-${Date.now()}`;
+    const res = await request(app).get(`/sso?token=${signToken(claims)}`).set("x-test-sid", sid);
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toBe("/dashboard?sso=signed_in");
+
+    // No new auto-join audit row should be written since membership already exists.
+    const audit = await storage.getAuditLog(org.id, {
+      limit: 10,
+      offset: 0,
+      entity: "membership",
+      action: "sso_auto_join",
+    });
+    expect(audit.items.find((r) => r.userId === user.id)).toBeUndefined();
+  });
+
+  it("redirects to /dashboard (no sso flag) when there's no organization_id on the token", async () => {
+    (consumeSsoToken as any).mockResolvedValue({ ok: true });
+    const claims = validClaims({ name: "Plain User" });
+    const res = await request(app)
+      .get(`/sso?token=${signToken(claims)}`)
+      .set("x-test-sid", `sid-plain-${Date.now()}`);
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toBe("/dashboard");
+    const user = await storage.getUserByOperatorosUserId(claims.sub);
+    if (user) trackUser(user.id);
   });
 
   it("auto-provisions a new TradeFlowKit org for a brand-new OperatorOS tenant", async () => {
@@ -330,6 +396,7 @@ describe("/sso route", () => {
     const sid = `sid-autoprov-${Date.now()}`;
     const res = await request(app).get(`/sso?token=${signToken(claims)}`).set("x-test-sid", sid);
     expect(res.status).toBe(302);
+    expect(res.headers.location).toBe("/dashboard?sso=provisioned");
 
     const user = await storage.getUserByOperatorosUserId(claims.sub);
     expect(user).toBeDefined();
@@ -344,6 +411,19 @@ describe("/sso route", () => {
 
     const sessions = (app as any).__sessions as Map<string, any>;
     expect(sessions.get(sid)?.orgId).toBe(linked!.id);
+
+    const audit = await storage.getAuditLog(linked!.id, {
+      limit: 10,
+      offset: 0,
+      entity: "org",
+      action: "sso_auto_provision",
+    });
+    const row = audit.items.find((r) => r.userId === user!.id);
+    expect(row).toBeDefined();
+    expect(row?.entityId).toBe(linked!.id);
+    expect((row?.after as any)?.role).toBe("owner");
+    expect((row?.after as any)?.source).toBe("operatoros_sso");
+    expect((row?.after as any)?.operatorosOrgId).toBe(operatorosOrgId);
   });
 
   it("does not auto-pick when user has multiple orgs and none match the OperatorOS tenant", async () => {
