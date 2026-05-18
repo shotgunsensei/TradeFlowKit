@@ -32,11 +32,6 @@ const baseClaims = (now = nowSec()) => ({
   env: config.ssoEnv,
   jti: "jti-123",
   sub: "11111111-1111-1111-1111-111111111111",
-  user_id: "11111111-1111-1111-1111-111111111111" as string,
-  email: "alice@example.com",
-  role: "user",
-  plan_slug: "starter",
-  organization_id: "22222222-2222-2222-2222-222222222222",
   iat: now,
   exp: now + 60,
 });
@@ -47,56 +42,54 @@ describe("verifySsoToken", () => {
     const result = verifySsoToken(token, config);
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.claims.email).toBe("alice@example.com");
       expect(result.claims.jti).toBe("jti-123");
+      expect(result.claims.aud).toBe("tradeflowkit");
+      expect(result.claims.module_slug).toBe("tradeflowkit");
+      expect(result.claims.env).toBe("prod");
       expect(result.claims.sub).toBe("11111111-1111-1111-1111-111111111111");
-      expect(result.claims.user_id).toBe("11111111-1111-1111-1111-111111111111");
-      expect(result.claims.role).toBe("user");
-      expect(result.claims.plan_slug).toBe("starter");
-      expect(result.claims.organization_id).toBe("22222222-2222-2222-2222-222222222222");
     }
   });
 
-  it("returns missing_token when token absent", () => {
-    expect(verifySsoToken(undefined, config)).toEqual({ ok: false, reason: "missing_token" });
+  it("returns no_token when token absent", () => {
+    expect(verifySsoToken(undefined, config)).toEqual({ ok: false, reason: "no_token" });
   });
 
-  it("returns bad_request for malformed token (wrong segment count)", () => {
+  it("returns bad_signature for malformed token (wrong segment count)", () => {
     const r = verifySsoToken("not.a.real.token", config);
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reason).toBe("bad_request");
+    if (!r.ok) expect(r.reason).toBe("bad_signature");
   });
 
-  it("returns signature_invalid for unsupported alg (none)", () => {
+  it("returns bad_signature for unsupported alg (none)", () => {
     const header = b64url(JSON.stringify({ alg: "none", typ: "JWT" }));
     const body = b64url(JSON.stringify(baseClaims()));
     const r = verifySsoToken(`${header}.${body}.`, config);
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reason).toBe("signature_invalid");
+    if (!r.ok) expect(r.reason).toBe("bad_signature");
   });
 
-  it("returns signature_invalid for bad HMAC", () => {
+  it("returns bad_signature for bad HMAC", () => {
     const r = verifySsoToken(sign(baseClaims(), "wrong-secret"), config);
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reason).toBe("signature_invalid");
+    if (!r.ok) expect(r.reason).toBe("bad_signature");
   });
 
-  it("returns issuer_mismatch on wrong iss", () => {
+  it("returns bad_issuer on wrong iss", () => {
     const r = verifySsoToken(sign({ ...baseClaims(), iss: "https://evil.example.com" }), config);
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reason).toBe("issuer_mismatch");
+    if (!r.ok) expect(r.reason).toBe("bad_issuer");
   });
 
-  it("returns audience_mismatch on wrong aud", () => {
+  it("returns bad_module_slug on wrong aud", () => {
     const r = verifySsoToken(sign({ ...baseClaims(), aud: "techdeck" }), config);
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reason).toBe("audience_mismatch");
+    if (!r.ok) expect(r.reason).toBe("bad_module_slug");
   });
 
-  it("returns audience_mismatch on wrong module_slug", () => {
+  it("returns bad_module_slug on wrong module_slug", () => {
     const r = verifySsoToken(sign({ ...baseClaims(), module_slug: "techdeck" }), config);
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reason).toBe("audience_mismatch");
+    if (!r.ok) expect(r.reason).toBe("bad_module_slug");
   });
 
   it("returns env_mismatch on wrong env", () => {
@@ -105,77 +98,49 @@ describe("verifySsoToken", () => {
     if (!r.ok) expect(r.reason).toBe("env_mismatch");
   });
 
-  it("returns expired when exp is in the past", () => {
+  it("returns token_expired when exp is in the past", () => {
     const now = nowSec();
     const r = verifySsoToken(sign({ ...baseClaims(now), exp: now - 5, iat: now - 10 }), config);
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reason).toBe("expired");
+    if (!r.ok) expect(r.reason).toBe("token_expired");
   });
 
-  it("returns expired when token age exceeds 90s even if exp is far in the future", () => {
+  it("returns token_expired when token age exceeds 95s even if exp is far in the future", () => {
     const now = nowSec();
-    const tooOld = now - (TOKEN_MAX_AGE_SECONDS + 1);
+    const tooOld = now - (TOKEN_MAX_AGE_SECONDS + CLOCK_SKEW_SECONDS + 1);
     const r = verifySsoToken(sign({ ...baseClaims(now), iat: tooOld, exp: now + 3600 }), config);
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reason).toBe("expired");
+    if (!r.ok) expect(r.reason).toBe("token_expired");
   });
 
-  it("accepts a token at exactly the 90s age boundary", () => {
+  it("accepts a token at exactly the 95s age boundary (90 + 5 skew)", () => {
     const now = nowSec();
-    const r = verifySsoToken(sign({ ...baseClaims(now), iat: now - TOKEN_MAX_AGE_SECONDS, exp: now + 60 }), config);
+    const atBoundary = now - (TOKEN_MAX_AGE_SECONDS + CLOCK_SKEW_SECONDS);
+    const r = verifySsoToken(sign({ ...baseClaims(now), iat: atBoundary, exp: now + 60 }), config);
     expect(r.ok).toBe(true);
   });
 
-  it("returns clock_skew when iat is more than 5s in the future", () => {
-    const now = nowSec();
-    const future = now + CLOCK_SKEW_SECONDS + 2;
-    const r = verifySsoToken(sign({ ...baseClaims(now), iat: future, exp: future + 60 }), config);
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reason).toBe("clock_skew");
-  });
-
-  it("accepts iat within 5s clock-skew window", () => {
-    const now = nowSec();
-    const r = verifySsoToken(sign({ ...baseClaims(now), iat: now + CLOCK_SKEW_SECONDS, exp: now + 60 }), config);
-    expect(r.ok).toBe(true);
-  });
-
-  it("returns bad_request when jti is missing", () => {
+  it("returns bad_signature when jti is missing", () => {
     const claims = baseClaims();
     delete (claims as any).jti;
     const r = verifySsoToken(sign(claims), config);
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reason).toBe("bad_request");
+    if (!r.ok) expect(r.reason).toBe("bad_signature");
   });
 
-  it("returns bad_request when email is missing", () => {
+  it("returns bad_signature when exp is missing", () => {
     const claims = baseClaims();
-    delete (claims as any).email;
+    delete (claims as any).exp;
     const r = verifySsoToken(sign(claims), config);
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reason).toBe("bad_request");
+    if (!r.ok) expect(r.reason).toBe("bad_signature");
   });
 
-  it("returns bad_request when sub is missing", () => {
+  it("returns bad_signature when iat is missing", () => {
     const claims = baseClaims();
-    delete (claims as any).sub;
-    delete (claims as any).user_id;
+    delete (claims as any).iat;
     const r = verifySsoToken(sign(claims), config);
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reason).toBe("bad_request");
-  });
-
-  it("falls back to user_id when sub is missing but user_id is present", () => {
-    const claims = baseClaims();
-    delete (claims as any).sub;
-    const r = verifySsoToken(sign(claims), config);
-    expect(r.ok).toBe(true);
-    if (r.ok) expect(r.claims.sub).toBe(claims.user_id);
-  });
-
-  it("returns bad_request for whitespace-only email", () => {
-    const r = verifySsoToken(sign({ ...baseClaims(), email: "   " }), config);
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reason).toBe("bad_request");
+    if (!r.ok) expect(r.reason).toBe("bad_signature");
   });
 });

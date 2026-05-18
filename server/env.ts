@@ -48,7 +48,12 @@ export interface SsoConfig {
   ssoEnv: "prod" | "staging" | "dev";
   /** Expected `aud` and `module_slug` claims. */
   audience: string;
-  /** Host to POST `/v1/modules/sso/consume` against. */
+  /**
+   * API base to POST `/modules/sso/consume` against. Per the canonical
+   * contract this is `https://operatoros.net/api` (the hub's front door
+   * rewrites `/api/:path*` to internal Fastify routes). Defaults to
+   * `OPERATOROS_BASE_URL` when `OPERATOROS_API_URL` is unset.
+   */
   apiUrl: string;
 }
 
