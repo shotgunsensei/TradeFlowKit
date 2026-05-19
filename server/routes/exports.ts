@@ -1,20 +1,17 @@
 import { Router, type Request, type Response } from "express";
 import { storage } from "../storage";
-import { requireAuth, requireOrg } from "../middleware";
-import { effectivePlanFor } from "@shared/entitlements";
+import { requireAuth, requireOrg, resolveRequestAccess } from "../middleware";
 
 const router = Router();
 
-const EXPORT_PLANS = new Set(["small_business", "enterprise"]);
-
 async function requireExportPlan(req: Request, res: Response): Promise<boolean> {
-  const org = await storage.getOrg(req.session.orgId!);
-  if (!org) {
+  const ctx = await resolveRequestAccess(req);
+  if (!ctx) {
     res.status(404).json({ error: "Organization not found" });
     return false;
   }
-  if (!EXPORT_PLANS.has(effectivePlanFor(org))) {
-    res.status(403).json({ error: "Accounting exports are available on Small Business and Enterprise plans." });
+  if (!ctx.access.features.accounting_export) {
+    res.status(403).json({ error: "Accounting exports are not enabled for this plan." });
     return false;
   }
   return true;
@@ -218,10 +215,10 @@ router.get("/api/exports/xero/payments.csv", requireAuth, requireOrg, async (req
 });
 
 router.get("/api/exports/status", requireAuth, requireOrg, async (req: Request, res: Response) => {
-  const org = await storage.getOrg(req.session.orgId!);
+  const ctx = await resolveRequestAccess(req);
   res.json({
-    available: org ? EXPORT_PLANS.has(effectivePlanFor(org)) : false,
-    plan: org?.plan ?? null,
+    available: !!ctx?.access.features.accounting_export,
+    plan: ctx?.access.planSlug ?? ctx?.org.plan ?? null,
   });
 });
 

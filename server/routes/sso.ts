@@ -10,7 +10,9 @@ import { renderSsoErrorPage } from "../sso/errorPage";
 import { logger } from "../logger";
 import {
   UserEntitlementSnapshotSchema,
+  mapModuleRoleToMembershipRole,
   mapModuleRoleToMembershipRole as mapModuleRoleEntitlement,
+  type ModuleRole,
 } from "@shared/entitlements";
 
 const router = Router();
@@ -374,6 +376,8 @@ router.get("/sso", async (req: Request, res: Response) => {
           operatorosUserId: payload.user.id,
           lastSsoLoginAt: new Date(),
         };
+        let effectiveModuleRole: ModuleRole;
+        let effectiveEnabled: boolean;
         if (!existingSnap.success) {
           // First-time bootstrap snapshot. SECURITY: for OperatorOS-linked
           // orgs we MUST fail closed — the hub is the authority, and we
@@ -385,22 +389,32 @@ router.get("/sso", async (req: Request, res: Response) => {
           // hub catches up. For non-linked orgs we keep the permissive
           // legacy default — those orgs are not driven by OperatorOS
           // entitlement anyway.
-          const memberOrg = await storage.getOrg(mem.orgId);
-          const linkedTenant = Boolean(
-            memberOrg?.operatorosTenantId || memberOrg?.operatorosOrganizationId,
-          );
+          // Derive the initial moduleRole from the OperatorOS payload role
+          // — this is the hub's currently-authoritative signal at SSO time.
+          // For linked tenants this lets the auto-join role survive the
+          // first SSO without being clamped to viewer before push-sync;
+          // push-sync may still narrow this later (and we never re-widen).
+          const payloadOpRole = (payload.user.role ?? "").toLowerCase();
+          const bootstrapModuleRole: ModuleRole =
+            payloadOpRole === "super_admin" || payloadOpRole === "admin" || payloadOpRole === "owner"
+              ? "module_admin"
+              : payloadOpRole === "viewer" || payloadOpRole === "readonly" || payloadOpRole === "read"
+              ? "viewer"
+              : "module_user";
           const fresh = UserEntitlementSnapshotSchema.parse({
             schemaVersion: 1,
             operatorosUserId: payload.user.id,
             tenantRole: null,
-            moduleRole: linkedTenant ? "none" : "module_user",
-            enabled: !linkedTenant,
+            moduleRole: bootstrapModuleRole,
+            enabled: true,
             permissions: [],
             syncedAt: new Date().toISOString(),
           });
           patch.userEntitlementSnapshot = fresh as any;
           patch.moduleRole = fresh.moduleRole;
           patch.enabled = fresh.enabled;
+          effectiveModuleRole = fresh.moduleRole;
+          effectiveEnabled = fresh.enabled;
         } else {
           // Preserve the existing module role / enabled flag from the last
           // push-sync; just refresh `syncedAt` and ensure the OperatorOS
@@ -411,10 +425,35 @@ router.get("/sso", async (req: Request, res: Response) => {
             syncedAt: new Date().toISOString(),
           };
           patch.userEntitlementSnapshot = refreshed as any;
+          effectiveModuleRole = existingSnap.data.moduleRole;
+          effectiveEnabled = existingSnap.data.enabled;
         }
+
+        // SECURITY: Role mirroring at SSO time. We mirror the
+        // entitlement-derived role onto `memberships.role` so downstream
+        // routes that still authorize on local role can't grant stale
+        // high-privilege access after the hub revokes it. Rules:
+        //  - Owners are NEVER demoted by SSO (OperatorOS can't mint or
+        //    revoke owners).
+        //  - A disabled or "none" entitlement clamps the local role to
+        //    "viewer" so the user can be denied without losing membership.
+        //  - Otherwise mirror via mapModuleRoleToMembershipRole.
+        const memberOrgForRole = await storage.getOrg(mem.orgId);
+        if (memberOrgForRole && (memberOrgForRole.operatorosTenantId || memberOrgForRole.operatorosOrganizationId)) {
+          let mirroredRole: "owner" | "admin" | "tech" | "viewer";
+          if (mem.role === "owner") {
+            mirroredRole = "owner";
+          } else if (!effectiveEnabled || effectiveModuleRole === "none") {
+            mirroredRole = "viewer";
+          } else {
+            mirroredRole = mapModuleRoleToMembershipRole(effectiveModuleRole);
+          }
+          if (mirroredRole !== mem.role) {
+            patch.role = mirroredRole;
+          }
+        }
+
         await storage.updateMembershipEntitlements(mem.orgId, user!.id, patch);
-        // Reference the import so it stays type-checked even though we don't
-        // mutate `role` from this path (push-sync owns role mirroring).
         void mapModuleRoleEntitlement;
       }
       // Touch the variable to satisfy linters when we don't use activeOrgId here.

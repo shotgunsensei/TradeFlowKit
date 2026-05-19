@@ -18,6 +18,11 @@ export const FEATURE_KEYS = [
   "team_invites",
   "unlimited_entities",
   "call_recovery",
+  "audit_log",
+  "accounting_export",
+  "customer_portal",
+  "review_requests",
+  "recurring_invoices",
 ] as const;
 export type FeatureKey = (typeof FEATURE_KEYS)[number];
 
@@ -89,6 +94,11 @@ export function deriveDefaultsFromPlanSlug(
           team_invites: true,
           unlimited_entities: true,
           call_recovery: true,
+          audit_log: true,
+          accounting_export: true,
+          customer_portal: true,
+          review_requests: true,
+          recurring_invoices: true,
         },
         limits: { customers: -1, jobs: -1, quotes: -1, invoices: -1, teamMembers: -1 },
       };
@@ -101,6 +111,11 @@ export function deriveDefaultsFromPlanSlug(
           team_invites: true,
           unlimited_entities: true,
           call_recovery: false,
+          audit_log: false,
+          accounting_export: true,
+          customer_portal: true,
+          review_requests: true,
+          recurring_invoices: true,
         },
         limits: { customers: -1, jobs: -1, quotes: -1, invoices: -1, teamMembers: 25 },
       };
@@ -113,6 +128,11 @@ export function deriveDefaultsFromPlanSlug(
           team_invites: false,
           unlimited_entities: true,
           call_recovery: false,
+          audit_log: false,
+          accounting_export: false,
+          customer_portal: true,
+          review_requests: true,
+          recurring_invoices: false,
         },
         limits: { customers: -1, jobs: -1, quotes: -1, invoices: -1, teamMembers: 1 },
       };
@@ -125,6 +145,11 @@ export function deriveDefaultsFromPlanSlug(
           team_invites: false,
           unlimited_entities: false,
           call_recovery: false,
+          audit_log: false,
+          accounting_export: false,
+          customer_portal: false,
+          review_requests: false,
+          recurring_invoices: false,
         },
         limits: { customers: 5, jobs: 5, quotes: 5, invoices: 5, teamMembers: 1 },
       };
@@ -180,13 +205,20 @@ function legacyLimitsFor(plan: string) {
 
 function legacyFeaturesFor(plan: string): Record<FeatureKey, boolean> {
   const isSB = plan === "small_business" || plan === "enterprise";
+  const isEnt = plan === "enterprise";
+  const isPaid = plan !== "free";
   return {
     automations: isSB,
     recurring_jobs: isSB,
     analytics: true,
     team_invites: PLAN_LIMITS[plan]?.canInvite ?? false,
-    unlimited_entities: plan !== "free",
+    unlimited_entities: isPaid,
     call_recovery: false,
+    audit_log: isEnt,
+    accounting_export: isSB,
+    customer_portal: isPaid,
+    review_requests: isPaid,
+    recurring_invoices: isSB,
   };
 }
 

@@ -75,9 +75,10 @@ router.get("/api/audit-log/export.csv", requireAuth, requireOrg, async (req: Req
     const orgId = req.session.orgId!;
     const org = await storage.getOrg(orgId);
     if (!org) return res.status(404).json({ error: "Organization not found" });
-    const { effectivePlanFor: efp } = await import("@shared/entitlements");
-    if (efp(org) !== "enterprise") {
-      return res.status(403).json({ error: "Audit log access is available on the Enterprise plan." });
+    const { resolveRequestAccess } = await import("../middleware");
+    const ctx = await resolveRequestAccess(req);
+    if (!ctx?.access.features.audit_log) {
+      return res.status(403).json({ error: "Audit log access is not enabled for this plan." });
     }
     const entity = req.query.entity ? String(req.query.entity) : undefined;
     const action = req.query.action ? String(req.query.action) : undefined;
@@ -115,9 +116,10 @@ router.get("/api/audit-log", requireAuth, requireOrg, async (req: Request, res: 
     const orgId = req.session.orgId!;
     const org = await storage.getOrg(orgId);
     if (!org) return res.status(404).json({ error: "Organization not found" });
-    const { effectivePlanFor: efp } = await import("@shared/entitlements");
-    if (efp(org) !== "enterprise") {
-      return res.status(403).json({ error: "Audit log access is available on the Enterprise plan." });
+    const { resolveRequestAccess } = await import("../middleware");
+    const ctx = await resolveRequestAccess(req);
+    if (!ctx?.access.features.audit_log) {
+      return res.status(403).json({ error: "Audit log access is not enabled for this plan." });
     }
 
     const limit = Math.min(Math.max(parseInt(String(req.query.limit ?? "50")) || 50, 1), 200);

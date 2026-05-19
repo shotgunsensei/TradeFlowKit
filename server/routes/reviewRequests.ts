@@ -63,9 +63,9 @@ router.post("/api/review-requests", requireAuth, requireOrg, async (req: Request
     const org = await storage.getOrg(orgId);
     if (!org) return res.status(404).send("Org not found");
 
-    const { effectivePlanFor } = await import("@shared/entitlements");
-    const planAllowed = ["individual", "small_business", "enterprise"].includes(effectivePlanFor(org));
-    if (!planAllowed) {
+    const { resolveRequestAccess } = await import("../middleware");
+    const ctx = await resolveRequestAccess(req);
+    if (!ctx?.access.features.review_requests) {
       return res.status(403).send("Your plan does not include review requests");
     }
     if (!org.reviewRequestEnabled || !org.reviewRequestUrl) {
