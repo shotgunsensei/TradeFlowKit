@@ -323,12 +323,27 @@ router.get("/sso", async (req: Request, res: Response) => {
       // contents, including features/limits/accessLevel.
       const { TenantEntitlementSnapshotSchema, deriveDefaultsFromPlanSlug, isLinkedOrg } =
         await import("@shared/entitlements");
-      for (const o of userOrgs) {
-        if (!isLinkedOrg(o)) continue;
+      // SECURITY: bootstrap only the org tied to THIS launch context. The SSO
+      // token's `payload.planSlug` describes the tenant the user is
+      // currently launching from — applying it to every linked org the user
+      // belongs to would leak that plan into unrelated tenants. We resolve
+      // the launch org via the operatorosOrganizationId on the token
+      // (preferred) or fall back to the auto-provisioned/joined org id from
+      // earlier in this request. If neither resolves to a linked org, we
+      // skip bootstrap entirely and wait for push-sync.
+      const launchOrg: typeof userOrgs[number] | undefined = (() => {
+        if (operatorosOrgId) {
+          return userOrgs.find((o) => o.operatorosOrganizationId === operatorosOrgId);
+        }
+        const id = autoProvisionedOrgId ?? autoJoinedOrgId;
+        return id ? userOrgs.find((o) => o.id === id) : undefined;
+      })();
+      if (launchOrg && isLinkedOrg(launchOrg)) {
+        const o = launchOrg;
         const existingTenantSnap = TenantEntitlementSnapshotSchema.safeParse(
           o.entitlementSnapshot,
         );
-        if (existingTenantSnap.success) continue;
+        if (!existingTenantSnap.success) {
         const defaults = deriveDefaultsFromPlanSlug(payload.planSlug);
         const tenantId =
           o.operatorosTenantId ||
@@ -354,6 +369,7 @@ router.get("/sso", async (req: Request, res: Response) => {
             { err: tenantErr instanceof Error ? tenantErr.message : String(tenantErr), orgId: o.id },
             "SSO tenant snapshot bootstrap failed (continuing)",
           );
+        }
         }
       }
 

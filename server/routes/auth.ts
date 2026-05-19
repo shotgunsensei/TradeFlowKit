@@ -135,7 +135,9 @@ router.get("/api/auth/me", requireAuth, async (req: Request, res: Response) => {
         reason: resolved.reason ?? null,
         planSlug: resolved.planSlug,
         subscriptionStatus: resolved.subscriptionStatus,
+        accessLevel: resolved.accessLevel,
         features: resolved.features,
+        limits: resolved.limits,
         effectiveRole: resolved.effectiveRole,
       };
       planLimits = resolved.limits;

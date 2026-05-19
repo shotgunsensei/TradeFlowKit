@@ -344,6 +344,53 @@ describe("/sso route — OperatorOS canonical contract", () => {
     auditSpy.mockRestore();
   });
 
+  it("SECURITY: SSO tenant snapshot bootstrap only writes the launch org, never sibling linked orgs", async () => {
+    // User belongs to TWO linked orgs. They launch from orgA (with planSlug=pro).
+    // orgB (an unrelated linked tenant) must NOT receive a bootstrapped snapshot.
+    const opOrgAId = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString("hex")}`;
+    const opOrgBId = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString("hex")}`;
+    const orgA = await storage.createOrg({
+      name: `Launch Org ${crypto.randomBytes(3).toString("hex")}`,
+      slug: `launch-${crypto.randomBytes(4).toString("hex")}`,
+      operatorosOrganizationId: opOrgAId,
+    } as any);
+    const orgB = await storage.createOrg({
+      name: `Sibling Org ${crypto.randomBytes(3).toString("hex")}`,
+      slug: `sibling-${crypto.randomBytes(4).toString("hex")}`,
+      operatorosOrganizationId: opOrgBId,
+    } as any);
+    trackOrg(orgA.id);
+    trackOrg(orgB.id);
+
+    const email = `multiorg-${crypto.randomBytes(4).toString("hex")}@example.com`;
+    // First launch creates user + auto-joins orgA.
+    (consumeSsoToken as any).mockResolvedValue(
+      consumeOk({ email, organizationId: opOrgAId, role: "admin", planSlug: "starter" })
+    );
+    await request(app).get(`/sso?token=${signToken(validClaims())}`).set("x-test-sid", `sid-mo-1-${Date.now()}`);
+    const user = await storage.getUserByEmail(email);
+    if (user) trackUser(user.id);
+    // Manually add user to orgB so they're a member of both linked orgs.
+    await storage.createMembership(orgB.id, user!.id, "admin");
+
+    // Now launch from orgA with a richer plan; orgB must remain untouched.
+    (consumeSsoToken as any).mockResolvedValue(
+      consumeOk({ email, organizationId: opOrgAId, role: "admin", planSlug: "pro" })
+    );
+    const res = await request(app)
+      .get(`/sso?token=${signToken(validClaims())}`)
+      .set("x-test-sid", `sid-mo-2-${Date.now()}`);
+    expect(res.status).toBe(302);
+
+    const orgAAfter = await storage.getOrg(orgA.id);
+    const orgBAfter = await storage.getOrg(orgB.id);
+    // orgA may now carry a bootstrap snapshot keyed to pro.
+    expect((orgAAfter as any)?.entitlementSnapshot).toBeTruthy();
+    // orgB must NOT have been touched by the launch context of orgA.
+    expect((orgBAfter as any)?.entitlementSnapshot ?? null).toBeNull();
+    expect((orgBAfter as any)?.operatorosPlanSlug ?? null).toBeNull();
+  });
+
   it("redirects to plain /dashboard when there is no organizationId on the consume payload", async () => {
     const email = `plain-${crypto.randomBytes(4).toString("hex")}@example.com`;
     (consumeSsoToken as any).mockResolvedValue(consumeOk({ email }));
