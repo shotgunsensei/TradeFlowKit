@@ -293,6 +293,111 @@ The settings UI degrades to its manual "enter organization id" input.
 
 ---
 
+## Per-feature entitlement overrides (push-sync)
+
+The push-sync endpoint at `POST /api/operatoros/entitlements/sync` lets
+OperatorOS flip **individual** feature bits on a single linked tenant
+without shipping a new plan tier. This is how the hub grants a one-off
+feature to a customer (e.g. enable `call_recovery` for a `pro`-plan
+tenant) or revokes one (e.g. disable `accounting_export` for a `pro`
+tenant pending an investigation).
+
+### Accepted feature keys
+
+The `features` field on the sync body accepts any subset of the canonical
+TradeFlowKit feature keys (`shared/entitlements.ts` → `FEATURE_KEYS`):
+
+| Key | What it gates |
+|-----|---------------|
+| `automations` | SMS follow-ups + reminders |
+| `recurring_jobs` | Recurring job schedules |
+| `analytics` | Business analytics page |
+| `team_invites` | Inviting additional members (also pulls `limits.teamMembers`) |
+| `unlimited_entities` | Removes the per-resource caps in `limits` |
+| `call_recovery` | Call Recovery AI module |
+| `audit_log` | Audit-log read API + UI |
+| `accounting_export` | QuickBooks / Xero CSV export |
+| `customer_portal` | Tokenised customer portal links |
+| `review_requests` | Review-request automations |
+| `recurring_invoices` | Recurring invoice schedules |
+| `stripe_connect` | Tenant-owned Stripe Connect payouts |
+
+Any key not in this list is rejected with `400 invalid_body`. Values must
+be `true` or `false` — `null` is not accepted; **omit** the key instead
+to leave it unchanged.
+
+### Precedence
+
+For a linked tenant, the bit returned by `tenantHasFeature(...)` is the
+first hit from:
+
+1. The most recently pushed `features[<key>]` value on
+   `orgs.entitlementSnapshot`, if explicitly set (`true` or `false`).
+2. The plan-slug default from `deriveDefaultsFromPlanSlug(planSlug)`
+   for any key the snapshot has never set.
+3. `false` (fail-closed) if neither the snapshot nor the plan-slug
+   defaults provide a value.
+
+That means an **override always wins over the plan-slug default** —
+both when granting (`pro` plan denies `call_recovery`, override sets
+`true` → granted) and when revoking (`elite` plan grants
+`accounting_export`, override sets `false` → denied). The hub-level
+`accessLevel` of `none` / `disabled` / `revoked` short-circuits to deny
+regardless of any feature bit.
+
+### Partial-update semantics
+
+The sync endpoint is **partial** at every layer:
+
+- A members-only payload (no `planSlug` / `subscriptionStatus` /
+  `accessLevel` / `features` / `limits`) leaves the tenant snapshot
+  untouched and only bumps `lastEntitlementSyncAt`.
+- A tenant payload that omits a feature key preserves the value already
+  on the snapshot. Pass an explicit `true` / `false` to flip a bit, omit
+  the key to keep it.
+- To return a tenant to its plan-slug defaults for a specific feature,
+  the hub must push that key with the value matching
+  `deriveDefaultsFromPlanSlug(planSlug).features[key]` — there is no
+  "clear override" sentinel.
+
+### Authoritative storage
+
+Snapshots are signed and written atomically by the sync handler; the
+denormalised columns on `orgs` (`operatorosPlanSlug`,
+`operatorosSubscriptionStatus`, `operatorosAccessLevel`) are only used
+as a fallback when no snapshot has been written yet. When the two
+disagree, the snapshot wins.
+
+### Example: grant `call_recovery` to a `pro` tenant
+
+```
+POST /api/operatoros/entitlements/sync
+Authorization: Bearer <OPERATOROS_SERVICE_TOKEN>
+content-type: application/json
+
+{
+  "tenantId": "tnt_abc",
+  "planSlug": "pro",
+  "subscriptionStatus": "active",
+  "features": { "call_recovery": true }
+}
+```
+
+### Example: revoke `accounting_export` from an `elite` tenant
+
+```
+POST /api/operatoros/entitlements/sync
+Authorization: Bearer <OPERATOROS_SERVICE_TOKEN>
+content-type: application/json
+
+{
+  "tenantId": "tnt_xyz",
+  "features": { "accounting_export": false }
+}
+```
+
+---
+
 ## What's intentionally out of scope
 
 - JWKS / RS256 — the contract is shared HS256, rotated by changing

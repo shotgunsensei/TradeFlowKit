@@ -382,6 +382,109 @@ describe("POST /api/operatoros/entitlements/sync", () => {
     expect(res.body.error).toBe("tenant_not_linked");
   });
 
+  it("per-feature override GRANTS a feature the plan-slug default denies", async () => {
+    const { org, user } = await setupOrg("free");
+    trackOrg(org.id);
+    trackUser(user.id);
+    const tenantId = "tnt_ovgrant_" + org.id.slice(0, 6);
+    await storage.updateOrg(org.id, { operatorosTenantId: tenantId } as any);
+
+    // `pro` plan default DENIES call_recovery — verify that baseline first.
+    expect(deriveDefaultsFromPlanSlug("pro").features.call_recovery).toBe(false);
+
+    // Push a sync that flips only call_recovery to true, leaving everything
+    // else to plan defaults.
+    const res = await request(app)
+      .post("/api/operatoros/entitlements/sync")
+      .set("Authorization", "Bearer test-token-secret")
+      .send({
+        tenantId,
+        planSlug: "pro",
+        subscriptionStatus: "active",
+        features: { call_recovery: true },
+      });
+    expect(res.status).toBe(200);
+    expect(res.body.snapshot.features.call_recovery).toBe(true);
+
+    const fresh = await storage.getOrg(org.id);
+    expect(tenantHasFeature(fresh as any, "call_recovery")).toBe(true);
+    // Other plan-default features still resolve correctly through the merge.
+    expect(tenantHasFeature(fresh as any, "automations")).toBe(true);
+    expect(tenantHasFeature(fresh as any, "audit_log")).toBe(false);
+
+    // Same answer through the membership-aware chokepoint.
+    const mem = await storage.getMembership(org.id, user.id);
+    const access = resolveAccess(fresh as any, {
+      ...(mem as any),
+      moduleRole: "module_admin",
+      enabled: true,
+      userEntitlementSnapshot: null,
+    });
+    expect(hasFeature(access, "call_recovery")).toBe(true);
+  });
+
+  it("per-feature override REVOKES a feature the plan-slug default grants", async () => {
+    const { org, user } = await setupOrg("free");
+    trackOrg(org.id);
+    trackUser(user.id);
+    const tenantId = "tnt_ovdeny_" + org.id.slice(0, 6);
+    await storage.updateOrg(org.id, { operatorosTenantId: tenantId } as any);
+
+    // `elite` plan default GRANTS accounting_export — verify baseline.
+    expect(deriveDefaultsFromPlanSlug("elite").features.accounting_export).toBe(true);
+
+    const res = await request(app)
+      .post("/api/operatoros/entitlements/sync")
+      .set("Authorization", "Bearer test-token-secret")
+      .send({
+        tenantId,
+        planSlug: "elite",
+        subscriptionStatus: "active",
+        features: { accounting_export: false },
+      });
+    expect(res.status).toBe(200);
+    expect(res.body.snapshot.features.accounting_export).toBe(false);
+    // Sibling elite-default bits remain intact (revoke did NOT clobber them).
+    expect(res.body.snapshot.features.call_recovery).toBe(true);
+
+    const fresh = await storage.getOrg(org.id);
+    expect(tenantHasFeature(fresh as any, "accounting_export")).toBe(false);
+    expect(tenantHasFeature(fresh as any, "call_recovery")).toBe(true);
+  });
+
+  it("partial sync preserves a prior override across a tenant-fields-only call that omits features", async () => {
+    const { org, user } = await setupOrg("free");
+    trackOrg(org.id);
+    trackUser(user.id);
+    const tenantId = "tnt_ovkeep_" + org.id.slice(0, 6);
+    await storage.updateOrg(org.id, { operatorosTenantId: tenantId } as any);
+
+    // 1) Push an override that flips call_recovery on for a pro tenant.
+    await request(app)
+      .post("/api/operatoros/entitlements/sync")
+      .set("Authorization", "Bearer test-token-secret")
+      .send({
+        tenantId,
+        planSlug: "pro",
+        subscriptionStatus: "active",
+        features: { call_recovery: true },
+      })
+      .expect(200);
+
+    // 2) Now push a follow-up that updates only subscriptionStatus.
+    const res2 = await request(app)
+      .post("/api/operatoros/entitlements/sync")
+      .set("Authorization", "Bearer test-token-secret")
+      .send({ tenantId, subscriptionStatus: "trialing" });
+    expect(res2.status).toBe(200);
+    expect(res2.body.snapshot.subscriptionStatus).toBe("trialing");
+    // Override survives the partial update.
+    expect(res2.body.snapshot.features.call_recovery).toBe(true);
+
+    const fresh = await storage.getOrg(org.id);
+    expect(tenantHasFeature(fresh as any, "call_recovery")).toBe(true);
+  });
+
   it("syncs tenant features + limits and writes snapshot", async () => {
     const { org, user } = await setupOrg("free");
     trackOrg(org.id);
