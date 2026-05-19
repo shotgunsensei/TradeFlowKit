@@ -25,10 +25,19 @@ router.patch("/api/admin/orgs/:id", requireAuth, requireSuperAdmin, async (req: 
   try {
     const { plan, subscriptionStatus, ...otherData } = req.body;
     const updateData: Record<string, unknown> = { ...otherData };
-    if (plan) updateData.plan = plan;
-    if (subscriptionStatus !== undefined) updateData.subscriptionStatus = subscriptionStatus;
 
     const before = await storage.getOrg(req.params.id as string);
+    // OperatorOS-linked orgs may not have their TFK `plan` flipped from the
+    // master-admin panel — OperatorOS is the source of truth. Other fields
+    // (e.g. callRecoveryPlan) remain editable.
+    if (plan && before?.operatorosTenantId) {
+      return res.status(410).json({
+        error: "managed_by_operatoros",
+        message: "Plan changes for OperatorOS-linked organizations must be made in OperatorOS.",
+      });
+    }
+    if (plan) updateData.plan = plan;
+    if (subscriptionStatus !== undefined) updateData.subscriptionStatus = subscriptionStatus;
     const org = await storage.updateOrg(req.params.id as string, updateData);
     if (!org) return res.status(404).send("Organization not found");
     await storage.recordAudit({ orgId: org.id, userId: req.session.userId, action: "update", entity: "organization", entityId: org.id, before, after: org });

@@ -58,12 +58,26 @@ export interface IStorage {
   deleteOrg(id: string): Promise<void>;
   getOrgByStripeCustomerId(stripeCustomerId: string): Promise<Org | undefined>;
   getOrgByOperatorosOrganizationId(operatorosOrganizationId: string): Promise<Org | undefined>;
+  getOrgByOperatorosTenantId(operatorosTenantId: string): Promise<Org | undefined>;
 
   createMembership(orgId: string, userId: string, role: string): Promise<Membership>;
   getMembership(orgId: string, userId: string): Promise<Membership | undefined>;
   getOrgMemberships(orgId: string): Promise<Membership[]>;
   deleteMembership(orgId: string, userId: string): Promise<void>;
   updateMembershipRole(orgId: string, userId: string, role: string): Promise<void>;
+  updateMembershipEntitlements(
+    orgId: string,
+    userId: string,
+    data: {
+      operatorosUserId?: string | null;
+      tenantRole?: string | null;
+      moduleRole?: string | null;
+      enabled?: boolean;
+      userEntitlementSnapshot?: unknown;
+      lastSsoLoginAt?: Date;
+      role?: string;
+    },
+  ): Promise<void>;
 
   createInviteCode(orgId: string, role: string, createdBy: string): Promise<InviteCode>;
   getInviteCodeByCode(code: string): Promise<InviteCode | undefined>;

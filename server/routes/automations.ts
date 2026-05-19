@@ -1,9 +1,7 @@
 import { errMsg } from "../errors";
 import { Router, type Request, type Response } from "express";
 import { storage } from "../storage";
-import { requireAuth, requireOrg } from "../middleware";
-
-const AUTOMATION_PLANS = ["small_business", "enterprise"];
+import { requireAuth, requireOrg, resolveRequestAccess } from "../middleware";
 
 const router = Router();
 
@@ -26,9 +24,13 @@ router.get("/api/automations", requireAuth, requireOrg, async (req: Request, res
 router.post("/api/automations", requireAuth, requireOrg, async (req: Request, res: Response) => {
   try {
     const orgId = req.session.orgId!;
-    const org = await storage.getOrg(orgId);
-    if (!org || !AUTOMATION_PLANS.includes(org.plan)) {
-      return res.status(403).json({ error: "This feature requires the Small Business plan or above." });
+    const ctx = await resolveRequestAccess(req);
+    if (!ctx || !ctx.access.allowed || !ctx.access.features.automations) {
+      return res.status(403).json({
+        error: "This feature requires the Small Business plan or above.",
+        linked: ctx?.access.linked ?? false,
+        reason: ctx?.access.reason,
+      });
     }
 
     const { invoiceReminder, invoiceReminderDays, quoteFollowUp, quoteFollowUpDays } = req.body;

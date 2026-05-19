@@ -75,7 +75,8 @@ router.get("/api/audit-log/export.csv", requireAuth, requireOrg, async (req: Req
     const orgId = req.session.orgId!;
     const org = await storage.getOrg(orgId);
     if (!org) return res.status(404).json({ error: "Organization not found" });
-    if (org.plan !== "enterprise") {
+    const { effectivePlanFor: efp } = await import("@shared/entitlements");
+    if (efp(org) !== "enterprise") {
       return res.status(403).json({ error: "Audit log access is available on the Enterprise plan." });
     }
     const entity = req.query.entity ? String(req.query.entity) : undefined;
@@ -114,7 +115,8 @@ router.get("/api/audit-log", requireAuth, requireOrg, async (req: Request, res: 
     const orgId = req.session.orgId!;
     const org = await storage.getOrg(orgId);
     if (!org) return res.status(404).json({ error: "Organization not found" });
-    if (org.plan !== "enterprise") {
+    const { effectivePlanFor: efp } = await import("@shared/entitlements");
+    if (efp(org) !== "enterprise") {
       return res.status(403).json({ error: "Audit log access is available on the Enterprise plan." });
     }
 

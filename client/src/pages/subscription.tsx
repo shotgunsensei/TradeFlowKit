@@ -199,6 +199,54 @@ export default function SubscriptionPage() {
     );
   }
 
+  const isOperatorOsManaged = Boolean((org as any).operatorosTenantId);
+
+  if (isOperatorOsManaged) {
+    return (
+      <div className="flex flex-col h-full">
+        <PageHeader
+          title="Subscription"
+          description="Managed by OperatorOS"
+        />
+        <div className="flex-1 overflow-auto p-6">
+          <Card data-testid="card-managed-by-operatoros">
+            <CardHeader>
+              <CardTitle className="text-base">Billing managed by OperatorOS</CardTitle>
+              <CardDescription>
+                This organization's plan, payment method, and team seats are administered
+                from OperatorOS. Make changes there and they will sync back automatically.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="secondary" data-testid="badge-current-plan">
+                  <Crown className="h-3 w-3 mr-1" />
+                  {currentPlan ? PLAN_LABELS[currentPlan] || currentPlan : "Managed"}
+                </Badge>
+                {org.subscriptionStatus ? (
+                  <Badge variant="outline" data-testid="badge-managed-status">
+                    {org.subscriptionStatus}
+                  </Badge>
+                ) : null}
+              </div>
+              <Button asChild data-testid="button-open-operatoros-billing">
+                <a
+                  href={(import.meta as any).env?.VITE_OPERATOROS_BASE_URL || "https://operatoros.net"}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <CreditCard className="h-4 w-4 mr-2" />
+                  Manage in OperatorOS
+                  <ExternalLink className="h-3.5 w-3.5 ml-1.5" />
+                </a>
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-full">
       <PageHeader

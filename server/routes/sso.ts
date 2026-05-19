@@ -8,6 +8,10 @@ import { verifySsoToken, type SsoTokenClaims } from "../sso/verifier";
 import { consumeSsoToken, type SsoConsumePayload } from "../sso/consume";
 import { renderSsoErrorPage } from "../sso/errorPage";
 import { logger } from "../logger";
+import {
+  UserEntitlementSnapshotSchema,
+  mapModuleRoleToMembershipRole as mapModuleRoleEntitlement,
+} from "@shared/entitlements";
 
 const router = Router();
 
@@ -301,6 +305,72 @@ router.get("/sso", async (req: Request, res: Response) => {
           }
         }
       }
+    }
+
+    // Refresh per-user entitlement snapshot on every successful SSO launch.
+    // SECURITY INVARIANT: SSO **only** writes the membership-level snapshot
+    // (per-user). It MUST NOT touch the tenant-level snapshot on `orgs` —
+    // that comes from the OperatorOS push-sync endpoint. Otherwise any user
+    // could effectively widen their tenant's entitlements just by signing in.
+    try {
+      const activeOrgId = operatorosOrgId
+        ? userOrgs.find((o) => o.operatorosOrganizationId === operatorosOrgId)?.id
+        : autoProvisionedOrgId ?? autoJoinedOrgId ?? userOrgs[0]?.id;
+      for (const mem of await Promise.all(
+        userOrgs.map((o) => storage.getMembership(o.id, user!.id)),
+      )) {
+        if (!mem) continue;
+        // SECURITY: SSO is allowed to write *linkage metadata* (which
+        // OperatorOS user this membership maps to + last login) and refresh
+        // the timestamp on the existing snapshot, but it MUST NOT
+        // re-enable a previously-disabled user, nor relax `moduleRole` away
+        // from a stricter value (e.g. "none") set by the push-sync. Anything
+        // else would let a logout/login cycle wipe out admin revocations.
+        const existingSnap = UserEntitlementSnapshotSchema.safeParse(mem.userEntitlementSnapshot);
+        const patch: Parameters<typeof storage.updateMembershipEntitlements>[2] = {
+          operatorosUserId: payload.user.id,
+          lastSsoLoginAt: new Date(),
+        };
+        if (!existingSnap.success) {
+          // First-time bootstrap snapshot. Defaults to module_user / enabled
+          // until the next push-sync supplies the real values.
+          const fresh = UserEntitlementSnapshotSchema.parse({
+            schemaVersion: 1,
+            operatorosUserId: payload.user.id,
+            tenantRole: null,
+            moduleRole: "module_user",
+            enabled: true,
+            permissions: [],
+            syncedAt: new Date().toISOString(),
+          });
+          patch.userEntitlementSnapshot = fresh as any;
+          patch.moduleRole = fresh.moduleRole;
+          patch.enabled = true;
+        } else {
+          // Preserve the existing module role / enabled flag from the last
+          // push-sync; just refresh `syncedAt` and ensure the OperatorOS
+          // user id stays in lock-step.
+          const refreshed = {
+            ...existingSnap.data,
+            operatorosUserId: payload.user.id,
+            syncedAt: new Date().toISOString(),
+          };
+          patch.userEntitlementSnapshot = refreshed as any;
+        }
+        await storage.updateMembershipEntitlements(mem.orgId, user!.id, patch);
+        // Reference the import so it stays type-checked even though we don't
+        // mutate `role` from this path (push-sync owns role mirroring).
+        void mapModuleRoleEntitlement;
+      }
+      // Touch the variable to satisfy linters when we don't use activeOrgId here.
+      void activeOrgId;
+    } catch (snapErr) {
+      // Snapshot failures must not break the launch — the user has already
+      // been authenticated locally. Log and continue.
+      reqLog.warn(
+        { err: snapErr instanceof Error ? snapErr.message : String(snapErr), userId: user!.id },
+        "SSO per-user entitlement snapshot write failed (continuing)"
+      );
     }
 
     // All DB work has completed without throwing. Now (and only now) mutate

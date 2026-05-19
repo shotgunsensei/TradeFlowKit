@@ -300,24 +300,33 @@ function OrganizationsTab() {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            <DropdownMenuSub>
-                              <DropdownMenuSubTrigger data-testid={`button-change-plan-${org.id}`}>
-                                Change Plan
-                              </DropdownMenuSubTrigger>
-                              <DropdownMenuSubContent>
-                                {Object.entries(PLAN_LABELS).map(([key, label]) => (
-                                  <DropdownMenuItem
-                                    key={key}
-                                    onClick={() => changePlanMutation.mutate({ id: org.id, plan: key })}
-                                    disabled={org.plan === key}
-                                    data-testid={`button-set-plan-${key}-${org.id}`}
-                                  >
-                                    {label}
-                                    {org.plan === key && " (current)"}
-                                  </DropdownMenuItem>
-                                ))}
-                              </DropdownMenuSubContent>
-                            </DropdownMenuSub>
+                            {(org as any).operatorosTenantId ? (
+                              <DropdownMenuItem
+                                disabled
+                                data-testid={`text-plan-managed-${org.id}`}
+                              >
+                                Plan managed by OperatorOS
+                              </DropdownMenuItem>
+                            ) : (
+                              <DropdownMenuSub>
+                                <DropdownMenuSubTrigger data-testid={`button-change-plan-${org.id}`}>
+                                  Change Plan
+                                </DropdownMenuSubTrigger>
+                                <DropdownMenuSubContent>
+                                  {Object.entries(PLAN_LABELS).map(([key, label]) => (
+                                    <DropdownMenuItem
+                                      key={key}
+                                      onClick={() => changePlanMutation.mutate({ id: org.id, plan: key })}
+                                      disabled={org.plan === key}
+                                      data-testid={`button-set-plan-${key}-${org.id}`}
+                                    >
+                                      {label}
+                                      {org.plan === key && " (current)"}
+                                    </DropdownMenuItem>
+                                  ))}
+                                </DropdownMenuSubContent>
+                              </DropdownMenuSub>
+                            )}
                             <DropdownMenuSub>
                               <DropdownMenuSubTrigger data-testid={`button-change-cr-plan-${org.id}`}>
                                 Change CR Plan

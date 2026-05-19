@@ -48,6 +48,17 @@ router.post("/api/stripe/create-checkout", requireAuth, requireOrg, async (req: 
     const org = await storage.getOrg(req.session.orgId!);
     if (!org) return res.status(404).send("Organization not found");
 
+    // OperatorOS-linked tenants get billing & plan changes through the
+    // OperatorOS hub. Stripe-driven plan upgrades are a strict no-op here:
+    // returning 410 Gone signals to clients that this endpoint is permanently
+    // unavailable for this resource.
+    if (org.operatorosTenantId) {
+      return res.status(410).json({
+        error: "managed_by_operatoros",
+        message: "Billing for this organization is managed by OperatorOS.",
+      });
+    }
+
     const stripe = await getUncachableStripeClient();
 
     let customerId = org.stripeCustomerId;
@@ -89,7 +100,14 @@ router.post("/api/stripe/create-checkout", requireAuth, requireOrg, async (req: 
 router.post("/api/stripe/create-portal", requireAuth, requireOrg, async (req: Request, res: Response) => {
   try {
     const org = await storage.getOrg(req.session.orgId!);
-    if (!org?.stripeCustomerId) return res.status(400).send("No subscription found");
+    if (!org) return res.status(404).send("Organization not found");
+    if (org.operatorosTenantId) {
+      return res.status(410).json({
+        error: "managed_by_operatoros",
+        message: "Billing for this organization is managed by OperatorOS.",
+      });
+    }
+    if (!org.stripeCustomerId) return res.status(400).send("No subscription found");
 
     const stripe = await getUncachableStripeClient();
     const baseUrl = `${req.protocol}://${req.get("host")}`;

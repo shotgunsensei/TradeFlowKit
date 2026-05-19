@@ -10,6 +10,7 @@ const envSchema = z.object({
   OPERATOROS_API_URL: z.string().url().optional(),
   OPERATOROS_SSO_AUDIENCE: z.string().optional(),
   OPERATOROS_SSO_ENV: z.enum(["prod", "staging", "dev"]).optional(),
+  OPERATOROS_SERVICE_TOKEN: z.string().optional(),
   // Legacy aliases (kept for backward compatibility with existing deployments).
   APP_ENV: z.string().optional(),
   MODULE_SLUG: z.string().optional(),

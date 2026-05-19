@@ -1,0 +1,248 @@
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+import express from "express";
+import request from "supertest";
+import { storage } from "../server/storage";
+import { setupOrg, trackOrg, trackUser, cleanupAll } from "./helpers";
+import { pool } from "../server/db";
+import {
+  resolveAccess,
+  deriveDefaultsFromPlanSlug,
+  mapModuleRoleToMembershipRole,
+} from "@shared/entitlements";
+
+describe("resolveAccess — chokepoint", () => {
+  it("legacy org without operatorosTenantId uses PLAN_LIMITS", () => {
+    const a = resolveAccess(
+      { plan: "free", operatorosTenantId: null } as any,
+      { role: "owner", moduleRole: null, enabled: true, userEntitlementSnapshot: null } as any,
+    );
+    expect(a.source).toBe("legacy");
+    expect(a.linked).toBe(false);
+    expect(a.allowed).toBe(true);
+    expect(a.features.automations).toBe(false);
+    expect(a.features.analytics).toBe(true);
+    expect(a.limits.customers).toBe(5);
+  });
+
+  it("legacy small_business org grants automations + recurring", () => {
+    const a = resolveAccess(
+      { plan: "small_business", operatorosTenantId: null } as any,
+      { role: "owner", moduleRole: null, enabled: true, userEntitlementSnapshot: null } as any,
+    );
+    expect(a.features.automations).toBe(true);
+    expect(a.features.recurring_jobs).toBe(true);
+  });
+
+  it("linked org defers to tenant snapshot; user snapshot can only narrow", () => {
+    const org = {
+      plan: "free",
+      operatorosTenantId: "tnt_1",
+      operatorosPlanSlug: "pro",
+      operatorosSubscriptionStatus: "active",
+      operatorosAccessLevel: null,
+      entitlementSnapshot: {
+        schemaVersion: 1,
+        tenantId: "tnt_1",
+        planSlug: "pro",
+        subscriptionStatus: "active",
+        accessLevel: null,
+        features: { automations: true, recurring_jobs: true, analytics: true, team_invites: true, unlimited_entities: true, call_recovery: false },
+        limits: { customers: -1, jobs: -1, quotes: -1, invoices: -1, teamMembers: 25 },
+      },
+    } as any;
+    const mem = {
+      role: "admin",
+      moduleRole: "module_user",
+      enabled: true,
+      userEntitlementSnapshot: {
+        schemaVersion: 1,
+        operatorosUserId: "u1",
+        moduleRole: "module_user",
+        enabled: true,
+        permissions: [],
+      },
+    } as any;
+    const a = resolveAccess(org, mem);
+    expect(a.source).toBe("operatoros");
+    expect(a.linked).toBe(true);
+    expect(a.allowed).toBe(true);
+    expect(a.features.automations).toBe(true);
+    expect(a.limits.teamMembers).toBe(25);
+    expect(a.effectiveRole).toBe("tech"); // module_user clamps to tech
+  });
+
+  it("SECURITY: linked org with empty tenant snapshot does NOT inherit features from user snapshot", () => {
+    const org = {
+      plan: "free",
+      operatorosTenantId: "tnt_2",
+      operatorosPlanSlug: null,
+      operatorosSubscriptionStatus: "active",
+      entitlementSnapshot: null,
+    } as any;
+    const evilMem = {
+      role: "admin",
+      moduleRole: "module_admin",
+      enabled: true,
+      userEntitlementSnapshot: {
+        schemaVersion: 1,
+        operatorosUserId: "u1",
+        moduleRole: "module_admin",
+        enabled: true,
+        permissions: ["*"],
+      },
+    } as any;
+    const a = resolveAccess(org, evilMem);
+    expect(a.linked).toBe(true);
+    // null planSlug falls back to defaults => automations off
+    expect(a.features.automations).toBe(false);
+    expect(a.features.recurring_jobs).toBe(false);
+  });
+
+  it("linked org with inactive subscription denies access", () => {
+    const org = {
+      plan: "free",
+      operatorosTenantId: "tnt_3",
+      operatorosPlanSlug: "pro",
+      operatorosSubscriptionStatus: "canceled",
+      entitlementSnapshot: null,
+    } as any;
+    const mem = { role: "admin", moduleRole: "module_admin", enabled: true, userEntitlementSnapshot: null } as any;
+    const a = resolveAccess(org, mem);
+    expect(a.allowed).toBe(false);
+    expect(a.reason).toBe("tenant_inactive");
+  });
+
+  it("disabled user is denied even on an active tenant", () => {
+    const org = {
+      plan: "free",
+      operatorosTenantId: "tnt_4",
+      operatorosPlanSlug: "pro",
+      operatorosSubscriptionStatus: "active",
+      entitlementSnapshot: null,
+    } as any;
+    const mem = { role: "tech", moduleRole: "module_user", enabled: false, userEntitlementSnapshot: null } as any;
+    const a = resolveAccess(org, mem);
+    expect(a.allowed).toBe(false);
+    expect(a.reason).toBe("user_disabled");
+  });
+
+  it("local 'owner' role is preserved; OperatorOS never demotes owners", () => {
+    const org = { plan: "free", operatorosTenantId: "tnt_5", operatorosPlanSlug: "starter", operatorosSubscriptionStatus: "active", entitlementSnapshot: null } as any;
+    const mem = { role: "owner", moduleRole: "viewer", enabled: true, userEntitlementSnapshot: null } as any;
+    const a = resolveAccess(org, mem);
+    expect(a.effectiveRole).toBe("owner");
+  });
+});
+
+describe("deriveDefaultsFromPlanSlug", () => {
+  it("elite → all features + unlimited", () => {
+    const d = deriveDefaultsFromPlanSlug("elite");
+    expect(d.features.automations).toBe(true);
+    expect(d.features.call_recovery).toBe(true);
+    expect(d.limits.teamMembers).toBe(-1);
+  });
+  it("pro → no call_recovery, capped seats", () => {
+    const d = deriveDefaultsFromPlanSlug("pro");
+    expect(d.features.automations).toBe(true);
+    expect(d.features.call_recovery).toBe(false);
+    expect(d.limits.teamMembers).toBe(25);
+  });
+  it("starter → analytics only", () => {
+    const d = deriveDefaultsFromPlanSlug("starter");
+    expect(d.features.automations).toBe(false);
+    expect(d.features.analytics).toBe(true);
+  });
+  it("unknown/null → free defaults", () => {
+    const d = deriveDefaultsFromPlanSlug(null);
+    expect(d.features.automations).toBe(false);
+    expect(d.limits.customers).toBe(5);
+  });
+});
+
+describe("mapModuleRoleToMembershipRole", () => {
+  it("module_admin → admin", () => {
+    expect(mapModuleRoleToMembershipRole("module_admin")).toBe("admin");
+  });
+  it("viewer → viewer", () => {
+    expect(mapModuleRoleToMembershipRole("viewer")).toBe("viewer");
+  });
+  it("module_user → tech", () => {
+    expect(mapModuleRoleToMembershipRole("module_user")).toBe("tech");
+  });
+  it("unknown → tech (safe default)", () => {
+    expect(mapModuleRoleToMembershipRole("zoozle")).toBe("tech");
+  });
+});
+
+describe("POST /api/operatoros/entitlements/sync", () => {
+  let app: express.Express;
+
+  beforeAll(async () => {
+    process.env.OPERATOROS_SERVICE_TOKEN = "test-token-secret";
+    // Re-import so env zod re-parses
+    vi.resetModules();
+    const entRouter = (await import("../server/routes/entitlements")).default;
+    app = express();
+    app.use(express.json());
+    app.use(entRouter);
+  });
+
+  afterAll(async () => {
+    await cleanupAll();
+    delete process.env.OPERATOROS_SERVICE_TOKEN;
+    await pool.end();
+  });
+
+  it("503 when token not configured", async () => {
+    delete process.env.OPERATOROS_SERVICE_TOKEN;
+    vi.resetModules();
+    const router2 = (await import("../server/routes/entitlements")).default;
+    const a2 = express();
+    a2.use(express.json());
+    a2.use(router2);
+    const res = await request(a2).post("/api/operatoros/entitlements/sync").send({ tenantId: "x" });
+    expect(res.status).toBe(503);
+    process.env.OPERATOROS_SERVICE_TOKEN = "test-token-secret";
+  });
+
+  it("401 on bad token", async () => {
+    const res = await request(app)
+      .post("/api/operatoros/entitlements/sync")
+      .set("Authorization", "Bearer wrong")
+      .send({ tenantId: "x" });
+    expect(res.status).toBe(401);
+  });
+
+  it("404 when tenant is not linked", async () => {
+    const res = await request(app)
+      .post("/api/operatoros/entitlements/sync")
+      .set("Authorization", "Bearer test-token-secret")
+      .send({ tenantId: "no-such-tenant" });
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe("tenant_not_linked");
+  });
+
+  it("syncs tenant features + limits and writes snapshot", async () => {
+    const { org, user } = await setupOrg("free");
+    trackOrg(org.id);
+    trackUser(user.id);
+    const tenantId = "tnt_test_" + org.id.slice(0, 6);
+    await storage.updateOrg(org.id, { operatorosTenantId: tenantId } as any);
+
+    const res = await request(app)
+      .post("/api/operatoros/entitlements/sync")
+      .set("Authorization", "Bearer test-token-secret")
+      .send({
+        tenantId,
+        planSlug: "pro",
+        subscriptionStatus: "active",
+        features: { automations: true, recurring_jobs: true, analytics: true, team_invites: true, unlimited_entities: true, call_recovery: false },
+      });
+    expect(res.status).toBe(200);
+    expect(res.body.snapshot.planSlug).toBe("pro");
+
+    const fresh = await storage.getOrg(org.id);
+    expect((fresh as any).operatorosPlanSlug).toBe("pro");
+    expect((fresh as any).entitlementSnapshot.features.automations).toBe(true);
+  });
+});

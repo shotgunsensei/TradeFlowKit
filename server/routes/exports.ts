@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import { storage } from "../storage";
 import { requireAuth, requireOrg } from "../middleware";
+import { effectivePlanFor } from "@shared/entitlements";
 
 const router = Router();
 
@@ -12,7 +13,7 @@ async function requireExportPlan(req: Request, res: Response): Promise<boolean> 
     res.status(404).json({ error: "Organization not found" });
     return false;
   }
-  if (!EXPORT_PLANS.has(org.plan)) {
+  if (!EXPORT_PLANS.has(effectivePlanFor(org))) {
     res.status(403).json({ error: "Accounting exports are available on Small Business and Enterprise plans." });
     return false;
   }
@@ -219,7 +220,7 @@ router.get("/api/exports/xero/payments.csv", requireAuth, requireOrg, async (req
 router.get("/api/exports/status", requireAuth, requireOrg, async (req: Request, res: Response) => {
   const org = await storage.getOrg(req.session.orgId!);
   res.json({
-    available: org ? EXPORT_PLANS.has(org.plan) : false,
+    available: org ? EXPORT_PLANS.has(effectivePlanFor(org)) : false,
     plan: org?.plan ?? null,
   });
 });

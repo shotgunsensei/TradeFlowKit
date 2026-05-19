@@ -26,6 +26,15 @@ router.get("/api/stripe/connect/authorize", requireAuth, requireOrg, async (req:
     const org = await storage.getOrg(req.session.orgId!);
     if (!org) return res.status(404).json({ error: "Org not found" });
 
+    // Linked OperatorOS tenants pay through the hub — Stripe Connect
+    // onboarding is unavailable for them entirely.
+    if (org.operatorosTenantId) {
+      return res.status(410).json({
+        error: "managed_by_operatoros",
+        message: "Payouts for this organization are managed by OperatorOS.",
+      });
+    }
+
     const plan = org.plan;
     if (plan === "free") {
       return res.status(403).json({ error: "Upgrade to Individual or above to connect Stripe." });

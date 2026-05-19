@@ -141,8 +141,10 @@ router.patch("/api/invoices/:id", requireAuth, requireOrg, async (req: Request, 
     const body = { ...req.body };
 
     if ("recurringInterval" in body && body.recurringInterval) {
+      const { effectivePlanFor } = await import("@shared/entitlements");
       const org = await storage.getOrg(orgId);
-      if (!org || (org.plan !== "small_business" && org.plan !== "enterprise")) {
+      const effPlan = org ? effectivePlanFor(org) : "free";
+      if (!org || (effPlan !== "small_business" && effPlan !== "enterprise")) {
         return res.status(403).json({
           error: "Recurring invoices require the Small Business or Enterprise plan.",
           upgradeRequired: true,

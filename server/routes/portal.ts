@@ -14,8 +14,9 @@ router.get("/api/portal/:token", async (req: Request, res: Response) => {
     const org = await storage.getOrg(customer.orgId);
     if (!org) return res.status(404).send("Not found");
 
+    const { effectivePlanFor } = await import("@shared/entitlements");
     const allowedPlans = ["individual", "small_business", "enterprise"];
-    if (!allowedPlans.includes(org.plan)) {
+    if (!allowedPlans.includes(effectivePlanFor(org))) {
       return res.status(403).json({
         error: "Customer portal is not available on this plan.",
       });
