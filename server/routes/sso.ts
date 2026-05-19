@@ -332,20 +332,32 @@ router.get("/sso", async (req: Request, res: Response) => {
           lastSsoLoginAt: new Date(),
         };
         if (!existingSnap.success) {
-          // First-time bootstrap snapshot. Defaults to module_user / enabled
-          // until the next push-sync supplies the real values.
+          // First-time bootstrap snapshot. SECURITY: for OperatorOS-linked
+          // orgs we MUST fail closed — the hub is the authority, and we
+          // have not yet received a push-sync telling us this user's
+          // module role. Granting `module_user` + enabled here would let
+          // anyone with a valid SSO token reach a linked tenant before
+          // the admin has actually provisioned them. The user can still
+          // see the AccessDenied page (reason: no_module_role) until the
+          // hub catches up. For non-linked orgs we keep the permissive
+          // legacy default — those orgs are not driven by OperatorOS
+          // entitlement anyway.
+          const memberOrg = await storage.getOrg(mem.orgId);
+          const linkedTenant = Boolean(
+            memberOrg?.operatorosTenantId || memberOrg?.operatorosOrganizationId,
+          );
           const fresh = UserEntitlementSnapshotSchema.parse({
             schemaVersion: 1,
             operatorosUserId: payload.user.id,
             tenantRole: null,
-            moduleRole: "module_user",
-            enabled: true,
+            moduleRole: linkedTenant ? "none" : "module_user",
+            enabled: !linkedTenant,
             permissions: [],
             syncedAt: new Date().toISOString(),
           });
           patch.userEntitlementSnapshot = fresh as any;
           patch.moduleRole = fresh.moduleRole;
-          patch.enabled = true;
+          patch.enabled = fresh.enabled;
         } else {
           // Preserve the existing module role / enabled flag from the last
           // push-sync; just refresh `syncedAt` and ensure the OperatorOS

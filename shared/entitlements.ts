@@ -207,11 +207,26 @@ function defaultFeatureMap(): Record<FeatureKey, boolean> {
  *   snapshot supplies role/permissions; both must agree for access.
  * - Non-linked orgs fall back to the legacy `org.plan` + `PLAN_LIMITS` model.
  */
+/**
+ * A tenant is "linked to OperatorOS" if EITHER the canonical tenant id (set
+ * by the push-sync endpoint) OR the legacy `operatorosOrganizationId`
+ * (written by `/sso` on auto-provision) is present. Both signals indicate
+ * the org's entitlement should be driven by the hub rather than local
+ * Stripe/plan state.
+ */
+export function isLinkedOrg(
+  org: Pick<Org, "operatorosTenantId" | "operatorosOrganizationId"> | null | undefined,
+): boolean {
+  if (!org) return false;
+  return Boolean(org.operatorosTenantId || org.operatorosOrganizationId);
+}
+
 export function resolveAccess(
   org: Pick<
     Org,
     | "plan"
     | "operatorosTenantId"
+    | "operatorosOrganizationId"
     | "operatorosPlanSlug"
     | "operatorosSubscriptionStatus"
     | "operatorosAccessLevel"
@@ -233,8 +248,13 @@ export function resolveAccess(
     };
   }
 
-  // Linked path: OperatorOS is authoritative.
-  if (org.operatorosTenantId) {
+  // Linked path: OperatorOS is authoritative. Any of the two OperatorOS
+  // identifiers count — `operatorosTenantId` is what the push-sync writes,
+  // but `operatorosOrganizationId` is what `/sso` auto-provisioning writes
+  // on first contact (the hub itself doesn't yet supply a tenant id at SSO
+  // time). Either presence means "this org's entitlement comes from the
+  // hub, not from local Stripe/plan".
+  if (isLinkedOrg(org)) {
     const tenantSnap = TenantEntitlementSnapshotSchema.safeParse(org.entitlementSnapshot);
     const fallback = deriveDefaultsFromPlanSlug(org.operatorosPlanSlug);
     const features = defaultFeatureMap();
@@ -381,9 +401,9 @@ export function hasFeature(access: ResolvedAccess, feature: FeatureKey): boolean
  * keep their existing `org.plan`.
  */
 export function effectivePlanFor(
-  org: Pick<Org, "plan" | "operatorosTenantId" | "operatorosPlanSlug">,
+  org: Pick<Org, "plan" | "operatorosTenantId" | "operatorosOrganizationId" | "operatorosPlanSlug">,
 ): string {
-  if (!org.operatorosTenantId) return org.plan || "free";
+  if (!isLinkedOrg(org)) return org.plan || "free";
   switch ((org.operatorosPlanSlug ?? "").toLowerCase()) {
     case "elite":
       return "enterprise";

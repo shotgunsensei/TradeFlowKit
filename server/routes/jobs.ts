@@ -30,10 +30,10 @@ function canUseRecurring(plan: string): boolean {
  * `resolveAccess()` derived from the tenant snapshot.
  */
 async function canUseRecurringForOrg(orgId: string): Promise<boolean> {
-  const { resolveAccess } = await import("@shared/entitlements");
+  const { resolveAccess, isLinkedOrg } = await import("@shared/entitlements");
   const org = await storage.getOrg(orgId);
   if (!org) return false;
-  if (org.operatorosTenantId) {
+  if (isLinkedOrg(org)) {
     const access = resolveAccess(org, { role: "owner", moduleRole: "module_admin", enabled: true, userEntitlementSnapshot: null } as any);
     return access.features.recurring_jobs === true;
   }

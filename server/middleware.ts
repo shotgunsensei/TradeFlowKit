@@ -44,8 +44,9 @@ export async function requireOrg(req: Request, res: Response, next: NextFunction
         storage.getOrg(req.session.orgId),
         storage.getMembership(req.session.orgId, req.session.userId),
       ]);
-      if (org?.operatorosTenantId) {
-        const access = resolveAccess(org, membership ?? null);
+      const { isLinkedOrg } = await import("@shared/entitlements");
+      if (isLinkedOrg(org)) {
+        const access = resolveAccess(org!, membership ?? null);
         if (!access.allowed) {
           return res.status(403).json({
             error: "access_denied",

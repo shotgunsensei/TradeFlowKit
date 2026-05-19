@@ -30,7 +30,7 @@ router.patch("/api/admin/orgs/:id", requireAuth, requireSuperAdmin, async (req: 
     // OperatorOS-linked orgs may not have their TFK `plan` flipped from the
     // master-admin panel — OperatorOS is the source of truth. Other fields
     // (e.g. callRecoveryPlan) remain editable.
-    if (plan && before?.operatorosTenantId) {
+    if (plan && (before?.operatorosTenantId || before?.operatorosOrganizationId)) {
       return res.status(410).json({
         error: "managed_by_operatoros",
         message: "Plan changes for OperatorOS-linked organizations must be made in OperatorOS.",

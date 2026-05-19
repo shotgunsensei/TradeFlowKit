@@ -52,7 +52,7 @@ router.post("/api/stripe/create-checkout", requireAuth, requireOrg, async (req: 
     // OperatorOS hub. Stripe-driven plan upgrades are a strict no-op here:
     // returning 410 Gone signals to clients that this endpoint is permanently
     // unavailable for this resource.
-    if (org.operatorosTenantId) {
+    if (org.operatorosTenantId || org.operatorosOrganizationId) {
       return res.status(410).json({
         error: "managed_by_operatoros",
         message: "Billing for this organization is managed by OperatorOS.",
@@ -101,7 +101,7 @@ router.post("/api/stripe/create-portal", requireAuth, requireOrg, async (req: Re
   try {
     const org = await storage.getOrg(req.session.orgId!);
     if (!org) return res.status(404).send("Organization not found");
-    if (org.operatorosTenantId) {
+    if (org.operatorosTenantId || org.operatorosOrganizationId) {
       return res.status(410).json({
         error: "managed_by_operatoros",
         message: "Billing for this organization is managed by OperatorOS.",

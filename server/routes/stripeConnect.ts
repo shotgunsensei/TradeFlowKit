@@ -28,7 +28,8 @@ router.get("/api/stripe/connect/authorize", requireAuth, requireOrg, async (req:
 
     // Linked OperatorOS tenants pay through the hub — Stripe Connect
     // onboarding is unavailable for them entirely.
-    if (org.operatorosTenantId) {
+    const { isLinkedOrg } = await import("@shared/entitlements");
+    if (isLinkedOrg(org)) {
       return res.status(410).json({
         error: "managed_by_operatoros",
         message: "Payouts for this organization are managed by OperatorOS.",

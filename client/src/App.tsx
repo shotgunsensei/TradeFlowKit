@@ -53,7 +53,7 @@ function RouteFallback() {
 }
 
 function AppContent() {
-  const { user, org, isLoading } = useAuth();
+  const { user, org, access, isLoading } = useAuth();
 
   if (isLoading) {
     return (
@@ -87,6 +87,24 @@ function AppContent() {
 
   if (!org) {
     return <OrgSetup />;
+  }
+
+  // OperatorOS access gate: if the active org is OperatorOS-linked AND the
+  // resolver has decided the user is not allowed, force them onto the
+  // AccessDenied page regardless of which route they tried to reach. The
+  // server already 403s their API calls; this prevents a confusing empty UI.
+  if (access && access.linked && !access.allowed) {
+    const reason = access.reason ?? "no_module_role";
+    const here = window.location.pathname + window.location.search;
+    const target = `/access-denied?reason=${encodeURIComponent(reason)}`;
+    if (!here.startsWith("/access-denied")) {
+      window.history.replaceState(null, "", target);
+    }
+    return (
+      <Suspense fallback={<RouteFallback />}>
+        <AccessDeniedPage />
+      </Suspense>
+    );
   }
 
   const sidebarStyle = {
