@@ -367,9 +367,24 @@ export function resolveAccess(
       };
     }
 
+    // SECURITY: Member-level entitlement must be EXPLICIT. We accept the
+    // role only from (a) a Zod-valid `userEntitlementSnapshot` or (b) an
+    // explicit `memberships.moduleRole` column written by the push-sync
+    // path. We do NOT fall back to "module_user" — a missing entitlement
+    // means "the hub has not granted this user access to this module yet"
+    // and must fail closed. Likewise `enabled` must come from an explicit
+    // source; a null/missing snapshot does not silently grant access.
     const userSnap = UserEntitlementSnapshotSchema.safeParse(membership.userEntitlementSnapshot);
-    const moduleRole = (userSnap.success ? userSnap.data.moduleRole : (membership.moduleRole as ModuleRole | null)) ?? "module_user";
-    const enabled = userSnap.success ? userSnap.data.enabled : membership.enabled !== false;
+    const explicitModuleRole: ModuleRole | null = userSnap.success
+      ? userSnap.data.moduleRole
+      : (membership.moduleRole as ModuleRole | null) ?? null;
+    const explicitEnabled: boolean | null = userSnap.success
+      ? userSnap.data.enabled
+      : membership.moduleRole != null
+      ? membership.enabled !== false
+      : null;
+    const moduleRole: ModuleRole = explicitModuleRole ?? "none";
+    const enabled = explicitEnabled === true;
 
     // SECURITY: Tenant must be in a known-live subscription state. Missing
     // / null status is treated as "not yet provisioned" and denied — the
@@ -390,21 +405,11 @@ export function resolveAccess(
       };
     }
 
-    if (!enabled) {
-      return {
-        source: "operatoros",
-        linked: true,
-        allowed: false,
-        reason: "user_disabled",
-        planSlug,
-        subscriptionStatus: subStatus,
-        accessLevel,
-        features,
-        limits,
-        effectiveRole: mapModuleRoleToMembershipRole(moduleRole),
-      };
-    }
-
+    // SECURITY: Check "no module role" BEFORE "user_disabled". A missing or
+    // "none" module entitlement is the more accurate failure reason — and
+    // because our fail-closed path computes enabled=false when no explicit
+    // signal exists, ordering this first prevents a misleading
+    // "user_disabled" reason for users who simply never had a grant.
     if (moduleRole === "none") {
       return {
         source: "operatoros",
@@ -417,6 +422,21 @@ export function resolveAccess(
         features,
         limits,
         effectiveRole: "viewer",
+      };
+    }
+
+    if (!enabled) {
+      return {
+        source: "operatoros",
+        linked: true,
+        allowed: false,
+        reason: "user_disabled",
+        planSlug,
+        subscriptionStatus: subStatus,
+        accessLevel,
+        features,
+        limits,
+        effectiveRole: mapModuleRoleToMembershipRole(moduleRole),
       };
     }
 

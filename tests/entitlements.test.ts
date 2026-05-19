@@ -126,6 +126,53 @@ describe("resolveAccess — chokepoint", () => {
     expect(a.reason).toBe("user_disabled");
   });
 
+  it("SECURITY: linked org + active tenant + null snapshot + null moduleRole → DENIED (fail-closed)", () => {
+    const org = {
+      plan: "free",
+      operatorosTenantId: "tnt_fc1",
+      operatorosPlanSlug: "pro",
+      operatorosSubscriptionStatus: "active",
+      entitlementSnapshot: null,
+    } as any;
+    // membership exists but no explicit module entitlement has been pushed yet
+    const mem = { role: "tech", moduleRole: null, enabled: true, userEntitlementSnapshot: null } as any;
+    const a = resolveAccess(org, mem);
+    expect(a.allowed).toBe(false);
+    expect(a.reason).toBe("no_module_role");
+  });
+
+  it("SECURITY: linked org + active tenant + invalid snapshot + null moduleRole → DENIED", () => {
+    const org = {
+      plan: "free",
+      operatorosTenantId: "tnt_fc2",
+      operatorosPlanSlug: "pro",
+      operatorosSubscriptionStatus: "active",
+      entitlementSnapshot: null,
+    } as any;
+    const mem = {
+      role: "tech",
+      moduleRole: null,
+      enabled: true,
+      userEntitlementSnapshot: { garbage: true },
+    } as any;
+    const a = resolveAccess(org, mem);
+    expect(a.allowed).toBe(false);
+    expect(a.reason).toBe("no_module_role");
+  });
+
+  it("SECURITY: linked org + active tenant + explicit module_user (no snapshot) → ALLOWED", () => {
+    const org = {
+      plan: "free",
+      operatorosTenantId: "tnt_fc3",
+      operatorosPlanSlug: "pro",
+      operatorosSubscriptionStatus: "active",
+      entitlementSnapshot: null,
+    } as any;
+    const mem = { role: "tech", moduleRole: "module_user", enabled: true, userEntitlementSnapshot: null } as any;
+    const a = resolveAccess(org, mem);
+    expect(a.allowed).toBe(true);
+  });
+
   it("local 'owner' role is preserved; OperatorOS never demotes owners", () => {
     const org = { plan: "free", operatorosTenantId: "tnt_5", operatorosPlanSlug: "starter", operatorosSubscriptionStatus: "active", entitlementSnapshot: null } as any;
     const mem = { role: "owner", moduleRole: "viewer", enabled: true, userEntitlementSnapshot: null } as any;
