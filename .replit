@@ -49,3 +49,10 @@ integrations = ["stripe:2.0.0"]
 [postMerge]
 path = "scripts/post-merge.sh"
 timeoutMs = 20000
+
+[userenv]
+
+[userenv.shared]
+OPERATOROS_API_URL = "https://operatoros.net/api"
+OPERATOROS_SSO_AUDIENCE = "tradeflowkit"
+OPERATOROS_SSO_ENV = "prod"
