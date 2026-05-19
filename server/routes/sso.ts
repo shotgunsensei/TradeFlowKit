@@ -373,6 +373,7 @@ router.get("/sso", async (req: Request, res: Response) => {
         }
       }
 
+      const launchMembershipOrgId = launchOrg?.id ?? null;
       for (const mem of await Promise.all(
         userOrgs.map((o) => storage.getMembership(o.id, user!.id)),
       )) {
@@ -388,8 +389,23 @@ router.get("/sso", async (req: Request, res: Response) => {
           operatorosUserId: payload.user.id,
           lastSsoLoginAt: new Date(),
         };
+        // SECURITY: payload.user.role describes the user's role at the
+        // LAUNCH tenant only. Bootstrapping `moduleRole`/`enabled` for
+        // sibling memberships (other linked orgs this user happens to
+        // belong to) from this payload would leak the launch tenant's
+        // role assumption into unrelated tenants. For non-launch
+        // memberships missing a snapshot, we refresh only the linkage
+        // metadata above and skip moduleRole/enabled writes entirely —
+        // the resolver fail-closes on those (no_module_role) until
+        // push-sync fills them in.
+        const isLaunchMembership =
+          launchMembershipOrgId != null && mem.orgId === launchMembershipOrgId;
         let effectiveModuleRole: ModuleRole;
         let effectiveEnabled: boolean;
+        if (!existingSnap.success && !isLaunchMembership) {
+          await storage.updateMembershipEntitlements(mem.orgId, user!.id, patch);
+          continue;
+        }
         if (!existingSnap.success) {
           // First-time bootstrap snapshot. SECURITY: for OperatorOS-linked
           // orgs we MUST fail closed — the hub is the authority, and we

@@ -2,6 +2,32 @@ import { errMsg } from "./errors";
 import { storage } from "./storage";
 import { sendSMS, isTwilioConfigured } from "./twilioClient";
 import { logger as rootLogger } from "./logger";
+import { resolveAccess, isLinkedOrg, type FeatureKey } from "@shared/entitlements";
+import type { Org } from "@shared/schema";
+
+/**
+ * Background workers run without an authenticated user, but tenant-level
+ * feature gates still need to honor OperatorOS as the source of truth for
+ * linked orgs. We pass a fully-allowed synthetic membership purely to read
+ * the tenant's `features` map — `access.allowed` is intentionally ignored
+ * here (this is a tenant check, not a per-user check).
+ *
+ * For non-linked orgs the legacy `org.plan` mapping below kicks in via the
+ * resolver's legacy path, so this single helper works for both worlds.
+ */
+function tenantHasFeature(org: Org, feature: FeatureKey): boolean {
+  if (isLinkedOrg(org)) {
+    const access = resolveAccess(org, {
+      role: "owner",
+      moduleRole: "module_admin",
+      enabled: true,
+      userEntitlementSnapshot: null,
+    });
+    return access.features[feature] === true;
+  }
+  // Non-linked legacy plan check — preserve previous semantics.
+  return org.plan === "small_business" || org.plan === "enterprise";
+}
 
 const log = rootLogger.child({ component: "reminder-worker" });
 
@@ -73,8 +99,7 @@ async function processInvoiceReminders() {
       if (!automation.invoiceReminder) continue;
 
       const org = automation.org;
-      const plan = org.plan;
-      if (plan !== "small_business" && plan !== "enterprise") continue;
+      if (!tenantHasFeature(org, "automations")) continue;
 
       const invoices = await storage.getInvoices(org.id);
       const sentInvoices = invoices.filter(inv => inv.status === "sent" && inv.dueDate);
@@ -134,8 +159,7 @@ async function processQuoteFollowUps() {
       if (!automation.quoteFollowUp) continue;
 
       const org = automation.org;
-      const plan = org.plan;
-      if (plan !== "small_business" && plan !== "enterprise") continue;
+      if (!tenantHasFeature(org, "automations")) continue;
 
       const quotes = await storage.getQuotes(org.id);
       const sentQuotes = quotes.filter(q => q.status === "sent" && q.sentAt);
@@ -189,7 +213,7 @@ async function processRecurringInvoices() {
     for (const template of due) {
       const org = await storage.getOrg(template.orgId);
       if (!org) continue;
-      if (org.plan !== "small_business" && org.plan !== "enterprise") continue;
+      if (!tenantHasFeature(org, "recurring_invoices")) continue;
 
       try {
         const newInv = await storage.generateInvoiceFromTemplate(template.id);

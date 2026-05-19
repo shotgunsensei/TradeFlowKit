@@ -391,6 +391,53 @@ describe("/sso route — OperatorOS canonical contract", () => {
     expect((orgBAfter as any)?.operatorosPlanSlug ?? null).toBeNull();
   });
 
+  it("SECURITY: SSO membership bootstrap does NOT seed moduleRole/enabled for sibling linked orgs", async () => {
+    // User belongs to two linked orgs. Launching from orgA must NOT write
+    // any moduleRole/enabled to the membership in orgB.
+    const opOrgAId = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString("hex")}`;
+    const opOrgBId = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString("hex")}`;
+    const orgA = await storage.createOrg({
+      name: `Mem Launch ${crypto.randomBytes(3).toString("hex")}`,
+      slug: `memlaunch-${crypto.randomBytes(4).toString("hex")}`,
+      operatorosOrganizationId: opOrgAId,
+    } as any);
+    const orgB = await storage.createOrg({
+      name: `Mem Sibling ${crypto.randomBytes(3).toString("hex")}`,
+      slug: `memsibling-${crypto.randomBytes(4).toString("hex")}`,
+      operatorosOrganizationId: opOrgBId,
+    } as any);
+    trackOrg(orgA.id);
+    trackOrg(orgB.id);
+
+    const email = `memiso-${crypto.randomBytes(4).toString("hex")}@example.com`;
+    // First launch into orgA — auto-joins and bootstraps orgA membership.
+    (consumeSsoToken as any).mockResolvedValue(
+      consumeOk({ email, organizationId: opOrgAId, role: "admin" })
+    );
+    await request(app).get(`/sso?token=${signToken(validClaims())}`).set("x-test-sid", `sid-memiso-1-${Date.now()}`);
+    const user = await storage.getUserByEmail(email);
+    if (user) trackUser(user.id);
+
+    // Manually add user to orgB as viewer with no snapshot, no moduleRole.
+    await storage.createMembership(orgB.id, user!.id, "viewer");
+
+    // Launch again from orgA with role=admin.
+    (consumeSsoToken as any).mockResolvedValue(
+      consumeOk({ email, organizationId: opOrgAId, role: "admin" })
+    );
+    await request(app).get(`/sso?token=${signToken(validClaims())}`).set("x-test-sid", `sid-memiso-2-${Date.now()}`);
+
+    const memA = await storage.getMembership(orgA.id, user!.id);
+    const memB = await storage.getMembership(orgB.id, user!.id);
+    // orgA membership was the launch context — moduleRole MUST be set.
+    expect(memA?.moduleRole).toBeTruthy();
+    // orgB membership is a sibling — moduleRole/enabled MUST NOT be set
+    // from orgA's launch payload. role stays "viewer", no snapshot.
+    expect(memB?.role).toBe("viewer");
+    expect(memB?.moduleRole ?? null).toBeNull();
+    expect(memB?.userEntitlementSnapshot ?? null).toBeNull();
+  });
+
   it("redirects to plain /dashboard when there is no organizationId on the consume payload", async () => {
     const email = `plain-${crypto.randomBytes(4).toString("hex")}@example.com`;
     (consumeSsoToken as any).mockResolvedValue(consumeOk({ email }));
