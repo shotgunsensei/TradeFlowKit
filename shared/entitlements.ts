@@ -192,6 +192,8 @@ export interface ResolvedAccess {
   reason?: DenyReason;
   planSlug: string | null;
   subscriptionStatus: string | null;
+  /** OperatorOS-supplied tenant access level (linked orgs only). */
+  accessLevel: string | null;
   features: Record<FeatureKey, boolean>;
   limits: { customers: number; jobs: number; quotes: number; invoices: number; teamMembers: number; canInvite: boolean };
   /** Effective TradeFlowKit role after mapping/clamping. */
@@ -274,6 +276,7 @@ export function resolveAccess(
       reason: "not_a_member",
       planSlug: null,
       subscriptionStatus: null,
+      accessLevel: null,
       features: defaultFeatureMap(),
       limits: { ...PLAN_LIMITS.free },
       effectiveRole: "viewer",
@@ -309,21 +312,29 @@ export function resolveAccess(
       canInvite: features.team_invites,
     };
 
-    const subStatus = org.operatorosSubscriptionStatus ?? null;
-    const planSlug = org.operatorosPlanSlug ?? null;
+    // SECURITY: snapshot is the authority. The denormalized columns on
+    // `orgs` are only used as a fallback when no snapshot has been written
+    // yet (pre-first-sync). When both exist and disagree, the snapshot
+    // wins because it was signed/written atomically by push-sync.
+    const subStatus =
+      (tenantSnap.success ? tenantSnap.data.subscriptionStatus ?? null : null) ??
+      org.operatorosSubscriptionStatus ??
+      null;
+    const planSlug =
+      (tenantSnap.success ? tenantSnap.data.planSlug ?? null : null) ??
+      org.operatorosPlanSlug ??
+      null;
 
     // SECURITY: Tenant-level module-enabled gate. OperatorOS uses
     // `accessLevel` to signal whether the module itself is available to the
     // tenant — values of "none" / "disabled" mean the hub has revoked the
     // entire module from this tenant. Both the persisted column AND the
     // signed snapshot agree on this field; either signal denies access.
-    const accessLevelRaw = (
-      (tenantSnap.success ? tenantSnap.data.accessLevel : null) ??
+    const accessLevel =
+      (tenantSnap.success ? tenantSnap.data.accessLevel ?? null : null) ??
       org.operatorosAccessLevel ??
-      ""
-    )
-      .toString()
-      .toLowerCase();
+      null;
+    const accessLevelRaw = (accessLevel ?? "").toString().toLowerCase();
     const tenantModuleDisabled =
       accessLevelRaw === "none" || accessLevelRaw === "disabled" || accessLevelRaw === "revoked";
     if (tenantModuleDisabled) {
@@ -334,6 +345,7 @@ export function resolveAccess(
         reason: "tenant_inactive",
         planSlug,
         subscriptionStatus: subStatus,
+        accessLevel,
         features,
         limits,
         effectiveRole: "viewer",
@@ -348,6 +360,7 @@ export function resolveAccess(
         reason: "not_a_member",
         planSlug,
         subscriptionStatus: subStatus,
+        accessLevel,
         features,
         limits,
         effectiveRole: "viewer",
@@ -370,6 +383,7 @@ export function resolveAccess(
         reason: "tenant_inactive",
         planSlug,
         subscriptionStatus: subStatus,
+        accessLevel,
         features,
         limits,
         effectiveRole: mapModuleRoleToMembershipRole(moduleRole),
@@ -384,6 +398,7 @@ export function resolveAccess(
         reason: "user_disabled",
         planSlug,
         subscriptionStatus: subStatus,
+        accessLevel,
         features,
         limits,
         effectiveRole: mapModuleRoleToMembershipRole(moduleRole),
@@ -398,6 +413,7 @@ export function resolveAccess(
         reason: "no_module_role",
         planSlug,
         subscriptionStatus: subStatus,
+        accessLevel,
         features,
         limits,
         effectiveRole: "viewer",
@@ -416,6 +432,7 @@ export function resolveAccess(
       allowed: true,
       planSlug,
       subscriptionStatus: subStatus,
+      accessLevel,
       features,
       limits,
       effectiveRole,
@@ -434,6 +451,7 @@ export function resolveAccess(
       reason: "not_a_member",
       planSlug: plan,
       subscriptionStatus: null,
+      accessLevel: null,
       features,
       limits,
       effectiveRole: "viewer",
@@ -445,6 +463,7 @@ export function resolveAccess(
     allowed: true,
     planSlug: plan,
     subscriptionStatus: null,
+    accessLevel: null,
     features,
     limits,
     effectiveRole: (membership.role as ResolvedAccess["effectiveRole"]) || "tech",

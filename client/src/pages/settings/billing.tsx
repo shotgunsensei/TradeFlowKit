@@ -48,10 +48,22 @@ export default function BillingTab() {
   });
 
   const linked = !!access?.linked;
-  const plan = planInfo?.plan || access?.planSlug || org?.plan || "free";
-  const limits = planInfo?.limits || PLAN_LIMITS[plan] || PLAN_LIMITS.free;
+  // SECURITY: for linked orgs the entitlement snapshot is the authority,
+  // so prefer `access.planSlug` over the legacy `org.plan` / `planInfo.plan`
+  // (which still reflect the local Stripe-era plan column).
+  const plan = linked
+    ? (access?.planSlug || planInfo?.plan || org?.plan || "free")
+    : (planInfo?.plan || org?.plan || "free");
+  const limits = (linked ? access?.limits : null) || planInfo?.limits || PLAN_LIMITS[plan] || PLAN_LIMITS.free;
   const counts = planInfo?.counts || { customers: 0, jobs: 0, quotes: 0, invoices: 0, members: 0 };
-  const subStatus = planInfo?.subscriptionStatus ?? access?.subscriptionStatus ?? null;
+  const subStatus = linked
+    ? (access?.subscriptionStatus ?? planInfo?.subscriptionStatus ?? null)
+    : (planInfo?.subscriptionStatus ?? null);
+  const accessLevel = access?.accessLevel ?? null;
+  const enabledFeatures = access?.features
+    ? (Object.keys(access.features) as Array<keyof typeof access.features>).filter((k) => access.features[k])
+    : [];
+  const effectiveRole = access?.effectiveRole ?? null;
 
   const handleManageBilling = async () => {
     setPortalLoading(true);
@@ -95,11 +107,46 @@ export default function BillingTab() {
       <CardContent className="space-y-5">
         {linked && (
           <div
-            className="rounded-md border bg-muted/40 p-3 text-sm text-muted-foreground"
+            className="rounded-md border bg-muted/40 p-3 space-y-3 text-sm"
             data-testid="banner-operatoros-managed"
           >
-            Plan, subscription, and billing for this organization are managed
-            by OperatorOS. Changes made in OperatorOS sync here automatically.
+            <p className="text-muted-foreground">
+              Plan, subscription, and billing for this organization are
+              managed by OperatorOS. Changes made in OperatorOS sync here
+              automatically.
+            </p>
+            <dl className="grid grid-cols-2 gap-x-4 gap-y-2">
+              <dt className="text-muted-foreground">Plan</dt>
+              <dd className="font-medium capitalize" data-testid="text-managed-plan">
+                {plan.replace("_", " ")}
+              </dd>
+              <dt className="text-muted-foreground">Subscription</dt>
+              <dd className="font-medium" data-testid="text-managed-substatus">
+                {subStatus ?? "—"}
+              </dd>
+              <dt className="text-muted-foreground">Access level</dt>
+              <dd className="font-medium capitalize" data-testid="text-managed-access-level">
+                {accessLevel ?? "—"}
+              </dd>
+              <dt className="text-muted-foreground">Your role</dt>
+              <dd className="font-medium capitalize" data-testid="text-managed-role">
+                {effectiveRole ?? "—"}
+              </dd>
+            </dl>
+            <div>
+              <p className="text-muted-foreground mb-1.5">Enabled features</p>
+              <div className="flex flex-wrap gap-1.5" data-testid="list-managed-features">
+                {enabledFeatures.length === 0 ? (
+                  <span className="text-muted-foreground">None</span>
+                ) : (
+                  enabledFeatures.map((f) => (
+                    <Badge key={f} variant="secondary" data-testid={`badge-feature-${f}`}>
+                      {String(f).replace(/_/g, " ")}
+                    </Badge>
+                  ))
+                )}
+              </div>
+            </div>
           </div>
         )}
 

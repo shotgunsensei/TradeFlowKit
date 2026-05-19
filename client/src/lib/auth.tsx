@@ -25,7 +25,16 @@ interface ResolvedAccess {
   reason: string | null;
   planSlug: string | null;
   subscriptionStatus: string | null;
+  accessLevel: string | null;
   features: Record<string, boolean>;
+  limits: {
+    customers: number;
+    jobs: number;
+    quotes: number;
+    invoices: number;
+    teamMembers: number;
+    canInvite: boolean;
+  };
   effectiveRole: string;
 }
 

@@ -99,13 +99,13 @@ async function tenantOnlyAccess(orgId: string) {
   // resolveAccess can return the tenant features/limits — we never use the
   // `allowed` field from this call site. Real per-user checks go through
   // requireFeature / requireOrgRole below.
-  const synthetic = {
-    role: "owner" as const,
+  const synthetic: Parameters<typeof resolveAccess>[1] = {
+    role: "owner",
     moduleRole: "module_admin",
     enabled: true,
     userEntitlementSnapshot: null,
   };
-  return { org, access: resolveAccess(org, synthetic as any) };
+  return { org, access: resolveAccess(org, synthetic) };
 }
 
 export async function checkPlanLimit(

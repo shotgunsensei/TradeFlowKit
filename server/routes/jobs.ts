@@ -34,7 +34,16 @@ async function canUseRecurringForOrg(orgId: string): Promise<boolean> {
   const org = await storage.getOrg(orgId);
   if (!org) return false;
   if (isLinkedOrg(org)) {
-    const access = resolveAccess(org, { role: "owner", moduleRole: "module_admin", enabled: true, userEntitlementSnapshot: null } as any);
+    // Tenant-level feature check — pass a fully-allowed synthetic membership
+    // so we read the tenant features without granting any user privilege
+    // (we only inspect access.features, never access.allowed).
+    const synthetic: Parameters<typeof resolveAccess>[1] = {
+      role: "owner",
+      moduleRole: "module_admin",
+      enabled: true,
+      userEntitlementSnapshot: null,
+    };
+    const access = resolveAccess(org, synthetic);
     return access.features.recurring_jobs === true;
   }
   return canUseRecurring(org.plan);

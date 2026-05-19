@@ -110,7 +110,7 @@ router.post(
       let finalSnap: TenantEntitlementSnapshot | null = null;
       if (hasTenantFields) {
         const existingParsed = TenantEntitlementSnapshotSchema.safeParse(
-          (org as any).entitlementSnapshot,
+          org.entitlementSnapshot,
         );
         const existing = existingParsed.success ? existingParsed.data : null;
 
@@ -119,7 +119,7 @@ router.post(
         // the caller omitted. Subsequent partial calls preserve whatever is
         // already on disk.
         const seedPlanSlug =
-          body.planSlug !== undefined ? body.planSlug : existing?.planSlug ?? (org as any).operatorosPlanSlug ?? null;
+          body.planSlug !== undefined ? body.planSlug : existing?.planSlug ?? org.operatorosPlanSlug ?? null;
         const defaults = deriveDefaultsFromPlanSlug(seedPlanSlug);
 
         const featuresMerged: Record<string, boolean> = {};
@@ -127,7 +127,7 @@ router.post(
           if (body.features && k in body.features) {
             featuresMerged[k] = body.features[k]!;
           } else if (existing?.features && k in existing.features) {
-            featuresMerged[k] = (existing.features as any)[k] ?? false;
+            featuresMerged[k] = (existing.features as Record<string, boolean>)[k] ?? false;
           } else {
             featuresMerged[k] = defaults.features[k] ?? false;
           }
@@ -145,11 +145,11 @@ router.post(
           subscriptionStatus:
             body.subscriptionStatus !== undefined
               ? body.subscriptionStatus
-              : existing?.subscriptionStatus ?? (org as any).operatorosSubscriptionStatus ?? null,
+              : existing?.subscriptionStatus ?? org.operatorosSubscriptionStatus ?? null,
           accessLevel:
             body.accessLevel !== undefined
               ? body.accessLevel
-              : existing?.accessLevel ?? (org as any).operatorosAccessLevel ?? null,
+              : existing?.accessLevel ?? org.operatorosAccessLevel ?? null,
           features: featuresMerged,
           limits: limitsMerged,
           syncedAt,
@@ -165,13 +165,13 @@ router.post(
           orgPatch.operatorosSubscriptionStatus = body.subscriptionStatus;
         }
         if (body.accessLevel !== undefined) orgPatch.operatorosAccessLevel = body.accessLevel;
-        await storage.updateOrg(org.id, orgPatch as any);
+        await storage.updateOrg(org.id, orgPatch as Partial<typeof org>);
       } else {
         // Members-only call: still bump the sync timestamp but leave tenant
         // snapshot + plan columns untouched.
         await storage.updateOrg(org.id, {
           lastEntitlementSyncAt: new Date(syncedAt),
-        } as any);
+        });
       }
 
       let memberUpdates = 0;
@@ -207,7 +207,7 @@ router.post(
             tenantRole: m.tenantRole ?? null,
             moduleRole: userSnap.moduleRole,
             enabled: userSnap.enabled,
-            userEntitlementSnapshot: userSnap as any,
+            userEntitlementSnapshot: userSnap,
             // Owners are not demoted by sync (OperatorOS can't mint owners).
             role: target.role === "owner" ? "owner" : newLocalRole,
           });

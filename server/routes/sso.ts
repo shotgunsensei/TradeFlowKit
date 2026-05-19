@@ -11,7 +11,6 @@ import { logger } from "../logger";
 import {
   UserEntitlementSnapshotSchema,
   mapModuleRoleToMembershipRole,
-  mapModuleRoleToMembershipRole as mapModuleRoleEntitlement,
   type ModuleRole,
 } from "@shared/entitlements";
 
@@ -315,9 +314,6 @@ router.get("/sso", async (req: Request, res: Response) => {
     // that comes from the OperatorOS push-sync endpoint. Otherwise any user
     // could effectively widen their tenant's entitlements just by signing in.
     try {
-      const activeOrgId = operatorosOrgId
-        ? userOrgs.find((o) => o.operatorosOrganizationId === operatorosOrgId)?.id
-        : autoProvisionedOrgId ?? autoJoinedOrgId ?? userOrgs[0]?.id;
       // STEP A: bootstrap a tenant snapshot for each linked org that
       // doesn't already have one. SSO carries `payload.planSlug` (set by
       // the hub at launch time); we derive a minimal tenant snapshot from
@@ -330,28 +326,28 @@ router.get("/sso", async (req: Request, res: Response) => {
       for (const o of userOrgs) {
         if (!isLinkedOrg(o)) continue;
         const existingTenantSnap = TenantEntitlementSnapshotSchema.safeParse(
-          (o as any).entitlementSnapshot,
+          o.entitlementSnapshot,
         );
         if (existingTenantSnap.success) continue;
         const defaults = deriveDefaultsFromPlanSlug(payload.planSlug);
         const tenantId =
-          (o as any).operatorosTenantId ||
-          (o as any).operatorosOrganizationId ||
+          o.operatorosTenantId ||
+          o.operatorosOrganizationId ||
           o.id;
         const bootstrap = TenantEntitlementSnapshotSchema.parse({
           schemaVersion: 1,
           tenantId,
           planSlug: payload.planSlug ?? null,
-          subscriptionStatus: (o as any).operatorosSubscriptionStatus ?? "active",
-          accessLevel: (o as any).operatorosAccessLevel ?? "full",
+          subscriptionStatus: o.operatorosSubscriptionStatus ?? "active",
+          accessLevel: o.operatorosAccessLevel ?? "full",
           features: defaults.features,
           limits: defaults.limits,
           syncedAt: new Date().toISOString(),
         });
         try {
           await storage.updateOrg(o.id, {
-            entitlementSnapshot: bootstrap as any,
-            operatorosPlanSlug: (o as any).operatorosPlanSlug ?? payload.planSlug ?? null,
+            entitlementSnapshot: bootstrap,
+            operatorosPlanSlug: o.operatorosPlanSlug ?? payload.planSlug ?? null,
           });
         } catch (tenantErr) {
           reqLog.warn(
@@ -410,7 +406,7 @@ router.get("/sso", async (req: Request, res: Response) => {
             permissions: [],
             syncedAt: new Date().toISOString(),
           });
-          patch.userEntitlementSnapshot = fresh as any;
+          patch.userEntitlementSnapshot = fresh;
           patch.moduleRole = fresh.moduleRole;
           patch.enabled = fresh.enabled;
           effectiveModuleRole = fresh.moduleRole;
@@ -424,7 +420,7 @@ router.get("/sso", async (req: Request, res: Response) => {
             operatorosUserId: payload.user.id,
             syncedAt: new Date().toISOString(),
           };
-          patch.userEntitlementSnapshot = refreshed as any;
+          patch.userEntitlementSnapshot = refreshed;
           effectiveModuleRole = existingSnap.data.moduleRole;
           effectiveEnabled = existingSnap.data.enabled;
         }
@@ -454,10 +450,7 @@ router.get("/sso", async (req: Request, res: Response) => {
         }
 
         await storage.updateMembershipEntitlements(mem.orgId, user!.id, patch);
-        void mapModuleRoleEntitlement;
       }
-      // Touch the variable to satisfy linters when we don't use activeOrgId here.
-      void activeOrgId;
     } catch (snapErr) {
       // Snapshot failures must not break the launch — the user has already
       // been authenticated locally. Log and continue.
