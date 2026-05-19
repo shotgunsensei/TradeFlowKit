@@ -38,7 +38,7 @@ function UsageBar({ label, used, limit }: { label: string; used: number; limit: 
 }
 
 export default function BillingTab() {
-  const { org } = useAuth();
+  const { org, access } = useAuth();
   const { toast } = useToast();
   const [portalLoading, setPortalLoading] = useState(false);
 
@@ -47,9 +47,11 @@ export default function BillingTab() {
     enabled: !!org,
   });
 
-  const plan = planInfo?.plan || org?.plan || "free";
+  const linked = !!access?.linked;
+  const plan = planInfo?.plan || access?.planSlug || org?.plan || "free";
   const limits = planInfo?.limits || PLAN_LIMITS[plan] || PLAN_LIMITS.free;
   const counts = planInfo?.counts || { customers: 0, jobs: 0, quotes: 0, invoices: 0, members: 0 };
+  const subStatus = planInfo?.subscriptionStatus ?? access?.subscriptionStatus ?? null;
 
   const handleManageBilling = async () => {
     setPortalLoading(true);
@@ -64,6 +66,10 @@ export default function BillingTab() {
     }
   };
 
+  const operatorosUrl =
+    (import.meta.env.VITE_OPERATOROS_BASE_URL as string | undefined) ||
+    "https://operatoros.net";
+
   return (
     <Card data-testid="card-billing">
       <CardHeader>
@@ -73,18 +79,30 @@ export default function BillingTab() {
               <CreditCard className="h-4 w-4" /> Plan &amp; Usage
             </CardTitle>
             <CardDescription>
-              Current plan and usage for this billing period
+              {linked
+                ? "Plan and billing are managed by OperatorOS"
+                : "Current plan and usage for this billing period"}
             </CardDescription>
           </div>
           <Badge variant="outline" className="capitalize" data-testid="badge-plan">
             {plan.replace("_", " ")}
-            {planInfo?.subscriptionStatus && planInfo.subscriptionStatus !== "active" && (
-              <span className="ml-1 text-xs text-orange-600">({planInfo.subscriptionStatus})</span>
+            {subStatus && subStatus !== "active" && (
+              <span className="ml-1 text-xs text-orange-600">({subStatus})</span>
             )}
           </Badge>
         </div>
       </CardHeader>
       <CardContent className="space-y-5">
+        {linked && (
+          <div
+            className="rounded-md border bg-muted/40 p-3 text-sm text-muted-foreground"
+            data-testid="banner-operatoros-managed"
+          >
+            Plan, subscription, and billing for this organization are managed
+            by OperatorOS. Changes made in OperatorOS sync here automatically.
+          </div>
+        )}
+
         <div className="space-y-3" data-testid="usage-list">
           <UsageBar label="Customers" used={counts.customers} limit={limits.customers} />
           <UsageBar label="Jobs" used={counts.jobs} limit={limits.jobs} />
@@ -94,22 +112,37 @@ export default function BillingTab() {
         </div>
 
         <div className="flex flex-wrap gap-2 pt-2 border-t">
-          <a href="/subscription">
-            <Button size="sm" variant="outline" data-testid="button-change-plan">
-              <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
-              Change Plan
-            </Button>
-          </a>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={handleManageBilling}
-            disabled={portalLoading}
-            data-testid="button-manage-billing"
-          >
-            <CreditCard className="h-3.5 w-3.5 mr-1.5" />
-            {portalLoading ? "Opening..." : "Manage Billing"}
-          </Button>
+          {linked ? (
+            <a href={operatorosUrl} target="_blank" rel="noopener noreferrer">
+              <Button
+                size="sm"
+                variant="outline"
+                data-testid="button-manage-billing-operatoros"
+              >
+                <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
+                Manage Billing in OperatorOS
+              </Button>
+            </a>
+          ) : (
+            <>
+              <a href="/subscription">
+                <Button size="sm" variant="outline" data-testid="button-change-plan">
+                  <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
+                  Change Plan
+                </Button>
+              </a>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleManageBilling}
+                disabled={portalLoading}
+                data-testid="button-manage-billing"
+              >
+                <CreditCard className="h-3.5 w-3.5 mr-1.5" />
+                {portalLoading ? "Opening..." : "Manage Billing"}
+              </Button>
+            </>
+          )}
         </div>
       </CardContent>
     </Card>

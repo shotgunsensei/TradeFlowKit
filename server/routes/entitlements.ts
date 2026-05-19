@@ -93,34 +93,86 @@ router.post(
         return res.status(404).json({ error: "tenant_not_linked" });
       }
 
-      const defaults = deriveDefaultsFromPlanSlug(body.planSlug);
-      const features: Record<string, boolean> = {};
-      for (const k of FEATURE_KEYS) {
-        features[k] = body.features?.[k] ?? defaults.features[k] ?? false;
-      }
-      const limits = { ...defaults.limits, ...(body.limits ?? {}) };
+      // PARTIAL-UPDATE CONTRACT: the hub may send members-only payloads to
+      // sync user membership snapshots without re-asserting tenant plan
+      // data. We MUST NOT clobber existing tenant snapshot fields with
+      // defaults when the caller omitted them — that would silently revoke
+      // entitlement on every members-only call. Only mutate tenant fields
+      // that are explicitly present in the request body.
+      const hasTenantFields =
+        body.planSlug !== undefined ||
+        body.subscriptionStatus !== undefined ||
+        body.accessLevel !== undefined ||
+        body.features !== undefined ||
+        body.limits !== undefined;
 
       const syncedAt = new Date().toISOString();
-      const snapshot: TenantEntitlementSnapshot = {
-        schemaVersion: 1,
-        tenantId: body.tenantId,
-        planSlug: body.planSlug ?? null,
-        subscriptionStatus: body.subscriptionStatus ?? null,
-        accessLevel: body.accessLevel ?? null,
-        features,
-        limits,
-        syncedAt,
-      };
-      // Validate the synthesised snapshot conforms before persisting.
-      const finalSnap = TenantEntitlementSnapshotSchema.parse(snapshot);
+      let finalSnap: TenantEntitlementSnapshot | null = null;
+      if (hasTenantFields) {
+        const existingParsed = TenantEntitlementSnapshotSchema.safeParse(
+          (org as any).entitlementSnapshot,
+        );
+        const existing = existingParsed.success ? existingParsed.data : null;
 
-      const updated = await storage.updateOrg(org.id, {
-        operatorosPlanSlug: body.planSlug ?? null,
-        operatorosSubscriptionStatus: body.subscriptionStatus ?? null,
-        operatorosAccessLevel: body.accessLevel ?? null,
-        entitlementSnapshot: finalSnap as any,
-        lastEntitlementSyncAt: new Date(syncedAt),
-      } as any);
+        // Use deriveDefaultsFromPlanSlug ONLY when no existing snapshot is
+        // present (first-ever sync) — to seed reasonable values for fields
+        // the caller omitted. Subsequent partial calls preserve whatever is
+        // already on disk.
+        const seedPlanSlug =
+          body.planSlug !== undefined ? body.planSlug : existing?.planSlug ?? (org as any).operatorosPlanSlug ?? null;
+        const defaults = deriveDefaultsFromPlanSlug(seedPlanSlug);
+
+        const featuresMerged: Record<string, boolean> = {};
+        for (const k of FEATURE_KEYS) {
+          if (body.features && k in body.features) {
+            featuresMerged[k] = body.features[k]!;
+          } else if (existing?.features && k in existing.features) {
+            featuresMerged[k] = (existing.features as any)[k] ?? false;
+          } else {
+            featuresMerged[k] = defaults.features[k] ?? false;
+          }
+        }
+        const limitsMerged = {
+          ...defaults.limits,
+          ...(existing?.limits ?? {}),
+          ...(body.limits ?? {}),
+        };
+
+        const snapshot: TenantEntitlementSnapshot = {
+          schemaVersion: 1,
+          tenantId: body.tenantId,
+          planSlug: seedPlanSlug,
+          subscriptionStatus:
+            body.subscriptionStatus !== undefined
+              ? body.subscriptionStatus
+              : existing?.subscriptionStatus ?? (org as any).operatorosSubscriptionStatus ?? null,
+          accessLevel:
+            body.accessLevel !== undefined
+              ? body.accessLevel
+              : existing?.accessLevel ?? (org as any).operatorosAccessLevel ?? null,
+          features: featuresMerged,
+          limits: limitsMerged,
+          syncedAt,
+        };
+        finalSnap = TenantEntitlementSnapshotSchema.parse(snapshot);
+
+        const orgPatch: Record<string, unknown> = {
+          entitlementSnapshot: finalSnap,
+          lastEntitlementSyncAt: new Date(syncedAt),
+        };
+        if (body.planSlug !== undefined) orgPatch.operatorosPlanSlug = body.planSlug;
+        if (body.subscriptionStatus !== undefined) {
+          orgPatch.operatorosSubscriptionStatus = body.subscriptionStatus;
+        }
+        if (body.accessLevel !== undefined) orgPatch.operatorosAccessLevel = body.accessLevel;
+        await storage.updateOrg(org.id, orgPatch as any);
+      } else {
+        // Members-only call: still bump the sync timestamp but leave tenant
+        // snapshot + plan columns untouched.
+        await storage.updateOrg(org.id, {
+          lastEntitlementSyncAt: new Date(syncedAt),
+        } as any);
+      }
 
       let memberUpdates = 0;
       let memberSkipped = 0;
@@ -184,6 +236,7 @@ router.post(
         memberUpdates,
         memberSkipped,
         snapshot: finalSnap,
+        tenantUpdated: hasTenantFields,
       });
     } catch (err) {
       entitleLog.error({ err: errMsg(err) }, "entitlement sync failed");

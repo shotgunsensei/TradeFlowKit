@@ -326,8 +326,11 @@ export function resolveAccess(
     const moduleRole = (userSnap.success ? userSnap.data.moduleRole : (membership.moduleRole as ModuleRole | null)) ?? "module_user";
     const enabled = userSnap.success ? userSnap.data.enabled : membership.enabled !== false;
 
-    // Tenant must be in a live state.
-    if (subStatus && !ACTIVE_TENANT_STATUSES.has(subStatus.toLowerCase())) {
+    // SECURITY: Tenant must be in a known-live subscription state. Missing
+    // / null status is treated as "not yet provisioned" and denied — the
+    // hub is the authority and silence is not consent. Push-sync (or the
+    // SSO bootstrap path) sets this before any real access is granted.
+    if (!subStatus || !ACTIVE_TENANT_STATUSES.has(subStatus.toLowerCase())) {
       return {
         source: "operatoros",
         linked: true,
