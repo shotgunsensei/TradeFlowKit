@@ -14,6 +14,7 @@ import OrgSetup from "@/pages/org-setup";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CommandPalette } from "@/components/command-palette";
 import { ShortcutsHelpProvider } from "@/components/shortcuts-help";
+import { UpgradeDialog } from "@/components/upgrade-dialog";
 
 const Dashboard = lazy(() => import("@/pages/dashboard"));
 const CustomersPage = lazy(() => import("@/pages/customers"));
@@ -168,6 +169,7 @@ function App() {
         <AuthProvider>
           <AppContent />
         </AuthProvider>
+        <UpgradeDialog />
         <Toaster />
       </TooltipProvider>
     </QueryClientProvider>

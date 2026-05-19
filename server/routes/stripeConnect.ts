@@ -45,7 +45,13 @@ router.get("/api/stripe/connect/authorize", requireAuth, requireOrg, async (req:
     // through the same entitlement surface.
     const ctx = await resolveRequestAccess(req);
     if (!ctx || !hasFeature(ctx.access, "stripe_connect")) {
-      return res.status(403).json({ error: "Upgrade to Individual or above to connect Stripe." });
+      return res.status(403).json({
+        error: "feature_not_in_plan",
+        feature: "stripe_connect",
+        linked: ctx?.access.linked ?? false,
+        planSlug: ctx?.access.planSlug ?? null,
+        message: "Upgrade to Individual or above to connect Stripe.",
+      });
     }
 
     const replitDomains = process.env.REPLIT_DOMAINS;

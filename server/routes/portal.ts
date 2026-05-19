@@ -18,10 +18,14 @@ router.get("/api/portal/:token", async (req: Request, res: Response) => {
     // no membership. Use the tenant-only feature check, which reads strictly
     // from the org's signed snapshot / plan defaults without fabricating
     // any user/membership context.
-    const { tenantHasFeature } = await import("@shared/entitlements");
+    const { tenantHasFeature, isLinkedOrg } = await import("@shared/entitlements");
     if (!tenantHasFeature(org, "customer_portal")) {
       return res.status(403).json({
-        error: "Customer portal is not available on this plan.",
+        error: "feature_not_in_plan",
+        feature: "customer_portal",
+        linked: isLinkedOrg(org),
+        planSlug: org.plan ?? null,
+        message: "Customer portal is not available on this plan.",
       });
     }
 

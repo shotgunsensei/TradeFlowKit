@@ -66,7 +66,13 @@ router.post("/api/review-requests", requireAuth, requireOrg, async (req: Request
 
     const ctx = await resolveRequestAccess(req);
     if (!ctx || !hasFeature(ctx.access, "review_requests")) {
-      return res.status(403).send("Your plan does not include review requests");
+      return res.status(403).json({
+        error: "feature_not_in_plan",
+        feature: "review_requests",
+        linked: ctx?.access.linked ?? false,
+        planSlug: ctx?.access.planSlug ?? null,
+        message: "Your plan does not include review requests.",
+      });
     }
     if (!org.reviewRequestEnabled || !org.reviewRequestUrl) {
       return res.status(400).send("Review requests are not configured for this org");

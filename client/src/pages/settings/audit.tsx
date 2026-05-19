@@ -9,6 +9,17 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ChevronDown, ChevronRight, Download, Lock, ScrollText, Search, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { apiRequest, ApiError } from "@/lib/queryClient";
+
+function isFeatureGateError(err: unknown): boolean {
+  return (
+    err instanceof ApiError &&
+    err.status === 403 &&
+    !!err.data &&
+    typeof err.data === "object" &&
+    (err.data as { error?: string }).error === "feature_not_in_plan"
+  );
+}
 
 interface AuditEntry {
   id: string;
@@ -484,8 +495,7 @@ export default function AuditTab({ plan }: { plan: string }) {
       if (entity !== ALL) exportParams.set("entity", entity);
       if (action !== ALL) exportParams.set("action", action);
       const qs = exportParams.toString();
-      const res = await fetch(`/api/audit-log/export.csv${qs ? `?${qs}` : ""}`, { credentials: "include" });
-      if (!res.ok) throw new Error(await res.text());
+      const res = await apiRequest("GET", `/api/audit-log/export.csv${qs ? `?${qs}` : ""}`);
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
@@ -496,8 +506,11 @@ export default function AuditTab({ plan }: { plan: string }) {
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
-    } catch (err: any) {
-      toast({ title: "Export failed", description: err?.message || "Could not export audit log.", variant: "destructive" });
+    } catch (err) {
+      if (!isFeatureGateError(err)) {
+        const message = err instanceof Error ? err.message : "Could not export audit log.";
+        toast({ title: "Export failed", description: message, variant: "destructive" });
+      }
     } finally {
       setIsExporting(false);
     }
@@ -506,8 +519,7 @@ export default function AuditTab({ plan }: { plan: string }) {
   const { data, isLoading } = useQuery<{ items: AuditEntry[]; total: number }>({
     queryKey: ["/api/audit-log", limit, entity, action, fromDate, toDate],
     queryFn: async () => {
-      const res = await fetch(`/api/audit-log?${params.toString()}`, { credentials: "include" });
-      if (!res.ok) throw new Error(await res.text());
+      const res = await apiRequest("GET", `/api/audit-log?${params.toString()}`);
       return res.json();
     },
     enabled: isEnterprise && !dateRangeInvalid,

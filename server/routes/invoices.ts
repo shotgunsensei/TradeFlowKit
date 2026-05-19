@@ -146,7 +146,11 @@ router.patch("/api/invoices/:id", requireAuth, requireOrg, async (req: Request, 
       const ctx = await resolveRequestAccess(req);
       if (!ctx || !hasFeature(ctx.access, "recurring_invoices")) {
         return res.status(403).json({
-          error: "Recurring invoices are not enabled for this plan.",
+          error: "feature_not_in_plan",
+          feature: "recurring_invoices",
+          linked: ctx?.access.linked ?? false,
+          planSlug: ctx?.access.planSlug ?? null,
+          message: "Recurring invoices are not enabled for this plan.",
           upgradeRequired: true,
         });
       }

@@ -12,7 +12,13 @@ async function requireExportPlan(req: Request, res: Response): Promise<boolean> 
     return false;
   }
   if (!hasFeature(ctx.access, "accounting_export")) {
-    res.status(403).json({ error: "Accounting exports are not enabled for this plan." });
+    res.status(403).json({
+      error: "feature_not_in_plan",
+      feature: "accounting_export",
+      linked: ctx.access.linked,
+      planSlug: ctx.access.planSlug,
+      message: "Accounting exports are not enabled for this plan.",
+    });
     return false;
   }
   return true;

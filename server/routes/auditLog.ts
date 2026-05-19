@@ -78,7 +78,13 @@ router.get("/api/audit-log/export.csv", requireAuth, requireOrg, async (req: Req
     if (!org) return res.status(404).json({ error: "Organization not found" });
     const ctx = await resolveRequestAccess(req);
     if (!ctx || !hasFeature(ctx.access, "audit_log")) {
-      return res.status(403).json({ error: "Audit log access is not enabled for this plan." });
+      return res.status(403).json({
+        error: "feature_not_in_plan",
+        feature: "audit_log",
+        linked: ctx?.access.linked ?? false,
+        planSlug: ctx?.access.planSlug ?? null,
+        message: "Audit log access is not enabled for this plan.",
+      });
     }
     const entity = req.query.entity ? String(req.query.entity) : undefined;
     const action = req.query.action ? String(req.query.action) : undefined;
@@ -118,7 +124,13 @@ router.get("/api/audit-log", requireAuth, requireOrg, async (req: Request, res: 
     if (!org) return res.status(404).json({ error: "Organization not found" });
     const ctx = await resolveRequestAccess(req);
     if (!ctx || !hasFeature(ctx.access, "audit_log")) {
-      return res.status(403).json({ error: "Audit log access is not enabled for this plan." });
+      return res.status(403).json({
+        error: "feature_not_in_plan",
+        feature: "audit_log",
+        linked: ctx?.access.linked ?? false,
+        planSlug: ctx?.access.planSlug ?? null,
+        message: "Audit log access is not enabled for this plan.",
+      });
     }
 
     const limit = Math.min(Math.max(parseInt(String(req.query.limit ?? "50")) || 50, 1), 200);
