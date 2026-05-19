@@ -316,6 +316,49 @@ router.get("/sso", async (req: Request, res: Response) => {
       const activeOrgId = operatorosOrgId
         ? userOrgs.find((o) => o.operatorosOrganizationId === operatorosOrgId)?.id
         : autoProvisionedOrgId ?? autoJoinedOrgId ?? userOrgs[0]?.id;
+      // STEP A: bootstrap a tenant snapshot for each linked org that
+      // doesn't already have one. SSO carries `payload.planSlug` (set by
+      // the hub at launch time); we derive a minimal tenant snapshot from
+      // it so the resolver has something to work with before the first
+      // push-sync arrives. We never *overwrite* an existing snapshot here
+      // — the push-sync endpoint is the authority for full snapshot
+      // contents, including features/limits/accessLevel.
+      const { TenantEntitlementSnapshotSchema, deriveDefaultsFromPlanSlug, isLinkedOrg } =
+        await import("@shared/entitlements");
+      for (const o of userOrgs) {
+        if (!isLinkedOrg(o)) continue;
+        const existingTenantSnap = TenantEntitlementSnapshotSchema.safeParse(
+          (o as any).entitlementSnapshot,
+        );
+        if (existingTenantSnap.success) continue;
+        const defaults = deriveDefaultsFromPlanSlug(payload.planSlug);
+        const tenantId =
+          (o as any).operatorosTenantId ||
+          (o as any).operatorosOrganizationId ||
+          o.id;
+        const bootstrap = TenantEntitlementSnapshotSchema.parse({
+          schemaVersion: 1,
+          tenantId,
+          planSlug: payload.planSlug ?? null,
+          subscriptionStatus: (o as any).operatorosSubscriptionStatus ?? "active",
+          accessLevel: (o as any).operatorosAccessLevel ?? "full",
+          features: defaults.features,
+          limits: defaults.limits,
+          syncedAt: new Date().toISOString(),
+        });
+        try {
+          await storage.updateOrg(o.id, {
+            entitlementSnapshot: bootstrap as any,
+            operatorosPlanSlug: (o as any).operatorosPlanSlug ?? payload.planSlug ?? null,
+          });
+        } catch (tenantErr) {
+          reqLog.warn(
+            { err: tenantErr instanceof Error ? tenantErr.message : String(tenantErr), orgId: o.id },
+            "SSO tenant snapshot bootstrap failed (continuing)",
+          );
+        }
+      }
+
       for (const mem of await Promise.all(
         userOrgs.map((o) => storage.getMembership(o.id, user!.id)),
       )) {

@@ -280,6 +280,34 @@ export function resolveAccess(
     const subStatus = org.operatorosSubscriptionStatus ?? null;
     const planSlug = org.operatorosPlanSlug ?? null;
 
+    // SECURITY: Tenant-level module-enabled gate. OperatorOS uses
+    // `accessLevel` to signal whether the module itself is available to the
+    // tenant — values of "none" / "disabled" mean the hub has revoked the
+    // entire module from this tenant. Both the persisted column AND the
+    // signed snapshot agree on this field; either signal denies access.
+    const accessLevelRaw = (
+      (tenantSnap.success ? tenantSnap.data.accessLevel : null) ??
+      org.operatorosAccessLevel ??
+      ""
+    )
+      .toString()
+      .toLowerCase();
+    const tenantModuleDisabled =
+      accessLevelRaw === "none" || accessLevelRaw === "disabled" || accessLevelRaw === "revoked";
+    if (tenantModuleDisabled) {
+      return {
+        source: "operatoros",
+        linked: true,
+        allowed: false,
+        reason: "tenant_inactive",
+        planSlug,
+        subscriptionStatus: subStatus,
+        features,
+        limits,
+        effectiveRole: "viewer",
+      };
+    }
+
     if (!membership) {
       return {
         source: "operatoros",

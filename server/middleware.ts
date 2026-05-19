@@ -39,25 +39,37 @@ export async function requireOrg(req: Request, res: Response, next: NextFunction
   // strips their access. Non-linked orgs are unaffected because resolveAccess
   // only returns these denial reasons for linked tenants.
   if (req.session.userId) {
+    let org: Awaited<ReturnType<typeof storage.getOrg>> | undefined;
+    let membership: Awaited<ReturnType<typeof storage.getMembership>> | undefined;
+    let lookupFailed = false;
     try {
-      const [org, membership] = await Promise.all([
+      [org, membership] = await Promise.all([
         storage.getOrg(req.session.orgId),
         storage.getMembership(req.session.orgId, req.session.userId),
       ]);
-      const { isLinkedOrg } = await import("@shared/entitlements");
-      if (isLinkedOrg(org)) {
-        const access = resolveAccess(org!, membership ?? null);
-        if (!access.allowed) {
-          return res.status(403).json({
-            error: "access_denied",
-            reason: access.reason,
-            linked: true,
-          });
-        }
-      }
     } catch {
-      // Fail open on storage errors — `requireAuth`/auth.me still provide
-      // protection and downstream gates re-check on access-sensitive routes.
+      lookupFailed = true;
+    }
+    const { isLinkedOrg } = await import("@shared/entitlements");
+    // SECURITY: When the org IS known to be linked, never let a storage hiccup
+    // (or a missing membership lookup) silently allow the request through —
+    // respond 503 so the client retries instead of bypassing entitlement
+    // enforcement. When the org is non-linked OR we couldn't read the org at
+    // all (so we have no signal it's linked), fall through and let
+    // downstream gates handle it. This is the narrowest fail-closed window
+    // we can implement without breaking legacy non-linked flows.
+    if (isLinkedOrg(org)) {
+      if (lookupFailed) {
+        return res.status(503).json({ error: "entitlement_lookup_failed" });
+      }
+      const access = resolveAccess(org!, membership ?? null);
+      if (!access.allowed) {
+        return res.status(403).json({
+          error: "access_denied",
+          reason: access.reason,
+          linked: true,
+        });
+      }
     }
   }
   next();
