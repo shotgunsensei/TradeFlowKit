@@ -23,6 +23,7 @@ export const FEATURE_KEYS = [
   "customer_portal",
   "review_requests",
   "recurring_invoices",
+  "stripe_connect",
 ] as const;
 export type FeatureKey = (typeof FEATURE_KEYS)[number];
 
@@ -99,6 +100,7 @@ export function deriveDefaultsFromPlanSlug(
           customer_portal: true,
           review_requests: true,
           recurring_invoices: true,
+          stripe_connect: true,
         },
         limits: { customers: -1, jobs: -1, quotes: -1, invoices: -1, teamMembers: -1 },
       };
@@ -116,6 +118,7 @@ export function deriveDefaultsFromPlanSlug(
           customer_portal: true,
           review_requests: true,
           recurring_invoices: true,
+          stripe_connect: true,
         },
         limits: { customers: -1, jobs: -1, quotes: -1, invoices: -1, teamMembers: 25 },
       };
@@ -133,6 +136,7 @@ export function deriveDefaultsFromPlanSlug(
           customer_portal: true,
           review_requests: true,
           recurring_invoices: false,
+          stripe_connect: true,
         },
         limits: { customers: -1, jobs: -1, quotes: -1, invoices: -1, teamMembers: 1 },
       };
@@ -150,6 +154,7 @@ export function deriveDefaultsFromPlanSlug(
           customer_portal: false,
           review_requests: false,
           recurring_invoices: false,
+          stripe_connect: false,
         },
         limits: { customers: 5, jobs: 5, quotes: 5, invoices: 5, teamMembers: 1 },
       };
@@ -221,6 +226,7 @@ function legacyFeaturesFor(plan: string): Record<FeatureKey, boolean> {
     customer_portal: isPaid,
     review_requests: isPaid,
     recurring_invoices: isSB,
+    stripe_connect: isPaid,
   };
 }
 
@@ -496,24 +502,44 @@ export function hasFeature(access: ResolvedAccess, feature: FeatureKey): boolean
 }
 
 /**
- * Map an OperatorOS planSlug onto its TradeFlowKit legacy-plan equivalent.
- * Used by feature gates that haven't been migrated to dedicated FEATURE_KEYS
- * yet — for linked orgs the local `org.plan` is meaningless, so callers must
- * use this mapping instead of reading `org.plan` directly. Non-linked orgs
- * keep their existing `org.plan`.
+ * Tenant-only feature check for endpoints that have no membership context
+ * (e.g. public token-based routes like the customer portal). Reads strictly
+ * from the org's signed entitlement snapshot — falling back to the
+ * plan-slug defaults for linked orgs or `legacyFeaturesFor(org.plan)` for
+ * non-linked orgs. Does NOT involve any user/membership state and never
+ * fabricates one; safe to use only for tenant-level gates where every
+ * member of the org gets the same answer.
  */
-export function effectivePlanFor(
-  org: Pick<Org, "plan" | "operatorosTenantId" | "operatorosOrganizationId" | "operatorosPlanSlug">,
-): string {
-  if (!isLinkedOrg(org)) return org.plan || "free";
-  switch ((org.operatorosPlanSlug ?? "").toLowerCase()) {
-    case "elite":
-      return "enterprise";
-    case "pro":
-      return "small_business";
-    case "starter":
-      return "individual";
-    default:
-      return "free";
+export function tenantHasFeature(
+  org: Pick<
+    Org,
+    | "plan"
+    | "operatorosTenantId"
+    | "operatorosOrganizationId"
+    | "operatorosPlanSlug"
+    | "operatorosAccessLevel"
+    | "entitlementSnapshot"
+  > | null | undefined,
+  feature: FeatureKey,
+): boolean {
+  if (!org) return false;
+  if (isLinkedOrg(org)) {
+    // If the hub has revoked the module entirely, no feature is granted.
+    const accessLevelRaw = ((org.operatorosAccessLevel ?? "") + "").toLowerCase();
+    if (accessLevelRaw === "none" || accessLevelRaw === "disabled" || accessLevelRaw === "revoked") {
+      return false;
+    }
+    const tenantSnap = TenantEntitlementSnapshotSchema.safeParse(org.entitlementSnapshot);
+    if (tenantSnap.success) {
+      const snapAccessLevel = (tenantSnap.data.accessLevel ?? "").toString().toLowerCase();
+      if (snapAccessLevel === "none" || snapAccessLevel === "disabled" || snapAccessLevel === "revoked") {
+        return false;
+      }
+      const v = tenantSnap.data.features?.[feature];
+      if (typeof v === "boolean") return v;
+    }
+    return deriveDefaultsFromPlanSlug(org.operatorosPlanSlug).features[feature] === true;
   }
+  return legacyFeaturesFor(org.plan || "free")[feature] === true;
 }
+

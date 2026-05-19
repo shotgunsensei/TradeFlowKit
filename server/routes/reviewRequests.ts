@@ -1,7 +1,8 @@
 import { errMsg } from "../errors";
 import { Router, type Request, type Response } from "express";
 import { storage } from "../storage";
-import { requireAuth, requireOrg } from "../middleware";
+import { requireAuth, requireOrg, resolveRequestAccess } from "../middleware";
+import { hasFeature } from "@shared/entitlements";
 import { sendSMS, getTwilioPhoneNumber } from "../twilioClient";
 
 const router = Router();
@@ -63,9 +64,8 @@ router.post("/api/review-requests", requireAuth, requireOrg, async (req: Request
     const org = await storage.getOrg(orgId);
     if (!org) return res.status(404).send("Org not found");
 
-    const { resolveRequestAccess } = await import("../middleware");
     const ctx = await resolveRequestAccess(req);
-    if (!ctx?.access.features.review_requests) {
+    if (!ctx || !hasFeature(ctx.access, "review_requests")) {
       return res.status(403).send("Your plan does not include review requests");
     }
     if (!org.reviewRequestEnabled || !org.reviewRequestUrl) {

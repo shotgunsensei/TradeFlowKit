@@ -1,7 +1,8 @@
 import { errMsg } from "../errors";
 import { Router, type Request, type Response } from "express";
 import { storage } from "../storage";
-import { requireAuth, requireOrg } from "../middleware";
+import { requireAuth, requireOrg, resolveRequestAccess } from "../middleware";
+import { hasFeature } from "@shared/entitlements";
 import { getUncachableStripeClient } from "../stripeClient";
 import { randomBytes } from "crypto";
 import { logger as rootLogger } from "../logger";
@@ -36,8 +37,14 @@ router.get("/api/stripe/connect/authorize", requireAuth, requireOrg, async (req:
       });
     }
 
-    const plan = org.plan;
-    if (plan === "free") {
+    // Gate via feature flag rather than legacy plan-name comparison. Linked
+    // OperatorOS tenants are already short-circuited above with a 410, so in
+    // practice this branch only fires for non-linked orgs and replaces the
+    // old `plan === "free"` check; the feature key still exists so non-free
+    // legacy plans (and any future non-linked plan tiers) can be toggled
+    // through the same entitlement surface.
+    const ctx = await resolveRequestAccess(req);
+    if (!ctx || !hasFeature(ctx.access, "stripe_connect")) {
       return res.status(403).json({ error: "Upgrade to Individual or above to connect Stripe." });
     }
 

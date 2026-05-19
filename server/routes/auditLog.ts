@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import { storage } from "../storage";
-import { requireAuth, requireOrg } from "../middleware";
+import { requireAuth, requireOrg, resolveRequestAccess } from "../middleware";
+import { hasFeature } from "@shared/entitlements";
 
 const router = Router();
 
@@ -75,9 +76,8 @@ router.get("/api/audit-log/export.csv", requireAuth, requireOrg, async (req: Req
     const orgId = req.session.orgId!;
     const org = await storage.getOrg(orgId);
     if (!org) return res.status(404).json({ error: "Organization not found" });
-    const { resolveRequestAccess } = await import("../middleware");
     const ctx = await resolveRequestAccess(req);
-    if (!ctx?.access.features.audit_log) {
+    if (!ctx || !hasFeature(ctx.access, "audit_log")) {
       return res.status(403).json({ error: "Audit log access is not enabled for this plan." });
     }
     const entity = req.query.entity ? String(req.query.entity) : undefined;
@@ -116,9 +116,8 @@ router.get("/api/audit-log", requireAuth, requireOrg, async (req: Request, res: 
     const orgId = req.session.orgId!;
     const org = await storage.getOrg(orgId);
     if (!org) return res.status(404).json({ error: "Organization not found" });
-    const { resolveRequestAccess } = await import("../middleware");
     const ctx = await resolveRequestAccess(req);
-    if (!ctx?.access.features.audit_log) {
+    if (!ctx || !hasFeature(ctx.access, "audit_log")) {
       return res.status(403).json({ error: "Audit log access is not enabled for this plan." });
     }
 

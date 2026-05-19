@@ -142,8 +142,9 @@ router.patch("/api/invoices/:id", requireAuth, requireOrg, async (req: Request, 
 
     if ("recurringInterval" in body && body.recurringInterval) {
       const { resolveRequestAccess } = await import("../middleware");
+      const { hasFeature } = await import("@shared/entitlements");
       const ctx = await resolveRequestAccess(req);
-      if (!ctx?.access.features.recurring_invoices) {
+      if (!ctx || !hasFeature(ctx.access, "recurring_invoices")) {
         return res.status(403).json({
           error: "Recurring invoices are not enabled for this plan.",
           upgradeRequired: true,

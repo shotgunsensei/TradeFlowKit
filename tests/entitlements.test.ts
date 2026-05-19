@@ -8,6 +8,9 @@ import {
   resolveAccess,
   deriveDefaultsFromPlanSlug,
   mapModuleRoleToMembershipRole,
+  hasFeature,
+  tenantHasFeature,
+  type FeatureKey,
 } from "@shared/entitlements";
 
 describe("resolveAccess — chokepoint", () => {
@@ -178,6 +181,116 @@ describe("resolveAccess — chokepoint", () => {
     const mem = { role: "owner", moduleRole: "viewer", enabled: true, userEntitlementSnapshot: null } as any;
     const a = resolveAccess(org, mem);
     expect(a.effectiveRole).toBe("owner");
+  });
+});
+
+describe("feature gates — linked + non-linked paths", () => {
+  const adminMem = {
+    role: "owner",
+    moduleRole: "module_admin",
+    enabled: true,
+    userEntitlementSnapshot: null,
+  } as any;
+
+  function legacyOrg(plan: string) {
+    return { plan, operatorosTenantId: null, operatorosOrganizationId: null } as any;
+  }
+
+  function linkedOrg(planSlug: string | null, features?: Partial<Record<FeatureKey, boolean>>) {
+    return {
+      plan: "free",
+      operatorosTenantId: "tnt_x",
+      operatorosPlanSlug: planSlug,
+      operatorosSubscriptionStatus: "active",
+      operatorosAccessLevel: null,
+      entitlementSnapshot: features
+        ? {
+            schemaVersion: 1,
+            tenantId: "tnt_x",
+            planSlug,
+            subscriptionStatus: "active",
+            accessLevel: null,
+            features,
+            limits: {},
+          }
+        : null,
+    } as any;
+  }
+
+  const gates: Array<{
+    feature: FeatureKey;
+    legacyAllow: string;
+    legacyDeny: string;
+    linkedAllow: string;
+    linkedDeny: string;
+  }> = [
+    { feature: "recurring_invoices", legacyAllow: "small_business", legacyDeny: "individual", linkedAllow: "pro", linkedDeny: "starter" },
+    { feature: "accounting_export", legacyAllow: "small_business", legacyDeny: "individual", linkedAllow: "pro", linkedDeny: "starter" },
+    { feature: "audit_log", legacyAllow: "enterprise", legacyDeny: "small_business", linkedAllow: "elite", linkedDeny: "pro" },
+    { feature: "review_requests", legacyAllow: "individual", legacyDeny: "free", linkedAllow: "starter", linkedDeny: "free" },
+    { feature: "customer_portal", legacyAllow: "individual", legacyDeny: "free", linkedAllow: "starter", linkedDeny: "free" },
+    { feature: "stripe_connect", legacyAllow: "individual", legacyDeny: "free", linkedAllow: "starter", linkedDeny: "free" },
+  ];
+
+  for (const g of gates) {
+    it(`${g.feature}: legacy ${g.legacyAllow} grants, ${g.legacyDeny} denies`, () => {
+      const allow = resolveAccess(legacyOrg(g.legacyAllow), adminMem);
+      const deny = resolveAccess(legacyOrg(g.legacyDeny), adminMem);
+      expect(hasFeature(allow, g.feature)).toBe(true);
+      expect(hasFeature(deny, g.feature)).toBe(false);
+    });
+
+    it(`${g.feature}: linked ${g.linkedAllow} grants, ${g.linkedDeny} denies (snapshot-driven)`, () => {
+      const allowOrg = linkedOrg(g.linkedAllow, deriveDefaultsFromPlanSlug(g.linkedAllow).features);
+      const denyOrg = linkedOrg(g.linkedDeny, deriveDefaultsFromPlanSlug(g.linkedDeny).features);
+      expect(hasFeature(resolveAccess(allowOrg, adminMem), g.feature)).toBe(true);
+      expect(hasFeature(resolveAccess(denyOrg, adminMem), g.feature)).toBe(false);
+    });
+
+    it(`${g.feature}: linked org without snapshot falls back to plan-slug defaults`, () => {
+      const allowOrg = linkedOrg(g.linkedAllow);
+      const denyOrg = linkedOrg(g.linkedDeny);
+      expect(hasFeature(resolveAccess(allowOrg, adminMem), g.feature)).toBe(
+        deriveDefaultsFromPlanSlug(g.linkedAllow).features[g.feature] === true,
+      );
+      expect(hasFeature(resolveAccess(denyOrg, adminMem), g.feature)).toBe(
+        deriveDefaultsFromPlanSlug(g.linkedDeny).features[g.feature] === true,
+      );
+    });
+  }
+
+  it("tenantHasFeature: legacy non-linked org reads from legacyFeaturesFor", () => {
+    expect(tenantHasFeature(legacyOrg("individual"), "customer_portal")).toBe(true);
+    expect(tenantHasFeature(legacyOrg("free"), "customer_portal")).toBe(false);
+  });
+
+  it("tenantHasFeature: linked org reads from snapshot then plan-slug defaults", () => {
+    const snapOrg = linkedOrg("pro", { customer_portal: true });
+    expect(tenantHasFeature(snapOrg, "customer_portal")).toBe(true);
+
+    const snapOff = linkedOrg("pro", { customer_portal: false });
+    expect(tenantHasFeature(snapOff, "customer_portal")).toBe(false);
+
+    // No snapshot → falls back to plan-slug defaults
+    expect(tenantHasFeature(linkedOrg("starter"), "customer_portal")).toBe(true);
+    expect(tenantHasFeature(linkedOrg(null), "customer_portal")).toBe(false);
+  });
+
+  it("tenantHasFeature: hub-revoked accessLevel denies even if feature bit is set", () => {
+    const revoked = {
+      ...linkedOrg("elite", deriveDefaultsFromPlanSlug("elite").features),
+      operatorosAccessLevel: "revoked",
+    } as any;
+    expect(tenantHasFeature(revoked, "customer_portal")).toBe(false);
+  });
+
+  it("hasFeature is false when access.allowed is false even if the bit is set", () => {
+    const org = linkedOrg("elite", deriveDefaultsFromPlanSlug("elite").features);
+    // tenant_inactive — disabled membership
+    const disabledMem = { role: "tech", moduleRole: "module_user", enabled: false, userEntitlementSnapshot: null } as any;
+    const access = resolveAccess(org, disabledMem);
+    expect(access.allowed).toBe(false);
+    expect(hasFeature(access, "stripe_connect")).toBe(false);
   });
 });
 

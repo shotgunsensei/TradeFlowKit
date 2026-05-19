@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import { storage } from "../storage";
 import { requireAuth, requireOrg, resolveRequestAccess } from "../middleware";
+import { hasFeature } from "@shared/entitlements";
 
 const router = Router();
 
@@ -10,7 +11,7 @@ async function requireExportPlan(req: Request, res: Response): Promise<boolean> 
     res.status(404).json({ error: "Organization not found" });
     return false;
   }
-  if (!ctx.access.features.accounting_export) {
+  if (!hasFeature(ctx.access, "accounting_export")) {
     res.status(403).json({ error: "Accounting exports are not enabled for this plan." });
     return false;
   }
@@ -217,7 +218,7 @@ router.get("/api/exports/xero/payments.csv", requireAuth, requireOrg, async (req
 router.get("/api/exports/status", requireAuth, requireOrg, async (req: Request, res: Response) => {
   const ctx = await resolveRequestAccess(req);
   res.json({
-    available: !!ctx?.access.features.accounting_export,
+    available: ctx ? hasFeature(ctx.access, "accounting_export") : false,
     plan: ctx?.access.planSlug ?? ctx?.org.plan ?? null,
   });
 });
