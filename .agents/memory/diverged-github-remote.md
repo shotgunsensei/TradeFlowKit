@@ -38,3 +38,21 @@ and local can share ancestry is to overwrite the remote from local.
 **How to apply:** don't keep proposing tasks to "merge origin/main" — it will
 re-flatten every time. Confirm local is a superset, then hand the force-push to
 the user via the Shell (the agent and task agents both cannot do it).
+
+## Gotcha: pushing `.github/workflows/*` fails without `workflow` scope
+
+If the pushed history adds/changes any file under `.github/workflows/`, GitHub
+rejects with: "refusing to allow an OAuth App to create or update workflow
+`.github/workflows/<f>.yml` without `workflow` scope." The **Replit↔GitHub OAuth
+connection does NOT carry the `workflow` scope, and disconnect+reconnect on
+Replit does not add it** (re-authorizes with the same scopes). So the fix is NOT
+reconnecting.
+
+Working fixes (user runs in the Shell — agent is git-blocked):
+- **Keep the workflow file:** push with a GitHub **Personal Access Token** that
+  has `repo` + `workflow` scopes (classic token). e.g.
+  `git push --force-with-lease https://<TOKEN>@github.com/<owner>/<repo>.git main`.
+  Never let the token touch chat/commits.
+- **Drop CI instead:** remove `.github/workflows/*` from the pushed history, then
+  the existing OAuth connection can push. (History rewrite; defeats the purpose
+  if the workflow was added intentionally.)
