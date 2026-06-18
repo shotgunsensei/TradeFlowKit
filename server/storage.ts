@@ -246,7 +246,6 @@ export interface IStorage {
   }): Promise<void>;
   getAuditLog(orgId: string, opts: { limit: number; offset: number; entity?: string; action?: string; userId?: string; from?: Date; to?: Date }): Promise<{ items: (AuditLogEntry & { userName: string | null; userUsername: string | null })[]; total: number }>;
   getAuditLogForExport(orgId: string, opts: { entity?: string; action?: string; userId?: string; from?: Date; to?: Date }): Promise<(AuditLogEntry & { userName: string | null; userUsername: string | null })[]>;
-<<<<<<< Updated upstream
 
   getLeads(orgId: string, filters?: LeadFilters): Promise<Lead[]>;
   getLead(orgId: string, id: string): Promise<Lead | undefined>;
@@ -269,8 +268,6 @@ export interface IStorage {
   getLeadFollowupTasks(orgId: string, leadId: string): Promise<LeadFollowupTask[]>;
   getDueLeadFollowupTasks(now: Date, limit?: number): Promise<LeadFollowupTask[]>;
   updateLeadFollowupTask(orgId: string, id: string, data: Partial<LeadFollowupTask>): Promise<LeadFollowupTask | undefined>;
-=======
->>>>>>> Stashed changes
 }
 
 export const storage: IStorage = {
