@@ -352,7 +352,7 @@ export default function AuthPage() {
         <div className="max-w-6xl mx-auto px-4 sm:px-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-12 items-center">
             <div>
-              <div className="text-red-600 dark:text-red-500 text-xs font-bold uppercase tracking-widest mb-3">The Problem</div>
+              <div className="text-orange-600 dark:text-orange-500 text-xs font-bold uppercase tracking-widest mb-3">The Problem</div>
               <h2 className="text-3xl font-bold mb-5">Running a trade business shouldn't require 3 different apps and a spreadsheet</h2>
               <ul className="space-y-3 text-gray-600 dark:text-gray-400 text-sm">
                 {[
@@ -364,7 +364,7 @@ export default function AuthPage() {
                   "Tax time is a paperwork nightmare",
                 ].map((item) => (
                   <li key={item} className="flex items-start gap-2">
-                    <span className="text-red-600 dark:text-red-500 mt-0.5">✕</span>
+                    <span className="text-orange-600 dark:text-orange-500 mt-0.5">✕</span>
                     {item}
                   </li>
                 ))}
