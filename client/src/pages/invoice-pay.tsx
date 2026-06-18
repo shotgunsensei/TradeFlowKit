@@ -64,7 +64,7 @@ export default function InvoicePayPage() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-muted/30 flex items-center justify-center p-4">
+      <div className="min-h-screen bg-muted/30 dark:bg-background flex items-center justify-center p-4">
         <div className="w-full max-w-md space-y-4">
           <Skeleton className="h-8 w-48 mx-auto" />
           <Skeleton className="h-64 w-full" />
@@ -75,7 +75,7 @@ export default function InvoicePayPage() {
 
   if (!invoice) {
     return (
-      <div className="min-h-screen bg-muted/30 flex items-center justify-center p-4">
+      <div className="min-h-screen bg-muted/30 dark:bg-background flex items-center justify-center p-4">
         <Card className="w-full max-w-md">
           <CardContent className="pt-6 text-center">
             <p className="text-muted-foreground">Invoice not found.</p>
@@ -87,7 +87,7 @@ export default function InvoicePayPage() {
 
   if (paidSuccess || isPaid) {
     return (
-      <div className="min-h-screen bg-muted/30 flex items-center justify-center p-4">
+      <div className="min-h-screen bg-muted/30 dark:bg-background flex items-center justify-center p-4">
         <Card className="w-full max-w-md">
           <CardContent className="pt-10 pb-10 text-center space-y-4">
             <div className="flex justify-center">
@@ -110,7 +110,7 @@ export default function InvoicePayPage() {
   }
 
   return (
-    <div className="min-h-screen bg-muted/30 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-muted/30 dark:bg-background flex items-center justify-center p-4">
       <div className="w-full max-w-md space-y-4">
         <div className="text-center space-y-1">
           {org?.logoUrl && (

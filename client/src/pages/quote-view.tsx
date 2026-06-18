@@ -97,7 +97,7 @@ export default function QuoteView() {
         </div>
 
         {/* Document */}
-        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border p-8 space-y-8 print:shadow-none print:border-0 print:rounded-none" data-testid="quote-document">
+        <div className="bg-white dark:bg-card rounded-xl shadow-sm border p-8 space-y-8 print:shadow-none print:border-0 print:rounded-none" data-testid="quote-document">
           {/* Header */}
           <div className="flex justify-between items-start gap-6">
             <div>
