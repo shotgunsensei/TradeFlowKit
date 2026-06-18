@@ -283,6 +283,21 @@ async function main() {
       estimatedValue: "2100",
       lastContactedAt: daysFromNow(-2),
     },
+    {
+      key: "lost-garage-door",
+      name: "Casey Morgan",
+      phone: "555-414-0107",
+      email: "casey.demo@example.com",
+      address: "410 Bay St",
+      source: "manual",
+      sourceDetail: "Demo Closed Lead",
+      status: "lost",
+      serviceType: "Garage door repair",
+      description: "Demo lead closed as lost after the customer chose another provider.",
+      urgency: "low",
+      estimatedValue: "350",
+      lastContactedAt: daysFromNow(-5),
+    },
   ];
 
   const created = [];

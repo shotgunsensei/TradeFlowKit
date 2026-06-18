@@ -101,6 +101,28 @@ npm test
 
 If `DATABASE_URL` is not set, the existing DB-backed suites fail at import time with `DATABASE_URL must be set`. That is an environment readiness failure, not a Lead Conversion Center code failure.
 
+## Run browser smoke coverage
+
+The repo already uses Playwright under `e2e/`. Start the app with a configured database, then run:
+
+```bash
+npm run test:e2e -- e2e/leads-smoke.spec.ts
+```
+
+The smoke test covers:
+
+- Dashboard Lead Conversion widget
+- Navigation to `/leads`
+- New Lead dialog
+- Manual lead creation
+- Lead detail rendering
+- Score/SLA/pipeline visibility
+- Re-score action
+- Dry-run SMS and email actions
+- Conversion into linked customer/job workflow
+
+The smoke test skips when `DATABASE_URL` is not set. Playwright is configured to capture screenshots on failure under the existing Playwright output directory. The lead smoke spec also writes successful evidence screenshots to `test-results` through `testInfo.outputPath`; these are generated artifacts and should not be committed unless the repo intentionally starts storing snapshots.
+
 ## Manual smoke test for `/leads`
 
 1. Log in.
