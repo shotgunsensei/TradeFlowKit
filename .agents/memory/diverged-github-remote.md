@@ -56,3 +56,21 @@ Working fixes (user runs in the Shell — agent is git-blocked):
 - **Drop CI instead:** remove `.github/workflows/*` from the pushed history, then
   the existing OAuth connection can push. (History rewrite; defeats the purpose
   if the workflow was added intentionally.)
+
+## Gotcha: pulling a botched external merge = "kept both sides" duplicates
+
+When work is merged on GitHub (outside the Replit env) against this platform
+branch and the conflicts are resolved by *accepting both sides*, a later
+fast-forward `git pull` into the workspace brings in code that compiles-broken:
+duplicate import identifiers (TS2300) and `IStorage` method declarations silently
+dropped while the `storage/*` module implementations remain (so calls fail TS2339
+"does not exist on type IStorage" even though `...xStorage` is spread into the
+`storage` object and casts `as IStorage`).
+
+**How to apply:** after such a pull, run `npm run check` and fix mechanically:
+(1) de-duplicate the doubled import blocks; (2) for every "does not exist on type
+IStorage", re-add the missing method signature to the `IStorage` interface in
+`server/storage.ts`, copying the real signature from the `server/storage/<mod>.ts`
+implementation (convert default params like `= {}`/`= 50` to optional `?`). The
+implementations are intact; only the interface contract is lost. Verify with
+`npm run check` + `npm run test` + a workflow restart.

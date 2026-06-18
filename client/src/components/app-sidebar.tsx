@@ -28,7 +28,6 @@ import {
   BarChart3,
   Trash2,
   UserPlus,
-  UserPlus,
 } from "lucide-react";
 import { useLocation, Link } from "wouter";
 import { useAuth } from "@/lib/auth";

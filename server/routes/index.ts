@@ -29,7 +29,6 @@ import operatorosRouter from "./operatoros";
 import entitlementsRouter from "./entitlements";
 import trashRouter from "./trash";
 import leadsRouter from "./leads";
-import leadsRouter from "./leads";
 
 declare module "express-session" {
   interface SessionData {
@@ -93,6 +92,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.use(exportsRouter);
   app.use(auditLogRouter);
   app.use(operatorosRouter);
+  app.use(entitlementsRouter);
+  app.use(trashRouter);
+  app.use(leadsRouter);
 
   return httpServer;
 }
