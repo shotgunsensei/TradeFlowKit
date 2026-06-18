@@ -20,6 +20,7 @@ import {
   BarChart3,
   PhoneMissed,
   User,
+  UserPlus,
   Briefcase,
 } from "lucide-react";
 import { useHotkey } from "@/hooks/use-hotkey";
@@ -33,6 +34,7 @@ type SearchResults = {
 
 const NAV_ITEMS = [
   { label: "Dashboard", path: "/dashboard", icon: LayoutDashboard },
+  { label: "Leads", path: "/leads", icon: UserPlus, description: "Lead Conversion Center" },
   { label: "Customers", path: "/customers", icon: Users },
   { label: "Jobs", path: "/jobs", icon: Wrench },
   { label: "Quotes", path: "/quotes", icon: FileText },
@@ -203,7 +205,12 @@ export function CommandPalette() {
                 data-testid={`palette-nav-${item.label.toLowerCase().replace(/\s+/g, "-")}`}
               >
                 <Icon className="h-4 w-4" />
-                <span>{item.label}</span>
+                <div className="flex flex-col">
+                  <span>{item.label}</span>
+                  {item.description && (
+                    <span className="text-xs text-muted-foreground">{item.description}</span>
+                  )}
+                </div>
               </CommandItem>
             );
           })}

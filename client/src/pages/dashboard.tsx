@@ -27,11 +27,12 @@ import {
   CheckCircle2,
   ChevronRight,
   Star,
+  UserPlus,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { parseSsoNotice, stripSsoFromUrl } from "@/lib/sso-notice";
 import { Link } from "wouter";
-import { format } from "date-fns";
+import { format, isThisMonth } from "date-fns";
 
 interface TodayJob {
   id: string;
@@ -83,6 +84,20 @@ interface DashboardStats {
     status: string;
   }[];
   isEmpty: boolean;
+}
+
+interface LeadStats {
+  newLeads: number;
+  hotLeads: number;
+  needsFollowUp: number;
+  converted: number;
+  totalOpen: number;
+}
+
+interface DashboardLead {
+  id: string;
+  convertedAt: string | Date | null;
+  status: string;
 }
 
 function fmt(n: number) {
@@ -201,6 +216,20 @@ export default function Dashboard() {
     enabled: !!org,
   });
 
+  const { data: leadStats, isLoading: leadStatsLoading, error: leadStatsError } = useQuery<LeadStats>({
+    queryKey: ["/api/leads/stats"],
+    enabled: !!org,
+  });
+
+  const {
+    data: dashboardLeads = [],
+    isLoading: dashboardLeadsLoading,
+    error: dashboardLeadsError,
+  } = useQuery<DashboardLead[]>({
+    queryKey: ["/api/leads"],
+    enabled: !!org,
+  });
+
   if (isLoading) {
     return (
       <div className="flex flex-col h-full">
@@ -223,6 +252,12 @@ export default function Dashboard() {
   const revTrend = stats.revenueLastMonth > 0
     ? ((stats.revenueThisMonth - stats.revenueLastMonth) / stats.revenueLastMonth) * 100
     : null;
+  const convertedLeadsThisMonth = dashboardLeads.filter((lead) => {
+    if (!lead.convertedAt) return false;
+    return isThisMonth(new Date(lead.convertedAt));
+  }).length;
+  const leadWidgetLoading = leadStatsLoading || dashboardLeadsLoading;
+  const leadWidgetError = leadStatsError || dashboardLeadsError;
 
   return (
     <div className="flex flex-col h-full">
@@ -404,6 +439,62 @@ export default function Dashboard() {
           </div>
 
           <div className="space-y-4">
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium flex items-center justify-between">
+                  <span className="flex items-center gap-2">
+                    <UserPlus className="h-4 w-4 text-muted-foreground" />
+                    Lead Conversion
+                  </span>
+                  <Link href="/leads" className="text-xs text-primary hover:underline">Open</Link>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {leadWidgetLoading ? (
+                  <div className="grid grid-cols-2 gap-2">
+                    {Array.from({ length: 4 }).map((_, i) => (
+                      <Skeleton key={i} className="h-[74px] rounded-lg" />
+                    ))}
+                  </div>
+                ) : leadWidgetError ? (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/20 dark:text-amber-200">
+                    <div className="flex items-center gap-2 font-medium">
+                      <AlertTriangle className="h-4 w-4" />
+                      Lead counts unavailable
+                    </div>
+                    <p className="mt-1 text-xs">Open the Lead Conversion Center to continue working leads.</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2 text-center">
+                    <Link href="/leads">
+                      <div className="rounded-lg border p-3 hover-elevate cursor-pointer" data-testid="lead-widget-new">
+                        <p className="text-xl font-bold">{leadStats?.newLeads || 0}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">New Leads</p>
+                      </div>
+                    </Link>
+                    <Link href="/leads">
+                      <div className="rounded-lg border p-3 hover-elevate cursor-pointer" data-testid="lead-widget-hot">
+                        <p className="text-xl font-bold">{leadStats?.hotLeads || 0}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">Hot Leads</p>
+                      </div>
+                    </Link>
+                    <Link href="/leads">
+                      <div className="rounded-lg border p-3 hover-elevate cursor-pointer" data-testid="lead-widget-followup">
+                        <p className="text-xl font-bold">{leadStats?.needsFollowUp || 0}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">Due Follow-Up</p>
+                      </div>
+                    </Link>
+                    <Link href="/leads">
+                      <div className="rounded-lg border p-3 hover-elevate cursor-pointer" data-testid="lead-widget-converted">
+                        <p className="text-xl font-bold">{convertedLeadsThisMonth}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">Converted This Month</p>
+                      </div>
+                    </Link>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm font-medium">Quick Actions</CardTitle>

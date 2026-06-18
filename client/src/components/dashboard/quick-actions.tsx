@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Plus } from "lucide-react";
 
 const actions = [
-  { label: "New Lead", href: "/leads", color: "bg-sky-700 hover:bg-sky-800 text-white" },
+  { label: "New Lead", href: "/leads?new=1", color: "bg-sky-700 hover:bg-sky-800 text-white" },
   { label: "New Job", href: "/jobs?new=1", color: "bg-primary hover:bg-primary/90 text-primary-foreground" },
   { label: "New Quote", href: "/quotes/new", color: "bg-emerald-700 hover:bg-emerald-800 text-white" },
   { label: "New Invoice", href: "/invoices/new", color: "bg-amber-700 hover:bg-amber-800 text-white" },

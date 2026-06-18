@@ -1,11 +1,11 @@
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Users, Wrench, Menu } from "lucide-react";
+import { LayoutDashboard, UserPlus, Wrench, Menu } from "lucide-react";
 import { useSidebar } from "@/components/ui/sidebar";
 
 const tabs = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard, match: (l: string) => l === "/" || l === "/dashboard" },
+  { title: "Leads", url: "/leads", icon: UserPlus, match: (l: string) => l.startsWith("/leads") },
   { title: "Jobs", url: "/jobs", icon: Wrench, match: (l: string) => l.startsWith("/jobs") },
-  { title: "Customers", url: "/customers", icon: Users, match: (l: string) => l.startsWith("/customers") },
 ];
 
 export function MobileBottomNav() {

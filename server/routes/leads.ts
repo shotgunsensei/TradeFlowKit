@@ -5,6 +5,7 @@ import { z } from "zod";
 import { requireAuth, requireOrg, checkPlanLimit } from "../middleware";
 import { storage } from "../storage";
 import { scoreLead } from "../leadScoring";
+import { isTwilioConfigured } from "../twilioClient";
 import {
   recordDryRunEmailActivity,
   recordDryRunSmsActivity,
@@ -307,6 +308,122 @@ router.get("/api/leads/settings", requireAuth, requireOrg, async (req: Request, 
   }
 });
 
+router.get("/api/leads/provider-status", requireAuth, requireOrg, async (_req: Request, res: Response) => {
+  try {
+    const twilioConfigured = await isTwilioConfigured();
+    res.json({
+      twilio: { configured: twilioConfigured },
+      sendgrid: { configured: !!(process.env.SENDGRID_API_KEY && process.env.SENDGRID_FROM_EMAIL) },
+      openai: { configured: !!process.env.OPENAI_API_KEY, mode: process.env.OPENAI_API_KEY ? "openai" : "fallback" },
+    });
+  } catch (err) {
+    res.status(500).send(errMsg(err));
+  }
+});
+
+router.get("/api/leads/operator-dashboard", requireAuth, requireOrg, async (req: Request, res: Response) => {
+  try {
+    const orgId = req.session.orgId!;
+    const leads = await storage.getLeads(orgId);
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const endOfToday = new Date(startOfToday.getTime() + 24 * 60 * 60 * 1000);
+    const activeLeads = leads.filter((lead) => !["converted", "lost", "spam"].includes(lead.status));
+
+    const hotLeads = activeLeads
+      .filter((lead) => lead.score >= 75)
+      .sort((a, b) => b.score - a.score || new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(0, 6);
+
+    const needsContact = activeLeads
+      .filter((lead) => lead.status === "new" && !lead.lastContactedAt)
+      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+      .slice(0, 6);
+
+    const followUpsDueToday = activeLeads
+      .filter((lead) => {
+        if (!lead.nextFollowUpAt) return false;
+        const dueAt = new Date(lead.nextFollowUpAt);
+        return dueAt >= startOfToday && dueAt < endOfToday;
+      })
+      .sort((a, b) => new Date(a.nextFollowUpAt || 0).getTime() - new Date(b.nextFollowUpAt || 0).getTime())
+      .slice(0, 6);
+
+    const overdueFollowUps = activeLeads
+      .filter((lead) => {
+        if (!lead.nextFollowUpAt) return false;
+        return new Date(lead.nextFollowUpAt) < now;
+      })
+      .sort((a, b) => new Date(a.nextFollowUpAt || 0).getTime() - new Date(b.nextFollowUpAt || 0).getTime())
+      .slice(0, 6);
+
+    const recentlyCaptured = [...leads]
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(0, 6);
+
+    const recentlyConverted = leads
+      .filter((lead) => lead.status === "converted" || lead.convertedAt)
+      .sort((a, b) => new Date(b.convertedAt || b.updatedAt).getTime() - new Date(a.convertedAt || a.updatedAt).getTime())
+      .slice(0, 6);
+
+    const failedAttempts: Array<{
+      id: string;
+      leadId: string;
+      leadName: string;
+      channel: string | null;
+      reason: string;
+      createdAt: Date;
+    }> = [];
+
+    for (const lead of leads.slice(0, 100)) {
+      const [activities, tasks] = await Promise.all([
+        storage.getLeadActivities(orgId, lead.id),
+        storage.getLeadFollowupTasks(orgId, lead.id),
+      ]);
+
+      activities
+        .filter((activity) => activity.error || activity.status === "failed")
+        .forEach((activity) => {
+          failedAttempts.push({
+            id: activity.id,
+            leadId: lead.id,
+            leadName: lead.name,
+            channel: activity.channel,
+            reason: activity.error || activity.subject || "Message attempt failed",
+            createdAt: activity.createdAt,
+          });
+        });
+
+      tasks
+        .filter((task) => task.status === "failed")
+        .forEach((task) => {
+          failedAttempts.push({
+            id: task.id,
+            leadId: lead.id,
+            leadName: lead.name,
+            channel: task.channel,
+            reason: task.error || "Follow-up attempt failed",
+            createdAt: task.lastAttemptAt || task.updatedAt || task.createdAt,
+          });
+        });
+    }
+
+    failedAttempts.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    res.json({
+      hotLeads,
+      needsContact,
+      followUpsDueToday,
+      overdueFollowUps,
+      recentlyCaptured,
+      recentlyConverted,
+      failedAttempts: failedAttempts.slice(0, 8),
+    });
+  } catch (err) {
+    res.status(500).send(errMsg(err));
+  }
+});
+
 router.patch("/api/leads/settings", requireAuth, requireOrg, async (req: Request, res: Response) => {
   try {
     const parsed = leadSettingsSchema.safeParse(req.body?.settings || req.body || {});
@@ -395,6 +512,13 @@ router.patch("/api/leads/:id", requireAuth, requireOrg, async (req: Request, res
     if ("email" in patch && patch.email === "") patch.email = "";
     if ("nextFollowUpAt" in patch) patch.nextFollowUpAt = patch.nextFollowUpAt ? new Date(String(patch.nextFollowUpAt)) : null;
     if ("estimatedValue" in patch) patch.estimatedValue = patch.estimatedValue == null || patch.estimatedValue === "" ? null : String(patch.estimatedValue);
+    if (
+      parsed.data.status &&
+      ["contacted", "qualified", "follow_up"].includes(parsed.data.status) &&
+      !before.lastContactedAt
+    ) {
+      patch.lastContactedAt = new Date();
+    }
 
     const updated = await storage.updateLead(orgId, before.id, patch as any);
     if (!updated) return res.status(404).send("Lead not found");
@@ -436,6 +560,17 @@ router.get("/api/leads/:id/activities", requireAuth, requireOrg, async (req: Req
     const lead = await storage.getLead(orgId, req.params.id as string);
     if (!lead) return res.status(404).send("Lead not found");
     res.json(await storage.getLeadActivities(orgId, lead.id));
+  } catch (err) {
+    res.status(500).send(errMsg(err));
+  }
+});
+
+router.get("/api/leads/:id/followups", requireAuth, requireOrg, async (req: Request, res: Response) => {
+  try {
+    const orgId = req.session.orgId!;
+    const lead = await storage.getLead(orgId, req.params.id as string);
+    if (!lead) return res.status(404).send("Lead not found");
+    res.json(await storage.getLeadFollowupTasks(orgId, lead.id));
   } catch (err) {
     res.status(500).send(errMsg(err));
   }
