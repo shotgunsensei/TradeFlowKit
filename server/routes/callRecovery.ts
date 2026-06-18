@@ -4,10 +4,11 @@ import { storage } from "../storage";
 import { requireAuth, requireOrg } from "../middleware";
 import { getUncachableStripeClient } from "../stripeClient";
 import { processConversation, generateInitialMessage, isQuietHours, completeRecovery } from "../callRecoveryAI";
+import { ensureLeadForMissedCall } from "../callRecoveryLeadBridge";
 import { sendSMS, validateTwilioAccountSid } from "../twilioClient";
 import { db } from "../db";
 import { sql } from "drizzle-orm";
-import { type CallRecoveryPlan, CALL_RECOVERY_PLAN_LIMITS } from "@shared/schema";
+import { type CallRecoveryPlan, CALL_RECOVERY_PLAN_LIMITS, type MissedCall } from "@shared/schema";
 import { logger as rootLogger } from "../logger";
 
 const log = rootLogger.child({ component: "call-recovery-route" });
@@ -18,6 +19,15 @@ const VALID_CR_PLANS: CallRecoveryPlan[] = ["starter", "growth", "pro"];
 
 function isValidCallRecoveryPlan(p: unknown): p is CallRecoveryPlan {
   return typeof p === "string" && VALID_CR_PLANS.includes(p as CallRecoveryPlan);
+}
+
+async function safeEnsureLeadForMissedCall(missedCall: MissedCall): Promise<void> {
+  try {
+    const messages = await storage.getAiMessages(missedCall.id);
+    await ensureLeadForMissedCall(missedCall, messages);
+  } catch (err) {
+    log.warn({ err: errMsg(err), missedCallId: missedCall.id }, "Missed-call lead bridge failed");
+  }
 }
 
 router.get("/api/call-recovery/subscription", requireAuth, requireOrg, async (req: Request, res: Response) => {
@@ -301,7 +311,8 @@ router.post("/api/call-recovery/webhook/missed-call", async (req: Request, res: 
       log.info({ orgId: org.id }, "Quiet hours active — recording call but not sending SMS");
       const qCall = await storage.createMissedCall(org.id, { callerPhone: From, twilioCallSid: CallSid });
       await storage.incrementCallRecoveryUsage(org.id);
-      await storage.updateMissedCall(qCall.id, { status: "failed" });
+      const updated = await storage.updateMissedCall(qCall.id, { status: "failed" });
+      await safeEnsureLeadForMissedCall(updated || qCall);
       return twiml("<Hangup/>");
     }
 
@@ -309,15 +320,19 @@ router.post("/api/call-recovery/webhook/missed-call", async (req: Request, res: 
     if (existing) {
       const existingMessages = await storage.getAiMessages(existing.id);
       const conversationStarted = existingMessages.some((m) => m.role === "user");
+      let currentExisting = existing;
       if (!conversationStarted) {
         const retryMessage = generateInitialMessage(org.name, org.callRecoveryCustomMessage, { orgPhone: org.phone });
         const smsSent = await sendSMS(From, Called, retryMessage);
         if (smsSent) {
-          await storage.updateMissedCall(existing.id, { status: "in_progress" });
+          const updated = await storage.updateMissedCall(existing.id, { status: "in_progress" });
+          currentExisting = updated || existing;
         } else {
-          await storage.updateMissedCall(existing.id, { status: "failed" });
+          const updated = await storage.updateMissedCall(existing.id, { status: "failed" });
+          currentExisting = updated || existing;
         }
       }
+      await safeEnsureLeadForMissedCall(currentExisting);
       if (!CallStatus || CallStatus === "ringing") {
         return twiml(
           "<Say voice=\"alice\">Sorry we missed your call. Our automated system will send you a text message shortly.</Say><Hangup/>"
@@ -335,12 +350,13 @@ router.post("/api/call-recovery/webhook/missed-call", async (req: Request, res: 
 
     const initialMessage = generateInitialMessage(org.name, org.callRecoveryCustomMessage, { orgPhone: org.phone });
     await storage.createAiMessage(missedCall.id, "assistant", initialMessage);
-    await storage.updateMissedCall(missedCall.id, { status: "in_progress" });
+    let currentMissedCall = await storage.updateMissedCall(missedCall.id, { status: "in_progress" }) || missedCall;
 
     const smsSent = await sendSMS(From, Called, initialMessage);
     if (!smsSent) {
-      await storage.updateMissedCall(missedCall.id, { status: "failed" });
+      currentMissedCall = await storage.updateMissedCall(missedCall.id, { status: "failed" }) || currentMissedCall;
     }
+    await safeEnsureLeadForMissedCall(currentMissedCall);
 
     if (!CallStatus || CallStatus === "ringing") {
       return twiml(

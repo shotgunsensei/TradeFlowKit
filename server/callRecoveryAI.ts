@@ -1,5 +1,6 @@
 import { errMsg } from "./errors";
 import { storage } from "./storage";
+import { markMissedCallLeadConverted, syncLeadFromMissedCallConversation } from "./callRecoveryLeadBridge";
 import type { MissedCall, AiMessage } from "@shared/schema";
 import { logger as rootLogger } from "./logger";
 
@@ -77,6 +78,17 @@ export async function processConversation(
     .replace(/\[COMPLETE\]\s*/g, "")
     .replace(/\[DATA\].*?\[\/DATA\]/g, "")
     .trim();
+
+  try {
+    const updatedMessages = await storage.getAiMessages(missedCallId);
+    await syncLeadFromMissedCallConversation(missedCall, updatedMessages, {
+      serviceType,
+      location,
+      urgency,
+    });
+  } catch (err) {
+    log.warn({ err: errMsg(err), missedCallId }, "Failed to sync missed-call conversation to lead");
+  }
 
   return {
     responseText: cleanResponse,
@@ -193,6 +205,28 @@ export async function completeRecovery(
   const org = await storage.getOrg(missedCall.orgId);
   if (!org) throw new Error("Organization not found");
 
+  const linkedLead = await storage.getLeadByMissedCall(missedCall.orgId, missedCall.id);
+  if (missedCall.customerId && missedCall.jobId) {
+    await markMissedCallLeadConverted(missedCall, missedCall.customerId, missedCall.jobId, {
+      serviceType,
+      location,
+      urgency,
+    });
+    return { customerId: missedCall.customerId, jobId: missedCall.jobId };
+  }
+  if (linkedLead?.customerId && linkedLead.jobId && linkedLead.status === "converted") {
+    await storage.updateMissedCall(missedCallId, {
+      status: "recovered",
+      serviceType,
+      location,
+      urgency,
+      customerId: linkedLead.customerId,
+      jobId: linkedLead.jobId,
+      completedAt: missedCall.completedAt || new Date(),
+    });
+    return { customerId: linkedLead.customerId, jobId: linkedLead.jobId };
+  }
+
   let existingCustomer = await findCustomerByPhone(missedCall.orgId, missedCall.callerPhone);
 
   let customerId: string;
@@ -229,6 +263,21 @@ export async function completeRecovery(
     customerId,
     jobId: job.id,
     completedAt: new Date(),
+  });
+
+  await markMissedCallLeadConverted({
+    ...missedCall,
+    status: "recovered",
+    serviceType,
+    location,
+    urgency,
+    customerId,
+    jobId: job.id,
+    completedAt: new Date(),
+  }, customerId, job.id, {
+    serviceType,
+    location,
+    urgency,
   });
 
   return { customerId, jobId: job.id };

@@ -423,6 +423,126 @@ export const aiMessages = pgTable("ai_messages", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+export const leads = pgTable("leads", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  orgId: varchar("org_id").notNull().references(() => orgs.id),
+  source: text("source").notNull().default("manual"),
+  sourceDetail: text("source_detail"),
+  status: text("status").notNull().default("new"),
+  score: integer("score").notNull().default(0),
+  scoreBreakdown: jsonb("score_breakdown"),
+  name: text("name").notNull(),
+  phone: text("phone"),
+  email: text("email"),
+  address: text("address"),
+  serviceType: text("service_type"),
+  description: text("description"),
+  urgency: text("urgency").notNull().default("normal"),
+  estimatedValue: numeric("estimated_value", { precision: 10, scale: 2 }),
+  preferredContact: text("preferred_contact"),
+  preferredTime: text("preferred_time"),
+  consentToSms: boolean("consent_to_sms").notNull().default(false),
+  consentSource: text("consent_source"),
+  consentAt: timestamp("consent_at"),
+  assignedUserId: varchar("assigned_user_id").references(() => users.id),
+  customerId: varchar("customer_id").references(() => customers.id),
+  jobId: varchar("job_id").references(() => jobs.id),
+  quoteId: varchar("quote_id").references(() => quotes.id),
+  invoiceId: varchar("invoice_id").references(() => invoices.id),
+  missedCallId: varchar("missed_call_id").references(() => missedCalls.id),
+  aiSummary: text("ai_summary"),
+  aiQualification: jsonb("ai_qualification"),
+  lastContactedAt: timestamp("last_contacted_at"),
+  nextFollowUpAt: timestamp("next_follow_up_at"),
+  convertedAt: timestamp("converted_at"),
+  lostReason: text("lost_reason"),
+  metadata: jsonb("metadata"),
+  createdBy: varchar("created_by").references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  deletedAt: timestamp("deleted_at"),
+}, (t) => [
+  index("leads_org_status_created_idx").on(t.orgId, t.status, t.createdAt),
+  index("leads_org_source_created_idx").on(t.orgId, t.source, t.createdAt),
+  index("leads_org_followup_idx").on(t.orgId, t.nextFollowUpAt),
+  index("leads_org_phone_idx").on(t.orgId, t.phone),
+  index("leads_org_email_idx").on(t.orgId, t.email),
+  index("leads_org_customer_idx").on(t.orgId, t.customerId),
+  index("leads_org_job_idx").on(t.orgId, t.jobId),
+  index("leads_org_missed_call_idx").on(t.orgId, t.missedCallId),
+  uniqueIndex("leads_missed_call_unique_idx").on(t.missedCallId),
+]);
+
+export const leadActivities = pgTable("lead_activities", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  orgId: varchar("org_id").notNull().references(() => orgs.id),
+  leadId: varchar("lead_id").notNull().references(() => leads.id, { onDelete: "cascade" }),
+  type: text("type").notNull(),
+  channel: text("channel"),
+  direction: text("direction"),
+  subject: text("subject"),
+  body: text("body"),
+  status: text("status"),
+  error: text("error"),
+  metadata: jsonb("metadata"),
+  createdBy: varchar("created_by").references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [
+  index("lead_activities_org_lead_created_idx").on(t.orgId, t.leadId, t.createdAt),
+]);
+
+export const leadCaptureForms = pgTable("lead_capture_forms", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  orgId: varchar("org_id").notNull().references(() => orgs.id),
+  name: text("name").notNull(),
+  publicToken: text("public_token").notNull().unique(),
+  sourceLabel: text("source_label").notNull().default("Website Form"),
+  isEnabled: boolean("is_enabled").notNull().default(true),
+  defaultServiceType: text("default_service_type"),
+  successMessage: text("success_message").notNull().default("Thanks. We received your request and will follow up shortly."),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => [
+  index("lead_capture_forms_org_idx").on(t.orgId),
+  index("lead_capture_forms_token_idx").on(t.publicToken),
+]);
+
+export const leadFollowupTasks = pgTable("lead_followup_tasks", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  orgId: varchar("org_id").notNull().references(() => orgs.id),
+  leadId: varchar("lead_id").notNull().references(() => leads.id, { onDelete: "cascade" }),
+  stepNumber: integer("step_number").notNull(),
+  channel: text("channel").notNull(),
+  dueAt: timestamp("due_at").notNull(),
+  status: text("status").notNull().default("pending"),
+  messageTemplate: text("message_template").notNull(),
+  lastAttemptAt: timestamp("last_attempt_at"),
+  completedAt: timestamp("completed_at"),
+  error: text("error"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => [
+  index("lead_followup_tasks_due_idx").on(t.status, t.dueAt),
+  index("lead_followup_tasks_org_lead_idx").on(t.orgId, t.leadId),
+]);
+
+export const leadSettings = pgTable("lead_settings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  orgId: varchar("org_id").notNull().unique().references(() => orgs.id),
+  autoRespond: boolean("auto_respond").notNull().default(true),
+  followUpEnabled: boolean("follow_up_enabled").notNull().default(true),
+  hotLeadThreshold: integer("hot_lead_threshold").notNull().default(75),
+  dryRun: boolean("dry_run").notNull().default(true),
+  defaultSmsTemplate: text("default_sms_template"),
+  defaultEmailSubject: text("default_email_subject"),
+  defaultEmailTemplate: text("default_email_template"),
+  notificationPhone: text("notification_phone"),
+  notificationEmail: text("notification_email"),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => [
+  index("lead_settings_org_idx").on(t.orgId),
+]);
+
 export const insertReviewRequestSchema = createInsertSchema(reviewRequests).omit({ id: true, sentAt: true });
 export type ReviewRequest = typeof reviewRequests.$inferSelect;
 export type InsertReviewRequest = z.infer<typeof insertReviewRequestSchema>;
@@ -460,6 +580,57 @@ export type MissedCall = typeof missedCalls.$inferSelect;
 export type InsertMissedCall = z.infer<typeof insertMissedCallSchema>;
 export type AiMessage = typeof aiMessages.$inferSelect;
 export type InsertAiMessage = z.infer<typeof insertAiMessageSchema>;
+
+export const insertLeadSchema = createInsertSchema(leads).omit({
+  id: true,
+  orgId: true,
+  score: true,
+  scoreBreakdown: true,
+  customerId: true,
+  jobId: true,
+  quoteId: true,
+  invoiceId: true,
+  convertedAt: true,
+  createdAt: true,
+  updatedAt: true,
+  deletedAt: true,
+});
+
+export const insertLeadActivitySchema = createInsertSchema(leadActivities).omit({
+  id: true,
+  orgId: true,
+  leadId: true,
+  createdAt: true,
+});
+
+export type Lead = typeof leads.$inferSelect;
+export type InsertLead = z.infer<typeof insertLeadSchema>;
+export type LeadActivity = typeof leadActivities.$inferSelect;
+export type InsertLeadActivity = z.infer<typeof insertLeadActivitySchema>;
+
+export const insertLeadCaptureFormSchema = createInsertSchema(leadCaptureForms).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertLeadFollowupTaskSchema = createInsertSchema(leadFollowupTasks).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertLeadSettingsSchema = createInsertSchema(leadSettings).omit({
+  id: true,
+  updatedAt: true,
+});
+
+export type LeadCaptureForm = typeof leadCaptureForms.$inferSelect;
+export type InsertLeadCaptureForm = z.infer<typeof insertLeadCaptureFormSchema>;
+export type LeadFollowupTask = typeof leadFollowupTasks.$inferSelect;
+export type InsertLeadFollowupTask = z.infer<typeof insertLeadFollowupTaskSchema>;
+export type LeadSettings = typeof leadSettings.$inferSelect;
+export type InsertLeadSettings = z.infer<typeof insertLeadSettingsSchema>;
 
 export const insertUserSchema = createInsertSchema(users).pick({
   username: true,

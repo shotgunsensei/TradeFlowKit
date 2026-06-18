@@ -1,6 +1,7 @@
 import { errMsg } from "./errors";
 import { storage } from "./storage";
 import { sendSMS, isTwilioConfigured } from "./twilioClient";
+import { recordDryRunEmailActivity, recordDryRunSmsActivity, renderLeadTemplate } from "./leadMessaging";
 import { logger as rootLogger } from "./logger";
 
 const log = rootLogger.child({ component: "reminder-worker" });
@@ -205,11 +206,70 @@ async function processRecurringInvoices() {
   }
 }
 
+async function processLeadFollowups() {
+  try {
+    const dueTasks = await storage.getDueLeadFollowupTasks(new Date(), 50);
+    for (const task of dueTasks) {
+      const lead = await storage.getLead(task.orgId, task.leadId);
+      if (!lead || ["converted", "lost", "spam"].includes(lead.status)) {
+        await storage.updateLeadFollowupTask(task.orgId, task.id, {
+          status: "skipped",
+          lastAttemptAt: new Date(),
+          completedAt: new Date(),
+          error: lead ? `Lead status is ${lead.status}` : "Lead not found",
+        });
+        continue;
+      }
+
+      const org = await storage.getOrg(task.orgId);
+      const body = renderLeadTemplate(task.messageTemplate, lead, org);
+      try {
+        if (task.channel === "sms") {
+          if (!lead.consentToSms || !lead.phone) {
+            await storage.updateLeadFollowupTask(task.orgId, task.id, {
+              status: "failed",
+              lastAttemptAt: new Date(),
+              error: "SMS follow-up requires consent and a phone number",
+            });
+            continue;
+          }
+          await recordDryRunSmsActivity({ orgId: task.orgId, lead, body, createdBy: null });
+        } else {
+          await recordDryRunEmailActivity({
+            orgId: task.orgId,
+            lead,
+            subject: "Lead follow-up",
+            body,
+            createdBy: null,
+          });
+        }
+
+        await storage.updateLeadFollowupTask(task.orgId, task.id, {
+          status: "completed",
+          lastAttemptAt: new Date(),
+          completedAt: new Date(),
+        });
+        log.info({ orgId: task.orgId, leadId: task.leadId, taskId: task.id }, "Lead follow-up dry-run completed");
+      } catch (err: any) {
+        await storage.updateLeadFollowupTask(task.orgId, task.id, {
+          status: "failed",
+          lastAttemptAt: new Date(),
+          error: err?.message || String(err),
+        });
+        log.error({ err: errMsg(err), orgId: task.orgId, leadId: task.leadId, taskId: task.id }, "Lead follow-up dry-run failed");
+      }
+    }
+  } catch (err) {
+    log.error({ err, msg: errMsg(err) }, "Error processing lead follow-ups");
+  }
+}
+
 async function runReminderWorker() {
   log.info("Running reminder checks...");
   await processInvoiceReminders();
   await processQuoteFollowUps();
   await processRecurringInvoices();
+  await processLeadFollowups();
   log.info("Reminder checks complete");
 }
 
