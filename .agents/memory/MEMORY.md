@@ -1,2 +1,3 @@
 - [Post-merge setup timeout](post-merge-setup-timeout.md) — post-merge script has a ~20s budget; npm audit/install blows past it (~98s) — keep the script fast and offline-cheap.
 - [GitHub push from task env](github-push-from-task-env.md) — `git push origin` to a user's GitHub remote fails in isolated task envs (no creds); do merge/commit locally, push is a Git-pane/platform action.
+- [Diverged GitHub remote](diverged-github-remote.md) — agent is system-blocked from git; task merges get flattened (remote SHA never becomes ancestor). Fix: user force-pushes local superset from Shell.
