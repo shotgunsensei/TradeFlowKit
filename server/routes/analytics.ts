@@ -1,6 +1,6 @@
 import { errMsg } from "../errors";
 import { Router, type Request, type Response } from "express";
-import { requireAuth, requireOrg } from "../middleware";
+import { requireAuth, requireOrg, requireFeature } from "../middleware";
 import { db } from "../db";
 import { sql } from "drizzle-orm";
 
@@ -54,7 +54,7 @@ type CustomersAnalyticsRow = {
   top_by_value: { id: string; name: string; job_count: string | number; lifetime_value: string | number }[] | null;
 };
 
-router.get("/api/analytics/quotes", requireAuth, requireOrg, async (req: Request, res: Response) => {
+router.get("/api/analytics/quotes", requireAuth, requireOrg, requireFeature("analytics"), async (req: Request, res: Response) => {
   try {
     const orgId = req.session.orgId!;
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
@@ -125,7 +125,7 @@ router.get("/api/analytics/quotes", requireAuth, requireOrg, async (req: Request
   }
 });
 
-router.get("/api/analytics/invoices", requireAuth, requireOrg, async (req: Request, res: Response) => {
+router.get("/api/analytics/invoices", requireAuth, requireOrg, requireFeature("analytics"), async (req: Request, res: Response) => {
   try {
     const orgId = req.session.orgId!;
 
@@ -214,7 +214,7 @@ router.get("/api/analytics/invoices", requireAuth, requireOrg, async (req: Reque
   }
 });
 
-router.get("/api/analytics/jobs", requireAuth, requireOrg, async (req: Request, res: Response) => {
+router.get("/api/analytics/jobs", requireAuth, requireOrg, requireFeature("analytics"), async (req: Request, res: Response) => {
   try {
     const orgId = req.session.orgId!;
 
@@ -275,7 +275,7 @@ router.get("/api/analytics/jobs", requireAuth, requireOrg, async (req: Request, 
   }
 });
 
-router.get("/api/analytics/customers", requireAuth, requireOrg, async (req: Request, res: Response) => {
+router.get("/api/analytics/customers", requireAuth, requireOrg, requireFeature("analytics"), async (req: Request, res: Response) => {
   try {
     const orgId = req.session.orgId!;
 

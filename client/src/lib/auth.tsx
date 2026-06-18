@@ -18,6 +18,26 @@ interface OrgCounts {
   members: number;
 }
 
+interface ResolvedAccess {
+  source: "operatoros" | "legacy";
+  linked: boolean;
+  allowed: boolean;
+  reason: string | null;
+  planSlug: string | null;
+  subscriptionStatus: string | null;
+  accessLevel: string | null;
+  features: Record<string, boolean>;
+  limits: {
+    customers: number;
+    jobs: number;
+    quotes: number;
+    invoices: number;
+    teamMembers: number;
+    canInvite: boolean;
+  };
+  effectiveRole: string;
+}
+
 interface AuthContextType {
   user: User | null;
   org: Org | null;
@@ -25,6 +45,7 @@ interface AuthContextType {
   orgs: Org[];
   planLimits: PlanLimits | null;
   orgCounts: OrgCounts | null;
+  access: ResolvedAccess | null;
   isLoading: boolean;
   login: (username: string, password: string) => Promise<void>;
   verify2fa: (payload: { code?: string; recoveryCode?: string }) => Promise<void>;
@@ -43,6 +64,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [orgs, setOrgs] = useState<Org[]>([]);
   const [planLimits, setPlanLimits] = useState<PlanLimits | null>(null);
   const [orgCounts, setOrgCounts] = useState<OrgCounts | null>(null);
+  const [access, setAccess] = useState<ResolvedAccess | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   const refreshAuth = useCallback(async () => {
@@ -56,6 +78,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setOrgs(data.orgs || []);
         setPlanLimits(data.planLimits || null);
         setOrgCounts(data.orgCounts || null);
+        setAccess(data.access || null);
       } else {
         setUser(null);
         setOrg(null);
@@ -63,6 +86,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setOrgs([]);
         setPlanLimits(null);
         setOrgCounts(null);
+        setAccess(null);
       }
     } catch {
       setUser(null);
@@ -71,6 +95,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setOrgs([]);
       setPlanLimits(null);
       setOrgCounts(null);
+      setAccess(null);
     } finally {
       setIsLoading(false);
     }
@@ -152,7 +177,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ user, org, membership, orgs, planLimits, orgCounts, isLoading, login, verify2fa, register, logout, switchOrg, refreshAuth }}
+      value={{ user, org, membership, orgs, planLimits, orgCounts, access, isLoading, login, verify2fa, register, logout, switchOrg, refreshAuth }}
     >
       {children}
     </AuthContext.Provider>

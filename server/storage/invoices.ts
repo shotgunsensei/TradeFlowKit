@@ -1,4 +1,4 @@
-import { eq, and, desc, sql, inArray, lt, isNull } from "drizzle-orm";
+import { eq, and, desc, sql, inArray, lt, isNull, isNotNull } from "drizzle-orm";
 import { db } from "../db";
 import {
   orgs,
@@ -278,7 +278,65 @@ export const invoicesStorage = {
     const result = await db
       .update(invoices)
       .set({ deletedAt: null })
-      .where(and(eq(invoices.orgId, orgId), inArray(invoices.id, ids)))
+      .where(and(eq(invoices.orgId, orgId), inArray(invoices.id, ids), isNotNull(invoices.deletedAt)))
+      .returning({ id: invoices.id });
+    return result.length;
+  },
+
+  async getDeletedInvoices(orgId: string): Promise<(Invoice & { customerName?: string; total?: number })[]> {
+    const rows = await db
+      .select()
+      .from(invoices)
+      .where(and(eq(invoices.orgId, orgId), isNotNull(invoices.deletedAt)))
+      .orderBy(desc(invoices.deletedAt));
+    const results = [];
+    for (const inv of rows) {
+      let customerName: string | undefined;
+      if (inv.customerId) {
+        const [c] = await db.select({ name: customers.name }).from(customers).where(eq(customers.id, inv.customerId));
+        customerName = c?.name;
+      }
+      const items = await db.select().from(invoiceItems).where(eq(invoiceItems.invoiceId, inv.id));
+      const subtotal = items.reduce((sum, it) => sum + Number(it.qty) * Number(it.unitPrice), 0);
+      const tax = subtotal * (Number(inv.taxRate) / 100);
+      const total = subtotal + tax - Number(inv.discount);
+      results.push({ ...inv, customerName, total });
+    }
+    return results;
+  },
+
+  async hardDeleteInvoice(orgId: string, id: string): Promise<boolean> {
+    const [existing] = await db
+      .select({ id: invoices.id })
+      .from(invoices)
+      .where(and(eq(invoices.orgId, orgId), eq(invoices.id, id), isNotNull(invoices.deletedAt)));
+    if (!existing) return false;
+    await db.delete(invoiceItems).where(eq(invoiceItems.invoiceId, id));
+    const result = await db
+      .delete(invoices)
+      .where(and(eq(invoices.orgId, orgId), eq(invoices.id, id), isNotNull(invoices.deletedAt)))
+      .returning({ id: invoices.id });
+    return result.length > 0;
+  },
+
+  async purgeSoftDeletedInvoices(cutoff: Date): Promise<number> {
+    const due = await db
+      .select({ id: invoices.id })
+      .from(invoices)
+      .where(and(isNotNull(invoices.deletedAt), lt(invoices.deletedAt, cutoff)));
+    if (due.length === 0) return 0;
+    const ids = due.map((r) => r.id);
+
+    // invoice_items has ON DELETE CASCADE, but delete explicitly for clarity
+    // (and to keep the cascade logic in one obvious place).
+    await db.delete(invoiceItems).where(inArray(invoiceItems.invoiceId, ids));
+
+    // Detach recurring children pointing at a soft-deleted template.
+    await db.update(invoices).set({ parentInvoiceId: null }).where(inArray(invoices.parentInvoiceId, ids));
+
+    const result = await db
+      .delete(invoices)
+      .where(inArray(invoices.id, ids))
       .returning({ id: invoices.id });
     return result.length;
   },

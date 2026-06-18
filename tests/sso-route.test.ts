@@ -3,7 +3,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vites
 vi.hoisted(() => {
   process.env.MODULE_SSO_SECRET = "test-route-secret";
   process.env.OPERATOROS_BASE_URL = "https://operatoros.test";
-  process.env.OPERATOROS_API_URL = "https://operatoros.test";
+  process.env.OPERATOROS_API_URL = "https://operatoros.test/api";
   process.env.OPERATOROS_SSO_AUDIENCE = "tradeflowkit";
   process.env.OPERATOROS_SSO_ENV = "dev";
 });
@@ -59,18 +59,35 @@ const validClaims = (overrides: Record<string, any> = {}) => {
     env: "dev",
     jti: `jti-${crypto.randomBytes(8).toString("hex")}`,
     sub,
-    user_id: sub,
-    email: `sso-${crypto.randomBytes(4).toString("hex")}@example.com`,
-    role: "user",
-    plan_slug: "starter",
-    organization_id: null,
     iat: now,
     exp: now + 60,
     ...overrides,
   };
 };
 
-describe("/sso route", () => {
+function consumeOk(overrides: Record<string, any> = {}) {
+  return {
+    ok: true as const,
+    payload: {
+      ok: true as const,
+      user: {
+        id: overrides.userId ?? `u-${crypto.randomBytes(6).toString("hex")}`,
+        email: overrides.email ?? `sso-${crypto.randomBytes(4).toString("hex")}@example.com`,
+        name: overrides.name ?? "SSO User",
+        role: overrides.role ?? "user",
+      },
+      moduleSlug: "tradeflowkit",
+      planSlug: overrides.planSlug ?? "starter",
+      organizationId: overrides.organizationId ?? null,
+      env: "dev" as const,
+      jti: overrides.jti ?? `jti-${crypto.randomBytes(6).toString("hex")}`,
+      issuer: "https://operatoros.test",
+      accessSource: "plan" as const,
+    },
+  };
+}
+
+describe("/sso route — OperatorOS canonical contract", () => {
   let app: ReturnType<typeof buildApp>;
 
   beforeAll(() => {
@@ -86,86 +103,87 @@ describe("/sso route", () => {
     (consumeSsoToken as any).mockReset();
   });
 
-  it("returns 400 missing_token (HTML) when token is missing", async () => {
+  it("redirects to hub with launchError=no_token when token is missing", async () => {
     const res = await request(app).get("/sso");
-    expect(res.status).toBe(400);
-    expect(res.text).toContain("missing_token");
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toBe("https://operatoros.test/?launchError=no_token");
     expect(consumeSsoToken).not.toHaveBeenCalled();
   });
 
-  it("returns JSON {code:missing_token} when Accept: application/json", async () => {
-    const res = await request(app).get("/sso").set("accept", "application/json");
-    expect(res.status).toBe(400);
-    expect(res.headers["content-type"]).toMatch(/application\/json/);
-    expect(res.body).toEqual({ code: "missing_token" });
-  });
-
-  it("returns 401 signature_invalid when signature is wrong, never calls consume", async () => {
+  it("redirects to hub with launchError=bad_signature on signature mismatch, never calls consume", async () => {
     const token = signToken(validClaims(), "wrong-secret");
     const res = await request(app).get(`/sso?token=${token}`);
-    expect(res.status).toBe(401);
-    expect(res.text).toContain("signature_invalid");
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toBe("https://operatoros.test/?launchError=bad_signature");
     expect(consumeSsoToken).not.toHaveBeenCalled();
   });
 
-  it("returns 401 expired (HTML) on consume TOKEN_EXPIRED and creates no session/user", async () => {
-    (consumeSsoToken as any).mockResolvedValue({ ok: false, reason: "expired", apiCode: "TOKEN_EXPIRED" });
+  it("redirects to hub with launchError=bad_module_slug on aud mismatch", async () => {
+    const token = signToken(validClaims({ aud: "techdeck", module_slug: "techdeck" }));
+    const res = await request(app).get(`/sso?token=${token}`);
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toBe("https://operatoros.test/?launchError=bad_module_slug");
+    expect(consumeSsoToken).not.toHaveBeenCalled();
+  });
+
+  it("redirects to hub with launchError=env_mismatch on env mismatch", async () => {
+    const token = signToken(validClaims({ env: "prod" }));
+    const res = await request(app).get(`/sso?token=${token}`);
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toBe("https://operatoros.test/?launchError=env_mismatch");
+  });
+
+  it("forwards consume apiCode verbatim as launchError (TOKEN_EXPIRED)", async () => {
+    (consumeSsoToken as any).mockResolvedValue({
+      ok: false,
+      unavailable: false,
+      apiCode: "TOKEN_EXPIRED",
+      httpStatus: 410,
+    });
     const claims = validClaims();
-    const token = signToken(claims);
     const sid = `sid-expired-${Date.now()}`;
-    const res = await request(app).get(`/sso?token=${token}`).set("x-test-sid", sid);
-    expect(res.status).toBe(401);
-    expect(res.text).toContain("expired");
+    const res = await request(app).get(`/sso?token=${signToken(claims)}`).set("x-test-sid", sid);
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toBe("https://operatoros.test/?launchError=TOKEN_EXPIRED");
     const sessions = (app as any).__sessions as Map<string, any>;
     expect(sessions.get(sid)?.userId).toBeUndefined();
   });
 
-  it("returns 401 audience_mismatch on consume AUDIENCE_MISMATCH (JSON path)", async () => {
-    (consumeSsoToken as any).mockResolvedValue({ ok: false, reason: "audience_mismatch", apiCode: "AUDIENCE_MISMATCH" });
-    const claims = validClaims();
-    const token = signToken(claims);
-    const res = await request(app).get(`/sso?token=${token}`).set("accept", "application/json");
-    expect(res.status).toBe(401);
-    expect(res.body).toEqual({ code: "audience_mismatch" });
+  it("redirects with launchError=consume_failed when consume 4xx has no code", async () => {
+    (consumeSsoToken as any).mockResolvedValue({
+      ok: false,
+      unavailable: false,
+      apiCode: undefined,
+      httpStatus: 400,
+    });
+    const res = await request(app).get(`/sso?token=${signToken(validClaims())}`);
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toBe("https://operatoros.test/?launchError=consume_failed");
   });
 
-  it("returns 401 consume_failed on TOKEN_REPLAYED and creates no session/user", async () => {
-    (consumeSsoToken as any).mockResolvedValue({ ok: false, reason: "consume_failed", apiCode: "TOKEN_REPLAYED" });
-    const claims = validClaims();
-    const token = signToken(claims);
-    const sid = `sid-replay-${Date.now()}`;
-    const res = await request(app).get(`/sso?token=${token}`).set("x-test-sid", sid);
-    expect(res.status).toBe(401);
-    expect(res.text).toContain("consume_failed");
-    const sessions = (app as any).__sessions as Map<string, any>;
-    expect(sessions.get(sid)?.userId).toBeUndefined();
-  });
-
-  it("returns 502 sso_consume_unavailable on consume 5xx and creates no session/user", async () => {
-    (consumeSsoToken as any).mockResolvedValue({ ok: false, reason: "sso_consume_unavailable", httpStatus: 502 });
-    const claims = validClaims();
-    const token = signToken(claims);
+  it("returns 502 sso_consume_unavailable on consume 5xx and creates no session", async () => {
+    (consumeSsoToken as any).mockResolvedValue({ ok: false, unavailable: true, httpStatus: 503 });
     const sid = `sid-unavail-${Date.now()}`;
-    const res = await request(app).get(`/sso?token=${token}`).set("x-test-sid", sid);
+    const res = await request(app).get(`/sso?token=${signToken(validClaims())}`).set("x-test-sid", sid);
     expect(res.status).toBe(502);
-    expect(res.text).toContain("sso_consume_unavailable");
+    expect(res.text).toBe("sso_consume_unavailable");
     const sessions = (app as any).__sessions as Map<string, any>;
     expect(sessions.get(sid)?.userId).toBeUndefined();
   });
 
-  it("provisions a new user keyed on sub and starts a session on success (302 → /dashboard)", async () => {
-    (consumeSsoToken as any).mockResolvedValue({ ok: true });
-    const claims = validClaims({ name: "Alice Example" });
-    const token = signToken(claims);
+  it("provisions a new user keyed on EMAIL and starts a session (302 → /dashboard)", async () => {
+    const email = `new-${crypto.randomBytes(4).toString("hex")}@example.com`;
+    const userId = `op-${crypto.randomBytes(6).toString("hex")}`;
+    (consumeSsoToken as any).mockResolvedValue(consumeOk({ email, userId, name: "Alice Example" }));
     const sid = `sid-success-${Date.now()}`;
-    const res = await request(app).get(`/sso?token=${token}`).set("x-test-sid", sid);
+    const res = await request(app).get(`/sso?token=${signToken(validClaims())}`).set("x-test-sid", sid);
     expect(res.status).toBe(302);
     expect(res.headers.location).toBe("/dashboard");
-    const provisioned = await storage.getUserByOperatorosUserId(claims.sub);
+    const provisioned = await storage.getUserByEmail(email);
     expect(provisioned).toBeDefined();
-    expect(provisioned?.email).toBe(claims.email.toLowerCase());
+    expect(provisioned?.email).toBe(email);
     expect(provisioned?.isSsoProvisioned).toBe(true);
-    expect(provisioned?.operatorosUserId).toBe(claims.sub);
+    expect(provisioned?.operatorosUserId).toBe(userId);
     expect(provisioned?.operatorosRole).toBe("user");
     expect(provisioned?.operatorosPlanSlug).toBe("starter");
     expect(provisioned?.fullName).toBe("Alice Example");
@@ -174,15 +192,15 @@ describe("/sso route", () => {
     expect(sessions.get(sid)?.userId).toBe(provisioned!.id);
   });
 
-  it("reuses the same user on a second sub-keyed launch (no duplicate)", async () => {
-    (consumeSsoToken as any).mockResolvedValue({ ok: true });
-    const sub = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString("hex")}`;
-    const email = `sub-reuse-${crypto.randomBytes(4).toString("hex")}@example.com`;
-    const first = await request(app).get(`/sso?token=${signToken(validClaims({ sub, user_id: sub, email }))}`).set("x-test-sid", "sid-first");
+  it("reuses the same user (by email) on a second launch", async () => {
+    const email = `reuse-${crypto.randomBytes(4).toString("hex")}@example.com`;
+    const userId = `op-${crypto.randomBytes(6).toString("hex")}`;
+    (consumeSsoToken as any).mockResolvedValue(consumeOk({ email, userId }));
+    const first = await request(app).get(`/sso?token=${signToken(validClaims())}`).set("x-test-sid", "sid-first");
     expect(first.status).toBe(302);
-    const second = await request(app).get(`/sso?token=${signToken(validClaims({ sub, user_id: sub, email }))}`).set("x-test-sid", "sid-second");
+    const second = await request(app).get(`/sso?token=${signToken(validClaims())}`).set("x-test-sid", "sid-second");
     expect(second.status).toBe(302);
-    const user = await storage.getUserByOperatorosUserId(sub);
+    const user = await storage.getUserByEmail(email);
     expect(user).toBeDefined();
     if (user) trackUser(user.id);
     const sessions = (app as any).__sessions as Map<string, any>;
@@ -190,114 +208,59 @@ describe("/sso route", () => {
     expect(sessions.get("sid-second")?.userId).toBe(user!.id);
   });
 
-  it("refuses to rebind when an existing user with the same email is already bound to a different sub", async () => {
-    (consumeSsoToken as any).mockResolvedValue({ ok: true });
-    const baseEmail = `conflict-${crypto.randomBytes(4).toString("hex")}@example.com`;
-    const originalSub = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString("hex")}`;
+  it("attaches operatorosUserId to a legacy user found by email", async () => {
+    const email = `legacy-${crypto.randomBytes(4).toString("hex")}@example.com`;
     const existing = await storage.createUser({
-      username: `pre-conflict-${crypto.randomBytes(4).toString("hex")}`,
+      username: `legacy-${crypto.randomBytes(4).toString("hex")}`,
       password: "hash-x",
-      fullName: "Already Bound",
+      fullName: "Legacy User",
       phone: "",
-      email: baseEmail,
-      operatorosUserId: originalSub,
-    });
+      email,
+    } as any);
     trackUser(existing.id);
+    expect(existing.operatorosUserId).toBeNull();
 
-    const attackerSub = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString("hex")}`;
-    const claims = validClaims({ sub: attackerSub, user_id: attackerSub, email: baseEmail });
-    const sid = `sid-conflict-${Date.now()}`;
-    const res = await request(app).get(`/sso?token=${signToken(claims)}`).set("x-test-sid", sid);
-    expect(res.status).toBe(401);
-    expect(res.text).toContain("consume_failed");
-    const after = await storage.getUser(existing.id);
-    expect(after?.operatorosUserId).toBe(originalSub);
-    const sessions = (app as any).__sessions as Map<string, any>;
-    expect(sessions.get(sid)?.userId).toBeUndefined();
-  });
-
-  it("allows email change for an existing user that's already bound to the same sub", async () => {
-    (consumeSsoToken as any).mockResolvedValue({ ok: true });
-    const sub = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString("hex")}`;
-    const oldEmail = `old-${crypto.randomBytes(4).toString("hex")}@example.com`;
-    const newEmail = `new-${crypto.randomBytes(4).toString("hex")}@example.com`;
-    const existing = await storage.createUser({
-      username: `same-sub-${crypto.randomBytes(4).toString("hex")}`,
-      password: "hash-x",
-      fullName: "Same Sub",
-      phone: "",
-      email: oldEmail,
-      operatorosUserId: sub,
-    });
-    trackUser(existing.id);
-
-    const claims = validClaims({ sub, user_id: sub, email: newEmail });
-    const sid = `sid-emailchange-${Date.now()}`;
-    const res = await request(app).get(`/sso?token=${signToken(claims)}`).set("x-test-sid", sid);
+    const userId = `op-${crypto.randomBytes(6).toString("hex")}`;
+    (consumeSsoToken as any).mockResolvedValue(consumeOk({ email, userId }));
+    const sid = `sid-backfill-${Date.now()}`;
+    const res = await request(app).get(`/sso?token=${signToken(validClaims())}`).set("x-test-sid", sid);
     expect(res.status).toBe(302);
-    const after = await storage.getUser(existing.id);
-    expect(after?.email).toBe(newEmail.toLowerCase());
-    expect(after?.operatorosUserId).toBe(sub);
+    const updated = await storage.getUser(existing.id);
+    expect(updated?.operatorosUserId).toBe(userId);
     const sessions = (app as any).__sessions as Map<string, any>;
     expect(sessions.get(sid)?.userId).toBe(existing.id);
   });
 
   it("promotes a provisioned user to isSuperAdmin when role=super_admin", async () => {
-    (consumeSsoToken as any).mockResolvedValue({ ok: true });
-    const claims = validClaims({ role: "super_admin" });
-    const res = await request(app).get(`/sso?token=${signToken(claims)}`).set("x-test-sid", `sid-promote-${Date.now()}`);
+    const email = `super-${crypto.randomBytes(4).toString("hex")}@example.com`;
+    (consumeSsoToken as any).mockResolvedValue(consumeOk({ email, role: "super_admin" }));
+    const res = await request(app).get(`/sso?token=${signToken(validClaims())}`).set("x-test-sid", `sid-promote-${Date.now()}`);
     expect(res.status).toBe(302);
-    const provisioned = await storage.getUserByOperatorosUserId(claims.sub);
-    expect(provisioned).toBeDefined();
-    expect(provisioned?.isSuperAdmin).toBe(true);
-    expect(provisioned?.operatorosRole).toBe("super_admin");
-    if (provisioned) trackUser(provisioned.id);
+    const user = await storage.getUserByEmail(email);
+    expect(user).toBeDefined();
+    expect(user?.isSuperAdmin).toBe(true);
+    expect(user?.operatorosRole).toBe("super_admin");
+    if (user) trackUser(user.id);
   });
 
   it("revokes isSuperAdmin on the next launch when OperatorOS role drops to user", async () => {
-    (consumeSsoToken as any).mockResolvedValue({ ok: true });
-    const sub = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString("hex")}`;
     const email = `demote-${crypto.randomBytes(4).toString("hex")}@example.com`;
-    const first = await request(app)
-      .get(`/sso?token=${signToken(validClaims({ sub, user_id: sub, email, role: "super_admin" }))}`)
-      .set("x-test-sid", "sid-demote-1");
+    (consumeSsoToken as any).mockResolvedValue(consumeOk({ email, role: "super_admin" }));
+    const first = await request(app).get(`/sso?token=${signToken(validClaims())}`).set("x-test-sid", "sid-demote-1");
     expect(first.status).toBe(302);
-    const promoted = await storage.getUserByOperatorosUserId(sub);
+    const promoted = await storage.getUserByEmail(email);
     expect(promoted?.isSuperAdmin).toBe(true);
     if (promoted) trackUser(promoted.id);
 
-    const second = await request(app)
-      .get(`/sso?token=${signToken(validClaims({ sub, user_id: sub, email, role: "user" }))}`)
-      .set("x-test-sid", "sid-demote-2");
+    (consumeSsoToken as any).mockResolvedValue(consumeOk({ email, role: "user" }));
+    const second = await request(app).get(`/sso?token=${signToken(validClaims())}`).set("x-test-sid", "sid-demote-2");
     expect(second.status).toBe(302);
-    const after = await storage.getUserByOperatorosUserId(sub);
+    const after = await storage.getUserByEmail(email);
     expect(after?.isSuperAdmin).toBe(false);
     expect(after?.operatorosRole).toBe("user");
   });
 
-  it("respects q-value ordering in Accept (application/json;q=1, text/html;q=0.8 -> JSON)", async () => {
-    const res = await request(app)
-      .get("/sso")
-      .set("accept", "application/json;q=1, text/html;q=0.8");
-    expect(res.status).toBe(400);
-    expect(res.headers["content-type"]).toMatch(/application\/json/);
-    expect(res.body).toEqual({ code: "missing_token" });
-  });
-
-  it("returns HTML for the default browser Accept header (text/html;q=0.9 outranks */*)", async () => {
-    const res = await request(app)
-      .get("/sso")
-      .set(
-        "accept",
-        "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
-      );
-    expect(res.status).toBe(400);
-    expect(res.headers["content-type"]).toMatch(/text\/html/);
-    expect(res.text).toContain("missing_token");
-  });
-
-  it("auto-joins the user to an existing TradeFlowKit org linked to the OperatorOS organization_id", async () => {
-    (consumeSsoToken as any).mockResolvedValue({ ok: true });
+  it("auto-joins user to an existing linked org when consume payload carries an organizationId", async () => {
     const operatorosOrgId = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString("hex")}`;
     const org = await storage.createOrg({
       name: `Linked Org ${crypto.randomBytes(3).toString("hex")}`,
@@ -306,17 +269,20 @@ describe("/sso route", () => {
     } as any);
     trackOrg(org.id);
 
-    const claims = validClaims({ organization_id: operatorosOrgId, role: "admin" });
+    const email = `autojoin-${crypto.randomBytes(4).toString("hex")}@example.com`;
+    (consumeSsoToken as any).mockResolvedValue(
+      consumeOk({ email, organizationId: operatorosOrgId, role: "admin" })
+    );
     const sid = `sid-autojoin-${Date.now()}`;
-    const res = await request(app).get(`/sso?token=${signToken(claims)}`).set("x-test-sid", sid);
+    const res = await request(app).get(`/sso?token=${signToken(validClaims())}`).set("x-test-sid", sid);
     expect(res.status).toBe(302);
+    expect(res.headers.location).toBe("/dashboard?sso=joined");
 
-    const user = await storage.getUserByOperatorosUserId(claims.sub);
+    const user = await storage.getUserByEmail(email);
     expect(user).toBeDefined();
     if (user) trackUser(user.id);
 
     const membership = await storage.getMembership(org.id, user!.id);
-    expect(membership).toBeDefined();
     expect(membership?.role).toBe("admin");
 
     const sessions = (app as any).__sessions as Map<string, any>;
@@ -324,14 +290,17 @@ describe("/sso route", () => {
   });
 
   it("auto-provisions a new TradeFlowKit org for a brand-new OperatorOS tenant", async () => {
-    (consumeSsoToken as any).mockResolvedValue({ ok: true });
     const operatorosOrgId = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString("hex")}`;
-    const claims = validClaims({ organization_id: operatorosOrgId, name: "Pat Provisioner" });
+    const email = `autoprov-${crypto.randomBytes(4).toString("hex")}@example.com`;
+    (consumeSsoToken as any).mockResolvedValue(
+      consumeOk({ email, organizationId: operatorosOrgId, name: "Pat Provisioner" })
+    );
     const sid = `sid-autoprov-${Date.now()}`;
-    const res = await request(app).get(`/sso?token=${signToken(claims)}`).set("x-test-sid", sid);
+    const res = await request(app).get(`/sso?token=${signToken(validClaims())}`).set("x-test-sid", sid);
     expect(res.status).toBe(302);
+    expect(res.headers.location).toBe("/dashboard?sso=provisioned");
 
-    const user = await storage.getUserByOperatorosUserId(claims.sub);
+    const user = await storage.getUserByEmail(email);
     expect(user).toBeDefined();
     if (user) trackUser(user.id);
 
@@ -341,101 +310,143 @@ describe("/sso route", () => {
 
     const membership = await storage.getMembership(linked!.id, user!.id);
     expect(membership?.role).toBe("owner");
-
-    const sessions = (app as any).__sessions as Map<string, any>;
-    expect(sessions.get(sid)?.orgId).toBe(linked!.id);
   });
 
-  it("does not auto-pick when user has multiple orgs and none match the OperatorOS tenant", async () => {
-    (consumeSsoToken as any).mockResolvedValue({ ok: true });
-    const sub = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString("hex")}`;
-    const email = `multi-${crypto.randomBytes(4).toString("hex")}@example.com`;
-    const existing = await storage.createUser({
-      username: `multi-${crypto.randomBytes(4).toString("hex")}`,
-      password: "hash-x",
-      fullName: "Multi Org",
-      phone: "",
-      email,
-      operatorosUserId: sub,
-    });
-    trackUser(existing.id);
-
-    const orgA = await storage.createOrg({ name: "A", slug: `a-${crypto.randomBytes(4).toString("hex")}` } as any);
-    const orgB = await storage.createOrg({ name: "B", slug: `b-${crypto.randomBytes(4).toString("hex")}` } as any);
-    trackOrg(orgA.id);
-    trackOrg(orgB.id);
-    await storage.createMembership(orgA.id, existing.id, "owner");
-    await storage.createMembership(orgB.id, existing.id, "tech");
-
+  it("does NOT leave a session userId when an auto-join storage call throws", async () => {
     const operatorosOrgId = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString("hex")}`;
-    const claims = validClaims({ sub, user_id: sub, email, organization_id: operatorosOrgId });
-    const sid = `sid-multi-${Date.now()}`;
-    const res = await request(app).get(`/sso?token=${signToken(claims)}`).set("x-test-sid", sid);
-    expect(res.status).toBe(302);
-
-    // No matching linked org exists; user already had >0 orgs, so we must not provision a new one.
-    const linked = await storage.getOrgByOperatorosOrganizationId(operatorosOrgId);
-    expect(linked).toBeUndefined();
-
-    const sessions = (app as any).__sessions as Map<string, any>;
-    expect([orgA.id, orgB.id]).toContain(sessions.get(sid)?.orgId);
-  });
-
-  it("prefers the OperatorOS-linked org when the user belongs to multiple TradeFlowKit orgs", async () => {
-    (consumeSsoToken as any).mockResolvedValue({ ok: true });
-    const sub = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString("hex")}`;
-    const email = `prefer-${crypto.randomBytes(4).toString("hex")}@example.com`;
-    const existing = await storage.createUser({
-      username: `prefer-${crypto.randomBytes(4).toString("hex")}`,
-      password: "hash-x",
-      fullName: "Prefer Linked",
-      phone: "",
-      email,
-      operatorosUserId: sub,
-    });
-    trackUser(existing.id);
-
-    const operatorosOrgId = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString("hex")}`;
-    const orgUnlinked = await storage.createOrg({ name: "Unlinked", slug: `un-${crypto.randomBytes(4).toString("hex")}` } as any);
-    const orgLinked = await storage.createOrg({
-      name: "Linked",
-      slug: `ln-${crypto.randomBytes(4).toString("hex")}`,
+    const org = await storage.createOrg({
+      name: `Throw Linked ${crypto.randomBytes(3).toString("hex")}`,
+      slug: `throw-${crypto.randomBytes(4).toString("hex")}`,
       operatorosOrganizationId: operatorosOrgId,
     } as any);
-    trackOrg(orgUnlinked.id);
-    trackOrg(orgLinked.id);
-    await storage.createMembership(orgUnlinked.id, existing.id, "owner");
-    await storage.createMembership(orgLinked.id, existing.id, "tech");
+    trackOrg(org.id);
 
-    const claims = validClaims({ sub, user_id: sub, email, organization_id: operatorosOrgId });
-    const sid = `sid-prefer-${Date.now()}`;
-    const res = await request(app).get(`/sso?token=${signToken(claims)}`).set("x-test-sid", sid);
-    expect(res.status).toBe(302);
+    const email = `throwfail-${crypto.randomBytes(4).toString("hex")}@example.com`;
+    (consumeSsoToken as any).mockResolvedValue(
+      consumeOk({ email, organizationId: operatorosOrgId })
+    );
+
+    const auditSpy = vi
+      .spyOn(storage, "recordAudit")
+      .mockRejectedValueOnce(new Error("simulated db failure"));
+
+    const sid = `sid-fail-${Date.now()}`;
+    const res = await request(app).get(`/sso?token=${signToken(validClaims())}`).set("x-test-sid", sid);
+    expect(res.status).toBe(500);
 
     const sessions = (app as any).__sessions as Map<string, any>;
-    expect(sessions.get(sid)?.orgId).toBe(orgLinked.id);
+    expect(sessions.get(sid)?.userId).toBeUndefined();
+    expect(sessions.get(sid)?.orgId).toBeUndefined();
+
+    const user = await storage.getUserByEmail(email);
+    if (user) trackUser(user.id);
+
+    auditSpy.mockRestore();
   });
 
-  it("backfills sub onto an existing email-keyed user from the previous implementation", async () => {
-    (consumeSsoToken as any).mockResolvedValue({ ok: true });
-    const baseEmail = `legacy-${crypto.randomBytes(4).toString("hex")}@example.com`;
-    const existing = await storage.createUser({
-      username: `pre-${crypto.randomBytes(4).toString("hex")}`,
-      password: "hash-x",
-      fullName: "Legacy User",
-      phone: "",
-      email: baseEmail,
+  it("SECURITY: SSO tenant snapshot bootstrap only writes the launch org, never sibling linked orgs", async () => {
+    // User belongs to TWO linked orgs. They launch from orgA (with planSlug=pro).
+    // orgB (an unrelated linked tenant) must NOT receive a bootstrapped snapshot.
+    const opOrgAId = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString("hex")}`;
+    const opOrgBId = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString("hex")}`;
+    const orgA = await storage.createOrg({
+      name: `Launch Org ${crypto.randomBytes(3).toString("hex")}`,
+      slug: `launch-${crypto.randomBytes(4).toString("hex")}`,
+      operatorosOrganizationId: opOrgAId,
     } as any);
-    trackUser(existing.id);
-    expect(existing.operatorosUserId).toBeNull();
+    const orgB = await storage.createOrg({
+      name: `Sibling Org ${crypto.randomBytes(3).toString("hex")}`,
+      slug: `sibling-${crypto.randomBytes(4).toString("hex")}`,
+      operatorosOrganizationId: opOrgBId,
+    } as any);
+    trackOrg(orgA.id);
+    trackOrg(orgB.id);
 
-    const sub = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString("hex")}`;
-    const claims = validClaims({ sub, user_id: sub, email: baseEmail.toUpperCase() });
-    const res = await request(app).get(`/sso?token=${signToken(claims)}`).set("x-test-sid", "sid-backfill");
+    const email = `multiorg-${crypto.randomBytes(4).toString("hex")}@example.com`;
+    // First launch creates user + auto-joins orgA.
+    (consumeSsoToken as any).mockResolvedValue(
+      consumeOk({ email, organizationId: opOrgAId, role: "admin", planSlug: "starter" })
+    );
+    await request(app).get(`/sso?token=${signToken(validClaims())}`).set("x-test-sid", `sid-mo-1-${Date.now()}`);
+    const user = await storage.getUserByEmail(email);
+    if (user) trackUser(user.id);
+    // Manually add user to orgB so they're a member of both linked orgs.
+    await storage.createMembership(orgB.id, user!.id, "admin");
+
+    // Now launch from orgA with a richer plan; orgB must remain untouched.
+    (consumeSsoToken as any).mockResolvedValue(
+      consumeOk({ email, organizationId: opOrgAId, role: "admin", planSlug: "pro" })
+    );
+    const res = await request(app)
+      .get(`/sso?token=${signToken(validClaims())}`)
+      .set("x-test-sid", `sid-mo-2-${Date.now()}`);
     expect(res.status).toBe(302);
-    const updated = await storage.getUser(existing.id);
-    expect(updated?.operatorosUserId).toBe(sub);
-    const sessions = (app as any).__sessions as Map<string, any>;
-    expect(sessions.get("sid-backfill")?.userId).toBe(existing.id);
+
+    const orgAAfter = await storage.getOrg(orgA.id);
+    const orgBAfter = await storage.getOrg(orgB.id);
+    // orgA may now carry a bootstrap snapshot keyed to pro.
+    expect((orgAAfter as any)?.entitlementSnapshot).toBeTruthy();
+    // orgB must NOT have been touched by the launch context of orgA.
+    expect((orgBAfter as any)?.entitlementSnapshot ?? null).toBeNull();
+    expect((orgBAfter as any)?.operatorosPlanSlug ?? null).toBeNull();
+  });
+
+  it("SECURITY: SSO membership bootstrap does NOT seed moduleRole/enabled for sibling linked orgs", async () => {
+    // User belongs to two linked orgs. Launching from orgA must NOT write
+    // any moduleRole/enabled to the membership in orgB.
+    const opOrgAId = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString("hex")}`;
+    const opOrgBId = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString("hex")}`;
+    const orgA = await storage.createOrg({
+      name: `Mem Launch ${crypto.randomBytes(3).toString("hex")}`,
+      slug: `memlaunch-${crypto.randomBytes(4).toString("hex")}`,
+      operatorosOrganizationId: opOrgAId,
+    } as any);
+    const orgB = await storage.createOrg({
+      name: `Mem Sibling ${crypto.randomBytes(3).toString("hex")}`,
+      slug: `memsibling-${crypto.randomBytes(4).toString("hex")}`,
+      operatorosOrganizationId: opOrgBId,
+    } as any);
+    trackOrg(orgA.id);
+    trackOrg(orgB.id);
+
+    const email = `memiso-${crypto.randomBytes(4).toString("hex")}@example.com`;
+    // First launch into orgA — auto-joins and bootstraps orgA membership.
+    (consumeSsoToken as any).mockResolvedValue(
+      consumeOk({ email, organizationId: opOrgAId, role: "admin" })
+    );
+    await request(app).get(`/sso?token=${signToken(validClaims())}`).set("x-test-sid", `sid-memiso-1-${Date.now()}`);
+    const user = await storage.getUserByEmail(email);
+    if (user) trackUser(user.id);
+
+    // Manually add user to orgB as viewer with no snapshot, no moduleRole.
+    await storage.createMembership(orgB.id, user!.id, "viewer");
+
+    // Launch again from orgA with role=admin.
+    (consumeSsoToken as any).mockResolvedValue(
+      consumeOk({ email, organizationId: opOrgAId, role: "admin" })
+    );
+    await request(app).get(`/sso?token=${signToken(validClaims())}`).set("x-test-sid", `sid-memiso-2-${Date.now()}`);
+
+    const memA = await storage.getMembership(orgA.id, user!.id);
+    const memB = await storage.getMembership(orgB.id, user!.id);
+    // orgA membership was the launch context — moduleRole MUST be set.
+    expect(memA?.moduleRole).toBeTruthy();
+    // orgB membership is a sibling — moduleRole/enabled MUST NOT be set
+    // from orgA's launch payload. role stays "viewer", no snapshot.
+    expect(memB?.role).toBe("viewer");
+    expect(memB?.moduleRole ?? null).toBeNull();
+    expect(memB?.userEntitlementSnapshot ?? null).toBeNull();
+  });
+
+  it("redirects to plain /dashboard when there is no organizationId on the consume payload", async () => {
+    const email = `plain-${crypto.randomBytes(4).toString("hex")}@example.com`;
+    (consumeSsoToken as any).mockResolvedValue(consumeOk({ email }));
+    const res = await request(app)
+      .get(`/sso?token=${signToken(validClaims())}`)
+      .set("x-test-sid", `sid-plain-${Date.now()}`);
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toBe("/dashboard");
+    const user = await storage.getUserByEmail(email);
+    if (user) trackUser(user.id);
   });
 });

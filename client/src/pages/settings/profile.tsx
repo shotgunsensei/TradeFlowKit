@@ -7,6 +7,8 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { ShieldCheck } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -75,6 +77,32 @@ export default function ProfileTab() {
         <CardDescription>Update your personal information</CardDescription>
       </CardHeader>
       <CardContent>
+        {user?.operatorosUserId && (
+          <div
+            className="mb-4 flex items-start gap-3 rounded-md border border-blue-200 bg-blue-50 p-3 text-sm dark:border-blue-900 dark:bg-blue-950/40"
+            data-testid="banner-operatoros-managed"
+          >
+            <ShieldCheck className="h-4 w-4 mt-0.5 text-blue-600 dark:text-blue-300 shrink-0" />
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="font-medium text-blue-900 dark:text-blue-100">
+                  Managed by OperatorOS
+                </span>
+                <Badge
+                  variant="outline"
+                  className="border-blue-300 text-blue-700 dark:border-blue-700 dark:text-blue-300 no-default-hover-elevate no-default-active-elevate"
+                  data-testid="badge-operatoros-self"
+                >
+                  SSO
+                </Badge>
+              </div>
+              <p className="text-blue-800/90 dark:text-blue-200/90">
+                You sign in through OperatorOS. Your account role (including super-admin
+                status) is controlled there and re-applied each time you sign in.
+              </p>
+            </div>
+          </div>
+        )}
         <Form {...profileForm}>
           <form onSubmit={profileForm.handleSubmit(handleProfileSubmit)} className="space-y-4" noValidate>
             <FormField

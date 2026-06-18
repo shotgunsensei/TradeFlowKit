@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "EcMwvCHr0DrSPgjxaeAfI"
+uri = "file://docs/OPERATOROS_INTEGRATION_GUIDE.md"
+type = "text"
+title = "TradeFlowKit ↔ OperatorOS Integration Guide"

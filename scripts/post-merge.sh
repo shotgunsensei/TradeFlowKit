@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e
-npm install
-# Auto-answer interactive drizzle-kit push prompts with the default
-# (first / safest option, e.g. "add the constraint without truncating").
-printf '\n\n\n\n\n\n\n\n\n\n' | npm run db:push || npm run db:push -- --force
+
+# Keep this fast: skip the slow audit/funding passes. Stdin is closed during
+# post-merge, so everything here must be non-interactive.
+npm install --no-audit --no-fund --prefer-offline
+
+# Apply any schema changes non-interactively (--force skips confirmation prompts).
+npm run db:push -- --force

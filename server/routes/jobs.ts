@@ -24,6 +24,31 @@ function canUseRecurring(plan: string): boolean {
   return plan === "small_business" || plan === "enterprise";
 }
 
+/**
+ * OperatorOS-aware variant of {@link canUseRecurring}. For linked orgs the
+ * legacy `org.plan` is meaningless — recurring entitlement is whatever
+ * `resolveAccess()` derived from the tenant snapshot.
+ */
+async function canUseRecurringForOrg(orgId: string): Promise<boolean> {
+  const { resolveAccess, isLinkedOrg } = await import("@shared/entitlements");
+  const org = await storage.getOrg(orgId);
+  if (!org) return false;
+  if (isLinkedOrg(org)) {
+    // Tenant-level feature check — pass a fully-allowed synthetic membership
+    // so we read the tenant features without granting any user privilege
+    // (we only inspect access.features, never access.allowed).
+    const synthetic: Parameters<typeof resolveAccess>[1] = {
+      role: "owner",
+      moduleRole: "module_admin",
+      enabled: true,
+      userEntitlementSnapshot: null,
+    };
+    const access = resolveAccess(org, synthetic);
+    return access.features.recurring_jobs === true;
+  }
+  return canUseRecurring(org.plan);
+}
+
 function calcNextScheduledStart(current: Date, frequency: string): Date {
   const next = new Date(current);
   switch (frequency) {
@@ -106,7 +131,7 @@ router.post("/api/jobs", requireAuth, requireOrg, async (req: Request, res: Resp
     data.scheduledEnd = data.scheduledEnd ? new Date(data.scheduledEnd) : null;
 
     const org = await storage.getOrg(req.session.orgId!);
-    if (!org || !canUseRecurring(org.plan)) {
+    if (!org || !(await canUseRecurringForOrg(org.id))) {
       data.isRecurring = false;
       data.recurringFrequency = null;
       data.parentJobId = null;
@@ -139,7 +164,7 @@ router.patch("/api/jobs/:id", requireAuth, requireOrg, async (req: Request, res:
     if ("customerId" in data) data.customerId = data.customerId || null;
 
     const org = await storage.getOrg(orgId);
-    if (!org || !canUseRecurring(org.plan)) {
+    if (!org || !(await canUseRecurringForOrg(orgId))) {
       delete data.isRecurring;
       delete data.recurringFrequency;
       delete data.parentJobId;
@@ -202,7 +227,7 @@ router.patch("/api/jobs/:id", requireAuth, requireOrg, async (req: Request, res:
     if (newStatus && (newStatus === "done" || newStatus === "invoiced") && !wasAlreadyTerminal) {
       if (j.isRecurring && j.recurringFrequency) {
         try {
-          if (org && canUseRecurring(org.plan)) {
+          if (org && (await canUseRecurringForOrg(org.id))) {
             const baseStart = j.scheduledStart ? new Date(j.scheduledStart) : new Date();
             const nextStart = calcNextScheduledStart(baseStart, j.recurringFrequency);
             let nextEnd: Date | null = null;

@@ -38,6 +38,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Shield, Users, Building2, Trash2, Settings, ChevronDown, ChevronRight, UserMinus } from "lucide-react";
 
 const CR_PLAN_LABELS: Record<string, string> = {
@@ -299,24 +300,33 @@ function OrganizationsTab() {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            <DropdownMenuSub>
-                              <DropdownMenuSubTrigger data-testid={`button-change-plan-${org.id}`}>
-                                Change Plan
-                              </DropdownMenuSubTrigger>
-                              <DropdownMenuSubContent>
-                                {Object.entries(PLAN_LABELS).map(([key, label]) => (
-                                  <DropdownMenuItem
-                                    key={key}
-                                    onClick={() => changePlanMutation.mutate({ id: org.id, plan: key })}
-                                    disabled={org.plan === key}
-                                    data-testid={`button-set-plan-${key}-${org.id}`}
-                                  >
-                                    {label}
-                                    {org.plan === key && " (current)"}
-                                  </DropdownMenuItem>
-                                ))}
-                              </DropdownMenuSubContent>
-                            </DropdownMenuSub>
+                            {(org as any).operatorosTenantId ? (
+                              <DropdownMenuItem
+                                disabled
+                                data-testid={`text-plan-managed-${org.id}`}
+                              >
+                                Plan managed by OperatorOS
+                              </DropdownMenuItem>
+                            ) : (
+                              <DropdownMenuSub>
+                                <DropdownMenuSubTrigger data-testid={`button-change-plan-${org.id}`}>
+                                  Change Plan
+                                </DropdownMenuSubTrigger>
+                                <DropdownMenuSubContent>
+                                  {Object.entries(PLAN_LABELS).map(([key, label]) => (
+                                    <DropdownMenuItem
+                                      key={key}
+                                      onClick={() => changePlanMutation.mutate({ id: org.id, plan: key })}
+                                      disabled={org.plan === key}
+                                      data-testid={`button-set-plan-${key}-${org.id}`}
+                                    >
+                                      {label}
+                                      {org.plan === key && " (current)"}
+                                    </DropdownMenuItem>
+                                  ))}
+                                </DropdownMenuSubContent>
+                              </DropdownMenuSub>
+                            )}
                             <DropdownMenuSub>
                               <DropdownMenuSubTrigger data-testid={`button-change-cr-plan-${org.id}`}>
                                 Change CR Plan
@@ -414,12 +424,13 @@ function UsersTab() {
               <TableHead>Full Name</TableHead>
               <TableHead>Email</TableHead>
               <TableHead>Super Admin</TableHead>
+              <TableHead>Managed By</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {users.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">
+                <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
                   No users found
                 </TableCell>
               </TableRow>
@@ -441,6 +452,30 @@ function UsersTab() {
                       </Badge>
                     ) : (
                       <span className="text-muted-foreground text-sm">—</span>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    {u.operatorosUserId ? (
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Badge
+                              variant="outline"
+                              className="border-blue-300 text-blue-700 dark:border-blue-700 dark:text-blue-300 no-default-hover-elevate no-default-active-elevate cursor-help"
+                              data-testid={`badge-operatoros-${u.id}`}
+                            >
+                              Managed by OperatorOS
+                            </Badge>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-xs">
+                            This user signs in through OperatorOS. Their super-admin
+                            status is controlled there and will be re-applied on every
+                            sign-in — local changes will be overwritten.
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    ) : (
+                      <span className="text-muted-foreground text-sm" data-testid={`text-local-${u.id}`}>Local</span>
                     )}
                   </TableCell>
                 </TableRow>

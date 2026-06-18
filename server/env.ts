@@ -10,9 +10,11 @@ const envSchema = z.object({
   OPERATOROS_API_URL: z.string().url().optional(),
   OPERATOROS_SSO_AUDIENCE: z.string().optional(),
   OPERATOROS_SSO_ENV: z.enum(["prod", "staging", "dev"]).optional(),
+  OPERATOROS_SERVICE_TOKEN: z.string().optional(),
   // Legacy aliases (kept for backward compatibility with existing deployments).
   APP_ENV: z.string().optional(),
   MODULE_SLUG: z.string().optional(),
+  SOFT_DELETE_RETENTION_DAYS: z.coerce.number().int().positive().default(30),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -47,7 +49,12 @@ export interface SsoConfig {
   ssoEnv: "prod" | "staging" | "dev";
   /** Expected `aud` and `module_slug` claims. */
   audience: string;
-  /** Host to POST `/v1/modules/sso/consume` against. */
+  /**
+   * API base to POST `/modules/sso/consume` against. Per the canonical
+   * contract this is `https://operatoros.net/api` (the hub's front door
+   * rewrites `/api/:path*` to internal Fastify routes). Defaults to
+   * `OPERATOROS_BASE_URL` when `OPERATOROS_API_URL` is unset.
+   */
   apiUrl: string;
 }
 

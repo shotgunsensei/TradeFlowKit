@@ -14,10 +14,18 @@ router.get("/api/portal/:token", async (req: Request, res: Response) => {
     const org = await storage.getOrg(customer.orgId);
     if (!org) return res.status(404).send("Not found");
 
-    const allowedPlans = ["individual", "small_business", "enterprise"];
-    if (!allowedPlans.includes(org.plan)) {
+    // Portal is a public endpoint (token-based) so there's no session and
+    // no membership. Use the tenant-only feature check, which reads strictly
+    // from the org's signed snapshot / plan defaults without fabricating
+    // any user/membership context.
+    const { tenantHasFeature, isLinkedOrg } = await import("@shared/entitlements");
+    if (!tenantHasFeature(org, "customer_portal")) {
       return res.status(403).json({
-        error: "Customer portal is not available on this plan.",
+        error: "feature_not_in_plan",
+        feature: "customer_portal",
+        linked: isLinkedOrg(org),
+        planSlug: org.plan ?? null,
+        message: "Customer portal is not available on this plan.",
       });
     }
 

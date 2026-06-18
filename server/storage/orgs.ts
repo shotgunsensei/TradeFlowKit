@@ -102,6 +102,15 @@ export const orgsStorage = {
     return org;
   },
 
+  async getOrgByOperatorosTenantId(operatorosTenantId: string): Promise<Org | undefined> {
+    if (!operatorosTenantId) return undefined;
+    const [org] = await db
+      .select()
+      .from(orgs)
+      .where(eq(orgs.operatorosTenantId, operatorosTenantId));
+    return org;
+  },
+
   async deleteUser(userId: string): Promise<void> {
     await db.transaction(async (tx) => {
       const userMemberships = await tx.select().from(memberships).where(eq(memberships.userId, userId));
@@ -182,6 +191,34 @@ export const membershipsStorage = {
     await db
       .update(memberships)
       .set({ role: role as MembershipRole })
+      .where(and(eq(memberships.orgId, orgId), eq(memberships.userId, userId)));
+  },
+
+  async updateMembershipEntitlements(
+    orgId: string,
+    userId: string,
+    data: {
+      operatorosUserId?: string | null;
+      tenantRole?: string | null;
+      moduleRole?: string | null;
+      enabled?: boolean;
+      userEntitlementSnapshot?: unknown;
+      lastSsoLoginAt?: Date;
+      role?: string;
+    },
+  ): Promise<void> {
+    const patch: Record<string, unknown> = {};
+    if (data.operatorosUserId !== undefined) patch.operatorosUserId = data.operatorosUserId;
+    if (data.tenantRole !== undefined) patch.tenantRole = data.tenantRole;
+    if (data.moduleRole !== undefined) patch.moduleRole = data.moduleRole;
+    if (data.enabled !== undefined) patch.enabled = data.enabled;
+    if (data.userEntitlementSnapshot !== undefined) patch.userEntitlementSnapshot = data.userEntitlementSnapshot;
+    if (data.lastSsoLoginAt !== undefined) patch.lastSsoLoginAt = data.lastSsoLoginAt;
+    if (data.role !== undefined) patch.role = data.role as MembershipRole;
+    if (Object.keys(patch).length === 0) return;
+    await db
+      .update(memberships)
+      .set(patch)
       .where(and(eq(memberships.orgId, orgId), eq(memberships.userId, userId)));
   },
 

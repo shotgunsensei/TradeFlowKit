@@ -1,0 +1,299 @@
+You are integrating THIS app as a child module of OperatorOS via the Module
+SSO handoff protocol. OperatorOS is the identity, billing, and entitlement
+hub at https://operatoros.net. This app must trust OperatorOS to vouch for
+who the user is and what they're allowed to do. Never compute entitlement
+locally.
+These instructions are the AUTHORITATIVE contract derived directly from the
+hub's source code and a live wire-trace of its deployed API. Follow them
+exactly. If something here disagrees with older docs, this wins.
+================================================================
+0. Environment variables (set in Replit Secrets on THIS app)
+================================================================
+- MODULE_SSO_SECRET         HS256 signing key. Must be the EXACT string
+                           configured on the hub (≥16 chars; in prod
+                           today it is 64 chars). #1 cause of SSO failures
+                           is this string being different on hub vs child.
+- OPERATOROS_BASE_URL       The hub's public origin used as the JWT `iss`
+                           claim. In prod this is exactly:
+                               https://operatoros.net
+                           No trailing slash. Compared as a literal
+                           string against the JWT — drift = bad_issuer.
+- OPERATOROS_API_URL        The base URL for server-to-server calls to the
+                           hub API. In prod this is:
+                               https://operatoros.net/api
+                           NOT https://operatoros.net/v1 — that path 404s
+                           in production. The hub's Next.js front-door
+                           rewrites `/api/:path*` to the internal Fastify
+                           `/v1/:path*`. You only ever hit `/api/...`
+                           publicly. (If you're talking to a self-hosted
+                           hub with a direct API hostname, set this to
+                           `https://that-host/v1` instead.)
+- OPERATOROS_SSO_AUDIENCE   This module's slug as registered in the hub's
+                           `modules` table — lowercase, exact. Examples:
+                               tradeflowkit, callcommand-ai, torqueshed,
+                               pulsedesk, ninjamation, faultlinelab,
+                               snapproofos, techdeck, bf-os
+                           The hub puts this string in BOTH `aud` and
+                           `module_slug`; you must check both.
+- OPERATOROS_SSO_ENV        One of: prod | staging | dev (canonical form).
+                           Must match the hub's normalized APP_ENV.
+                           Hub normalizer: production→prod, stage→staging,
+                           anything else→dev. Match the canonical value.
+Do NOT reuse SESSION_SECRET or JWT_SECRET as MODULE_SSO_SECRET. The hub
+uses a dedicated key on purpose.
+================================================================
+1. Route contract — mount `GET /sso` (exact path, exact param)
+================================================================
+The hub redirects the user's browser to:
+   {this app's base_url}/sso?token=<jwt>
+Always `/sso`, always `?token=`. Mount it OUTSIDE any `/api` prefix in
+your framework so it resolves at the top level. If the path is wrong the
+browser sees a 404 and the user gets a blank failure.
+================================================================
+2. Verification order — strict, fail-closed
+================================================================
+Run these checks in this exact order. Each failure redirects the user back
+to the hub at `{OPERATOROS_BASE_URL}/?launchError=<code>` so the operator
+sees a real error instead of a hung page. NEVER read claims off the token
+before step 2 succeeds — that's the classic JWT bypass.
+ 1. `?token` query param present                → no_token
+ 2. jwt.verify(token, MODULE_SSO_SECRET, {
+      algorithms: ['HS256'],           // HS256 ONLY — reject alg:none,
+                                       // reject RS256
+      audience:   OPERATOROS_SSO_AUDIENCE,
+      clockTolerance: 5,               // ±5 s skew
+    })                                                → bad_signature / token_expired
+ 3. claims.iss === OPERATOROS_BASE_URL              → bad_issuer
+ 4. claims.module_slug === claims.aud === OPERATOROS_SSO_AUDIENCE
+                                                    → bad_module_slug
+ 5. claims.env === OPERATOROS_SSO_ENV               → env_mismatch
+ 6. Token age check: (now - claims.iat) ≤ 90 seconds, with the same ±5 s
+    skew window                                     → token_expired
+ 7. POST {OPERATOROS_API_URL}/modules/sso/consume
+       body:    { "jti": "<claims.jti>",
+                  "aud": "<claims.aud>",
+                  "env": "<claims.env>" }
+       headers: content-type: application/json
+       (no auth header — this endpoint is unauthenticated by design; the
+       atomic single-use jti claim IS the auth)
+    Map the response status verbatim:
+       200 ok                 → continue to step 8
+       400 BAD_REQUEST        → your body shape is wrong; fix the call
+       400 AUDIENCE_MISMATCH  → reject the launch; do NOT proceed
+       400 ENV_MISMATCH       → reject the launch; do NOT proceed
+       404 TOKEN_UNKNOWN      → reject the launch; do NOT proceed
+       409 TOKEN_REPLAYED     → reject the launch; do NOT proceed
+       410 TOKEN_EXPIRED      → reject the launch; do NOT proceed
+       429 RATE_LIMITED       → reject the launch; do NOT proceed
+       5xx                    → fail closed; reject with HTTP 502
+                                sso_consume_unavailable. Do NOT retry the
+                                same jti — it may have been spent.
+    The `code` string above appears verbatim in the JSON body's `code`
+    field — match on `code`, not on `error` text.
+ 8. The consume 200 response body has this exact shape (consume IS the
+    userinfo call; there is no separate one):
+       {
+         "ok": true,
+         "user": {
+           "id":    "<uuid>",
+           "email": "<email>",
+           "name":  "<display name>",
+           "role":  "<platform role: user | super_admin>"
+         },
+         "moduleSlug":     "<your slug>",
+         "planSlug":       "starter" | "pro" | "elite" | null,
+         "organizationId": null,
+         "env":            "prod" | "staging" | "dev",
+         "jti":            "<echoed>",
+         "issuer":         "https://operatoros.net",
+         "accessSource":   "plan" | "addon" | "override"
+       }
+ 9. Look up your local user BY `user.email`. Provision if missing using
+    `user.email`, `user.name`, `user.role`. NEVER key the local user table
+    by `claims.sub` or `user.id` — operators occasionally re-create users
+    in the hub and the id changes; email is the stable join key.
+10. Mint YOUR OWN session (cookie or signed token). Do NOT store the
+    handoff JWT as your session — it's already spent and only lived 90 s.
+    Set cookie attributes:
+      - httpOnly: true
+      - secure:   true (prod)
+      - sameSite: 'lax'  (use 'none' + secure ONLY if hub and child are
+                         on different registrable domains AND you have
+                         tested it; 'strict' will be silently dropped by
+                         the browser on the cross-site redirect from the
+                         hub and the user will appear logged out)
+      - path:     '/'
+11. Redirect to your post-login destination (e.g. `/dashboard`).
+================================================================
+3. Reference implementation — Node / Express
+================================================================
+```ts
+import express from 'express';
+import jwt from 'jsonwebtoken';
+const HUB       = process.env.OPERATOROS_BASE_URL!;          // iss check
+const HUB_API   = process.env.OPERATOROS_API_URL!;           // consume POST
+const SECRET    = process.env.MODULE_SSO_SECRET!;
+const AUDIENCE  = process.env.OPERATOROS_SSO_AUDIENCE!;
+const ENV       = process.env.OPERATOROS_SSO_ENV!;           // 'prod'|'staging'|'dev'
+const fail = (res: express.Response, code: string) =>
+ res.redirect(`${HUB}/?launchError=${encodeURIComponent(code)}`);
+app.get('/sso', async (req, res) => {
+ const raw = typeof req.query.token === 'string' ? req.query.token : '';
+ if (!raw) return fail(res, 'no_token');
+ let c: any;
+ try {
+   c = jwt.verify(raw, SECRET, {
+     algorithms:     ['HS256'],
+     audience:       AUDIENCE,
+     clockTolerance: 5,
+   });
+ } catch (e: any) {
+   return fail(res, e?.name === 'TokenExpiredError' ? 'token_expired' : 'bad_signature');
+ }
+ if (c.iss !== HUB)                  return fail(res, 'bad_issuer');
+ if (c.module_slug !== AUDIENCE)     return fail(res, 'bad_module_slug');
+ if (c.aud !== AUDIENCE)             return fail(res, 'bad_module_slug');
+ if (c.env !== ENV)                  return fail(res, 'env_mismatch');
+ const ageSec = Math.floor(Date.now() / 1000) - Number(c.iat);
+ if (ageSec > 95)                    return fail(res, 'token_expired');
+ let r: Response;
+ try {
+   r = await fetch(`${HUB_API}/modules/sso/consume`, {
+     method:  'POST',
+     headers: { 'content-type': 'application/json' },
+     body:    JSON.stringify({ jti: c.jti, aud: c.aud, env: c.env }),
+   });
+ } catch {
+   return res.status(502).send('sso_consume_unavailable');
+ }
+ if (r.status >= 500) return res.status(502).send('sso_consume_unavailable');
+ if (!r.ok) {
+   const err = await r.json().catch(() => ({}));
+   return fail(res, err.code || 'consume_failed');
+ }
+ const s = await r.json();
+ // Provision/lookup by EMAIL, never by sub.
+ const local = (await db.user.findByEmail(s.user.email)) ?? (await db.user.create({
+   email: s.user.email,
+   name:  s.user.name,
+   role:  s.user.role,
+ }));
+ res.cookie('sid', await mintLocalSession(local), {
+   httpOnly: true,
+   secure:   process.env.NODE_ENV === 'production',
+   sameSite: 'lax',
+   path:     '/',
+ });
+ res.redirect('/dashboard');
+});
+```
+================================================================
+4. Reference implementation — Next.js (App Router)
+================================================================
+Create `app/sso/route.ts` (NOT `app/api/sso/route.ts` — it must be at the
+top-level path `/sso` to match the URL the hub issues):
+```ts
+import { NextRequest, NextResponse } from 'next/server';
+import jwt from 'jsonwebtoken';
+const HUB      = process.env.OPERATOROS_BASE_URL!;
+const HUB_API  = process.env.OPERATOROS_API_URL!;
+const SECRET   = process.env.MODULE_SSO_SECRET!;
+const AUDIENCE = process.env.OPERATOROS_SSO_AUDIENCE!;
+const ENV      = process.env.OPERATOROS_SSO_ENV!;
+const fail = (code: string) =>
+ NextResponse.redirect(new URL(`/?launchError=${encodeURIComponent(code)}`, HUB));
+export async function GET(req: NextRequest) {
+ const raw = req.nextUrl.searchParams.get('token') ?? '';
+ if (!raw) return fail('no_token');
+ // …same body as Express example…
+}
+```
+================================================================
+5. Smoke test BEFORE you debug for an hour
+================================================================
+The hub has an operator-only diagnostic endpoint that tells you exactly
+which of these six values is misaligned, without ever transmitting your
+secret. As a super-admin on the hub, run:
+```
+# 1. Get a super-admin JWT.
+JWT=$(curl -s -X POST https://operatoros.net/api/auth/login \
+ -H "content-type: application/json" \
+ -d '{"email":"YOUR_SUPER_ADMIN_EMAIL","password":"YOUR_PASSWORD"}' \
+ | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
+# 2. Diagnose. claimedSecretLength is the LENGTH of your child's
+#    MODULE_SSO_SECRET. From the child's shell:
+#       echo -n "$MODULE_SSO_SECRET" | wc -c
+#    Never paste the secret itself.
+curl -s -X POST https://operatoros.net/api/modules/sso/diagnose \
+ -H "authorization: Bearer $JWT" \
+ -H "content-type: application/json" \
+ -d '{
+   "moduleSlug":          "YOUR_MODULE_SLUG",
+   "claimedIssuer":       "YOUR_OPERATOROS_BASE_URL",
+   "claimedEnv":          "YOUR_APP_ENV",
+   "claimedSecretLength": 64
+ }' | python3 -m json.tool
+```
+The response gives you `{ ok, checks: { moduleExists, moduleHasBaseUrl,
+moduleLaunchable, hubSecretConfigured, issuerMatch, envMatch,
+secretLengthMatch } }`. Each failing check has a `hint` field that names
+the launchError code your child would see and the value to change.
+Note on super-admin: the role is granted only via the hub env var
+`OPERATOROS_BOOTSTRAP_SUPER_ADMIN_EMAIL` at hub boot time. If diagnose
+returns 403 PLATFORM_ROLE_REQUIRED, that env var isn't set to your email
+on the deployed hub — set it and redeploy the hub.
+================================================================
+6. Debugging by launchError code
+================================================================
+  no_token            child mounted /sso but no ?token=. The hub is in
+                      fallback mode → MODULE_SSO_SECRET missing or <16
+                      chars on the HUB. Set it on the hub and restart.
+  bad_signature       MODULE_SSO_SECRET differs between hub and child,
+                      OR child verifier didn't pin algorithms:['HS256'].
+  token_expired       Either the 90 s TTL elapsed (cold start / slow
+                      network), or entitlement was revoked between
+                      handoff and consume, or system clocks are skewed
+                      more than ±5 s.
+  bad_issuer          OPERATOROS_BASE_URL drift — trailing slash, http
+                      vs https, port number. Must equal exactly:
+                      "https://operatoros.net"
+  bad_module_slug     OPERATOROS_SSO_AUDIENCE doesn't match the module
+                      row's `slug` in the hub.
+  env_mismatch        Hub normalized APP_ENV ≠ OPERATOROS_SSO_ENV. Both
+                      sides must land on the same prod/staging/dev.
+  AUDIENCE_MISMATCH   Same root cause as bad_module_slug but raised by
+                      the hub's /consume call (you sent the wrong aud).
+  ENV_MISMATCH        Same root cause as env_mismatch but raised at
+                      consume time.
+  TOKEN_UNKNOWN       jti was never issued by the hub — likely a stale
+                      URL, a forged token, or you're calling the wrong
+                      hub host.
+  TOKEN_REPLAYED      Same jti consumed twice (user double-click; your
+                      code calling consume twice; do NOT retry consume
+                      without a fresh handoff).
+  TOKEN_EXPIRED       Same as the JWT-level case OR entitlement was
+                      revoked between issue and consume.
+  RATE_LIMITED        You're calling consume too fast from one IP. Back
+                      off; this is a hub-side abuse guard.
+================================================================
+7. What NOT to do
+================================================================
+- Do NOT call `https://operatoros.net/v1/...` — that path 404s. Public
+ callers go through `/api/...`.
+- Do NOT implement your own login UI for OperatorOS users.
+- Do NOT cache the JWT or stash it in localStorage. It is single-use and
+ ≤90 s old. The local session cookie you mint AFTER consume is what
+ authenticates subsequent requests.
+- Do NOT skip the /consume call. Without it the hub can't enforce
+ single-use or honor admin revocations.
+- Do NOT proceed on consume 4xx/5xx — fail the launch. A locally-valid
+ JWT whose consume call failed means entitlement is gone or the token
+ was already burned.
+- Do NOT log the raw token. It's a 90-second bearer. Log `jti` only.
+- Do NOT derive entitlement locally. Trust `planSlug` + `accessSource`
+ from the consume response and re-check on subsequent requests if you
+ need fresh data (the hub has tenant/per-module endpoints for that).
+A few things worth highlighting after the prompt itself:
+The single biggest fix this prompt encodes that your earlier prompts didn't is the /api/... vs /v1/... path issue we discovered today. If any child app currently has OPERATOROS_API_URL=https://operatoros.net and calls ${OPERATOROS_API_URL}/v1/modules/sso/consume, every launch is silently failing at step 7 with a 404. Fixing that one env var on each child will likely unblock most of them.
+Before re-prompting all the child apps, set OPERATOROS_BOOTSTRAP_SUPER_ADMIN_EMAIL=john@shotgunninjas.com on your deployed hub and redeploy. That unlocks the diagnose endpoint for you and lets you verify each child's config in 10 seconds instead of hand-debugging.
+There is one ambiguity worth resolving for staging: the prompt assumes OPERATOROS_BASE_URL=https://operatoros.net for prod. If you ever run a staging hub on a different domain (e.g. a .replit.app preview URL), staging children need their OPERATOROS_BASE_URL and OPERATOROS_API_URL set to that staging hostname instead — not the prod one. Mixing them produces bad_issuer.

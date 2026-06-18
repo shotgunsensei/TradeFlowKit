@@ -34,6 +34,16 @@ import type {
   InsertLeadFollowupTask,
   LeadSettings,
   InsertLeadSettings,
+  Lead,
+  InsertLead,
+  LeadActivity,
+  InsertLeadActivity,
+  LeadCaptureForm,
+  InsertLeadCaptureForm,
+  LeadFollowupTask,
+  InsertLeadFollowupTask,
+  LeadSettings,
+  InsertLeadSettings,
 } from "@shared/schema";
 
 import { usersStorage } from "./storage/users";
@@ -70,12 +80,26 @@ export interface IStorage {
   deleteOrg(id: string): Promise<void>;
   getOrgByStripeCustomerId(stripeCustomerId: string): Promise<Org | undefined>;
   getOrgByOperatorosOrganizationId(operatorosOrganizationId: string): Promise<Org | undefined>;
+  getOrgByOperatorosTenantId(operatorosTenantId: string): Promise<Org | undefined>;
 
   createMembership(orgId: string, userId: string, role: string): Promise<Membership>;
   getMembership(orgId: string, userId: string): Promise<Membership | undefined>;
   getOrgMemberships(orgId: string): Promise<Membership[]>;
   deleteMembership(orgId: string, userId: string): Promise<void>;
   updateMembershipRole(orgId: string, userId: string, role: string): Promise<void>;
+  updateMembershipEntitlements(
+    orgId: string,
+    userId: string,
+    data: {
+      operatorosUserId?: string | null;
+      tenantRole?: string | null;
+      moduleRole?: string | null;
+      enabled?: boolean;
+      userEntitlementSnapshot?: unknown;
+      lastSsoLoginAt?: Date;
+      role?: string;
+    },
+  ): Promise<void>;
 
   createInviteCode(orgId: string, role: string, createdBy: string): Promise<InviteCode>;
   getInviteCodeByCode(code: string): Promise<InviteCode | undefined>;
@@ -176,12 +200,22 @@ export interface IStorage {
 
   bulkDeleteCustomers(orgId: string, ids: string[]): Promise<number>;
   bulkRestoreCustomers(orgId: string, ids: string[]): Promise<number>;
+  getDeletedCustomers(orgId: string): Promise<Customer[]>;
+  hardDeleteCustomer(orgId: string, id: string): Promise<boolean>;
   bulkDeleteJobs(orgId: string, ids: string[]): Promise<number>;
   bulkRestoreJobs(orgId: string, ids: string[]): Promise<number>;
+  getDeletedJobs(orgId: string): Promise<(Job & { customerName?: string })[]>;
+  hardDeleteJob(orgId: string, id: string): Promise<boolean>;
   bulkUpdateJobStatus(orgId: string, ids: string[], status: string, userId: string | null): Promise<number>;
   bulkDeleteInvoices(orgId: string, ids: string[]): Promise<number>;
   bulkRestoreInvoices(orgId: string, ids: string[]): Promise<number>;
+  getDeletedInvoices(orgId: string): Promise<(Invoice & { customerName?: string; total?: number })[]>;
+  hardDeleteInvoice(orgId: string, id: string): Promise<boolean>;
   bulkMarkInvoicesPaid(orgId: string, ids: string[]): Promise<number>;
+
+  purgeSoftDeletedCustomers(cutoff: Date): Promise<number>;
+  purgeSoftDeletedJobs(cutoff: Date): Promise<number>;
+  purgeSoftDeletedInvoices(cutoff: Date): Promise<number>;
 
   setUserTotpSecret(userId: string, secret: string): Promise<void>;
   enableUserTotp(userId: string): Promise<void>;
@@ -199,28 +233,6 @@ export interface IStorage {
     after?: any;
   }): Promise<void>;
   getAuditLog(orgId: string, opts: { limit: number; offset: number; entity?: string; action?: string; userId?: string }): Promise<{ items: (AuditLogEntry & { userName: string | null; userUsername: string | null })[]; total: number }>;
-
-  getLeads(orgId: string, filters?: LeadFilters): Promise<Lead[]>;
-  getLead(orgId: string, id: string): Promise<Lead | undefined>;
-  getLeadByMissedCall(orgId: string, missedCallId: string): Promise<Lead | undefined>;
-  createLead(orgId: string, data: InsertLead & { score?: number; scoreBreakdown?: unknown }, createdBy?: string | null): Promise<Lead>;
-  updateLead(orgId: string, id: string, data: Partial<Lead>): Promise<Lead | undefined>;
-  softDeleteLead(orgId: string, id: string): Promise<void>;
-  getLeadActivities(orgId: string, leadId: string): Promise<LeadActivity[]>;
-  createLeadActivity(orgId: string, leadId: string, data: InsertLeadActivity): Promise<LeadActivity>;
-  getLeadStats(orgId: string): Promise<LeadStats>;
-  convertLeadToCustomerAndJob(orgId: string, leadId: string, options?: { createdBy?: string | null }): Promise<{ lead: Lead; customer: Customer; job: Job }>;
-  getLeadCaptureForms(orgId: string): Promise<LeadCaptureForm[]>;
-  getLeadCaptureFormByToken(publicToken: string): Promise<LeadCaptureForm | undefined>;
-  createLeadCaptureForm(orgId: string, data?: Partial<InsertLeadCaptureForm>): Promise<LeadCaptureForm>;
-  updateLeadCaptureForm(orgId: string, id: string, data: Partial<LeadCaptureForm>): Promise<LeadCaptureForm | undefined>;
-  ensureDefaultLeadCaptureForm(orgId: string): Promise<LeadCaptureForm>;
-  getLeadSettings(orgId: string): Promise<LeadSettings | undefined>;
-  upsertLeadSettings(orgId: string, data: Partial<InsertLeadSettings>): Promise<LeadSettings>;
-  createLeadFollowupTask(orgId: string, leadId: string, data: Omit<InsertLeadFollowupTask, "orgId" | "leadId">): Promise<LeadFollowupTask>;
-  getLeadFollowupTasks(orgId: string, leadId: string): Promise<LeadFollowupTask[]>;
-  getDueLeadFollowupTasks(now: Date, limit?: number): Promise<LeadFollowupTask[]>;
-  updateLeadFollowupTask(orgId: string, id: string, data: Partial<LeadFollowupTask>): Promise<LeadFollowupTask | undefined>;
 }
 
 export const storage: IStorage = {

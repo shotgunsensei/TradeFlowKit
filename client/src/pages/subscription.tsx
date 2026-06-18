@@ -98,7 +98,7 @@ function UsageBar({ label, current, limit, icon: Icon }: { label: string; curren
 }
 
 export default function SubscriptionPage() {
-  const { org, planLimits, orgCounts, refreshAuth } = useAuth();
+  const { org, planLimits, orgCounts, access, refreshAuth } = useAuth();
   const { toast } = useToast();
   const search = useSearch();
   const [, setLocation] = useLocation();
@@ -194,6 +194,87 @@ export default function SubscriptionPage() {
               <Skeleton key={i} className="h-80" />
             ))}
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  const isOperatorOsManaged = Boolean(
+    (org as any).operatorosTenantId || (org as any).operatorosOrganizationId,
+  );
+
+  if (isOperatorOsManaged) {
+    const planSlug = access?.planSlug ?? (org as any).operatorosPlanSlug ?? null;
+    const subStatus = access?.subscriptionStatus ?? (org as any).operatorosSubscriptionStatus ?? org.subscriptionStatus ?? null;
+    const accessLevel = (org as any).operatorosAccessLevel ?? null;
+    const userRole = access?.effectiveRole ?? null;
+    const featureEntries = access?.features
+      ? Object.entries(access.features).filter(([, v]) => v === true)
+      : [];
+    return (
+      <div className="flex flex-col h-full">
+        <PageHeader
+          title="Subscription"
+          description="Managed by OperatorOS"
+        />
+        <div className="flex-1 overflow-auto p-6">
+          <Card data-testid="card-managed-by-operatoros">
+            <CardHeader>
+              <CardTitle className="text-base">Billing managed by OperatorOS</CardTitle>
+              <CardDescription>
+                This organization's plan, payment method, and team seats are administered
+                from OperatorOS. Make changes there and they will sync back automatically.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
+                <div>
+                  <dt className="text-muted-foreground">Plan</dt>
+                  <dd className="font-medium flex items-center gap-1.5" data-testid="text-managed-plan">
+                    <Crown className="h-3.5 w-3.5" />
+                    {planSlug ?? "—"}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Subscription status</dt>
+                  <dd className="font-medium" data-testid="text-managed-status">{subStatus ?? "—"}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Access level</dt>
+                  <dd className="font-medium" data-testid="text-managed-access-level">{accessLevel ?? "—"}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Your role</dt>
+                  <dd className="font-medium" data-testid="text-managed-user-role">{userRole ?? "—"}</dd>
+                </div>
+              </dl>
+              <div>
+                <div className="text-sm text-muted-foreground mb-2">Enabled features</div>
+                <div className="flex flex-wrap gap-1.5" data-testid="list-managed-features">
+                  {featureEntries.length === 0 ? (
+                    <span className="text-sm text-muted-foreground">None reported</span>
+                  ) : (
+                    featureEntries.map(([k]) => (
+                      <Badge key={k} variant="outline" data-testid={`badge-feature-${k}`}>
+                        {k}
+                      </Badge>
+                    ))
+                  )}
+                </div>
+              </div>
+              <Button asChild data-testid="button-manage-billing-operatoros">
+                <a
+                  href={(import.meta as any).env?.VITE_OPERATOROS_BASE_URL || "https://operatoros.net"}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <CreditCard className="h-4 w-4 mr-2" />
+                  Manage Billing in OperatorOS
+                  <ExternalLink className="h-3.5 w-3.5 ml-1.5" />
+                </a>
+              </Button>
+            </CardContent>
+          </Card>
         </div>
       </div>
     );

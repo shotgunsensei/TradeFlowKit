@@ -28,20 +28,48 @@ router.post("/api/orgs", requireAuth, async (req: Request, res: Response) => {
   }
 });
 
+// Fields that org admins/owners may edit on the org profile. Everything else
+// (billing, OperatorOS linkage, entitlement snapshots) is excluded by allowlist
+// to prevent mass-assignment escalation — a member must NOT be able to
+// influence tenant entitlement through this route.
+const ORG_PROFILE_EDITABLE_FIELDS = new Set<string>([
+  "name",
+  "industry",
+  "businessEmail",
+  "businessPhone",
+  "address",
+  "city",
+  "state",
+  "zipCode",
+  "logoUrl",
+  "website",
+  "businessHours",
+  "reviewRequestEnabled",
+  "reviewRequestUrl",
+  "reviewRequestDelayDays",
+  "callRecoveryAutoResponseEnabled",
+  "callRecoveryMessageTemplate",
+  "callRecoveryQuietHoursStart",
+  "callRecoveryQuietHoursEnd",
+]);
+
 router.patch("/api/orgs/:id", requireAuth, requireOrg, async (req: Request, res: Response) => {
   try {
     if (req.params.id !== req.session.orgId) {
       return res.status(403).send("Cannot edit another organization");
     }
-    const {
-      plan,
-      stripeCustomerId,
-      stripeSubscriptionId,
-      subscriptionStatus,
-      currentPeriodEnd,
-      operatorosOrganizationId,
-      ...safeData
-    } = req.body;
+    // Only owners/admins may edit org profile fields.
+    const mem = await storage.getMembership(req.session.orgId!, req.session.userId!);
+    if (!mem || (mem.role !== "owner" && mem.role !== "admin")) {
+      return res.status(403).json({ error: "forbidden", reason: "owner_or_admin_required" });
+    }
+    const safeData: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(req.body ?? {})) {
+      if (ORG_PROFILE_EDITABLE_FIELDS.has(k)) safeData[k] = v;
+    }
+    if (Object.keys(safeData).length === 0) {
+      return res.status(400).json({ error: "no_editable_fields" });
+    }
     const before = await storage.getOrg(req.params.id as string);
     const org = await storage.updateOrg(req.params.id as string, safeData);
     await storage.recordAudit({ orgId: req.params.id as string, userId: req.session.userId, action: "update", entity: "organization", entityId: req.params.id as string, before, after: org });
@@ -87,8 +115,21 @@ router.patch(
         }
       }
 
+      const beforeOrg = await storage.getOrg(req.session.orgId!);
+      const previousValue = beforeOrg?.operatorosOrganizationId ?? null;
       try {
         const org = await storage.updateOrg(req.session.orgId!, { operatorosOrganizationId: value });
+        if (previousValue !== value) {
+          await storage.recordAudit({
+            orgId: req.session.orgId!,
+            userId: req.session.userId,
+            action: value === null ? "unlink_operatoros" : previousValue === null ? "link_operatoros" : "update",
+            entity: "organization",
+            entityId: req.session.orgId!,
+            before: { operatorosOrganizationId: previousValue },
+            after: { operatorosOrganizationId: value },
+          });
+        }
         res.json(org);
       } catch (err: any) {
         if (err?.code === "23505") {
@@ -162,12 +203,25 @@ router.post("/api/invite-codes", requireAuth, requireOrg, async (req: Request, r
 
 router.get("/api/plan-info", requireAuth, requireOrg, async (req: Request, res: Response) => {
   try {
-    const { PLAN_LIMITS } = await import("@shared/schema");
+    const { resolveAccess } = await import("@shared/entitlements");
     const org = await storage.getOrg(req.session.orgId!);
     if (!org) return res.status(404).send("Organization not found");
-    const limits = PLAN_LIMITS[org.plan] || PLAN_LIMITS.free;
+    const membership = await storage.getMembership(req.session.orgId!, req.session.userId!);
+    const access = resolveAccess(org, membership ?? null);
     const counts = await storage.getOrgCounts(org.id);
-    res.json({ plan: org.plan, limits, counts, subscriptionStatus: org.subscriptionStatus });
+    res.json({
+      plan: org.plan,
+      planSlug: access.planSlug,
+      linked: access.linked,
+      source: access.source,
+      features: access.features,
+      limits: access.limits,
+      counts,
+      subscriptionStatus: access.linked ? access.subscriptionStatus : org.subscriptionStatus,
+      effectiveRole: access.effectiveRole,
+      allowed: access.allowed,
+      reason: access.reason,
+    });
   } catch (err) {
     res.status(500).send(errMsg(err));
   }

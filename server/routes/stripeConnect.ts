@@ -1,7 +1,8 @@
 import { errMsg } from "../errors";
 import { Router, type Request, type Response } from "express";
 import { storage } from "../storage";
-import { requireAuth, requireOrg } from "../middleware";
+import { requireAuth, requireOrg, resolveRequestAccess } from "../middleware";
+import { hasFeature } from "@shared/entitlements";
 import { getUncachableStripeClient } from "../stripeClient";
 import { randomBytes } from "crypto";
 import { logger as rootLogger } from "../logger";
@@ -26,9 +27,31 @@ router.get("/api/stripe/connect/authorize", requireAuth, requireOrg, async (req:
     const org = await storage.getOrg(req.session.orgId!);
     if (!org) return res.status(404).json({ error: "Org not found" });
 
-    const plan = org.plan;
-    if (plan === "free") {
-      return res.status(403).json({ error: "Upgrade to Individual or above to connect Stripe." });
+    // Linked OperatorOS tenants pay through the hub — Stripe Connect
+    // onboarding is unavailable for them entirely.
+    const { isLinkedOrg } = await import("@shared/entitlements");
+    if (isLinkedOrg(org)) {
+      return res.status(410).json({
+        error: "managed_by_operatoros",
+        message: "Payouts for this organization are managed by OperatorOS.",
+      });
+    }
+
+    // Gate via feature flag rather than legacy plan-name comparison. Linked
+    // OperatorOS tenants are already short-circuited above with a 410, so in
+    // practice this branch only fires for non-linked orgs and replaces the
+    // old `plan === "free"` check; the feature key still exists so non-free
+    // legacy plans (and any future non-linked plan tiers) can be toggled
+    // through the same entitlement surface.
+    const ctx = await resolveRequestAccess(req);
+    if (!ctx || !hasFeature(ctx.access, "stripe_connect")) {
+      return res.status(403).json({
+        error: "feature_not_in_plan",
+        feature: "stripe_connect",
+        linked: ctx?.access.linked ?? false,
+        planSlug: ctx?.access.planSlug ?? null,
+        message: "Upgrade to Individual or above to connect Stripe.",
+      });
     }
 
     const replitDomains = process.env.REPLIT_DOMAINS;

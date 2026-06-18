@@ -175,11 +175,20 @@ export const orgs = pgTable("orgs", {
   reviewRequestUrl: varchar("review_request_url"),
   reviewRequestTemplate: text("review_request_template"),
   operatorosOrganizationId: text("operatoros_organization_id"),
+  operatorosTenantId: text("operatoros_tenant_id"),
+  operatorosPlanSlug: text("operatoros_plan_slug"),
+  operatorosSubscriptionStatus: text("operatoros_subscription_status"),
+  operatorosAccessLevel: text("operatoros_access_level"),
+  entitlementSnapshot: jsonb("entitlement_snapshot"),
+  lastEntitlementSyncAt: timestamp("last_entitlement_sync_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (t) => [
   uniqueIndex("orgs_operatoros_organization_id_idx")
     .on(t.operatorosOrganizationId)
     .where(sql`${t.operatorosOrganizationId} IS NOT NULL`),
+  uniqueIndex("orgs_operatoros_tenant_id_idx")
+    .on(t.operatorosTenantId)
+    .where(sql`${t.operatorosTenantId} IS NOT NULL`),
 ]);
 
 export const memberships = pgTable("memberships", {
@@ -191,6 +200,12 @@ export const memberships = pgTable("memberships", {
     .notNull()
     .references(() => users.id),
   role: membershipRoleEnum("role").notNull().default("tech"),
+  operatorosUserId: text("operatoros_user_id"),
+  tenantRole: text("tenant_role"),
+  moduleRole: text("module_role"),
+  enabled: boolean("enabled").notNull().default(true),
+  userEntitlementSnapshot: jsonb("user_entitlement_snapshot"),
+  lastSsoLoginAt: timestamp("last_sso_login_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

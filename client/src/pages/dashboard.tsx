@@ -29,6 +29,7 @@ import {
   Star,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
+import { parseSsoNotice, stripSsoFromUrl } from "@/lib/sso-notice";
 import { Link } from "wouter";
 import { format } from "date-fns";
 
@@ -161,8 +162,7 @@ export default function Dashboard() {
   useEffect(() => {
     if (ssoNoticeShown.current) return;
     if (typeof window === "undefined") return;
-    const params = new URLSearchParams(window.location.search);
-    const notice = params.get("sso");
+    const notice = parseSsoNotice(window.location.search);
     if (!notice) return;
     if (!org) return;
     ssoNoticeShown.current = true;
@@ -183,9 +183,11 @@ export default function Dashboard() {
       });
     }
 
-    params.delete("sso");
-    const qs = params.toString();
-    const newUrl = window.location.pathname + (qs ? `?${qs}` : "") + window.location.hash;
+    const newUrl = stripSsoFromUrl({
+      pathname: window.location.pathname,
+      search: window.location.search,
+      hash: window.location.hash,
+    });
     window.history.replaceState({}, "", newUrl);
   }, [org, toast]);
 

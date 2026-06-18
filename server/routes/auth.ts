@@ -103,7 +103,7 @@ router.delete("/api/auth/delete-account", requireAuth, async (req: Request, res:
 
 router.get("/api/auth/me", requireAuth, async (req: Request, res: Response) => {
   try {
-    const { PLAN_LIMITS } = await import("@shared/schema");
+    const { resolveAccess } = await import("@shared/entitlements");
     const user = await storage.getUser(req.session.userId!);
     if (!user) return res.status(401).send("User not found");
 
@@ -125,8 +125,22 @@ router.get("/api/auth/me", requireAuth, async (req: Request, res: Response) => {
 
     let planLimits = null;
     let orgCounts = null;
+    let access = null;
     if (org) {
-      planLimits = PLAN_LIMITS[org.plan] || PLAN_LIMITS.free;
+      const resolved = resolveAccess(org, membership ?? null);
+      access = {
+        source: resolved.source,
+        linked: resolved.linked,
+        allowed: resolved.allowed,
+        reason: resolved.reason ?? null,
+        planSlug: resolved.planSlug,
+        subscriptionStatus: resolved.subscriptionStatus,
+        accessLevel: resolved.accessLevel,
+        features: resolved.features,
+        limits: resolved.limits,
+        effectiveRole: resolved.effectiveRole,
+      };
+      planLimits = resolved.limits;
       orgCounts = await storage.getOrgCounts(org.id);
     }
 
@@ -137,6 +151,7 @@ router.get("/api/auth/me", requireAuth, async (req: Request, res: Response) => {
       orgs: userOrgs,
       planLimits,
       orgCounts,
+      access,
     });
   } catch (err) {
     res.status(500).send(errMsg(err));

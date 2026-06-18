@@ -14,6 +14,7 @@ import OrgSetup from "@/pages/org-setup";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CommandPalette } from "@/components/command-palette";
 import { ShortcutsHelpProvider } from "@/components/shortcuts-help";
+import { UpgradeDialog } from "@/components/upgrade-dialog";
 
 const Dashboard = lazy(() => import("@/pages/dashboard"));
 const LeadsPage = lazy(() => import("@/pages/leads"));
@@ -40,6 +41,8 @@ const AnalyticsPage = lazy(() => import("@/pages/analytics"));
 const SmsConsentPage = lazy(() => import("@/pages/sms-consent"));
 const GuidePage = lazy(() => import("@/pages/guide"));
 const CustomerPortalPage = lazy(() => import("@/pages/customer-portal"));
+const TrashPage = lazy(() => import("@/pages/trash"));
+const AccessDeniedPage = lazy(() => import("@/pages/access-denied"));
 
 function RouteFallback() {
   return (
@@ -52,7 +55,7 @@ function RouteFallback() {
 }
 
 function AppContent() {
-  const { user, org, isLoading } = useAuth();
+  const { user, org, access, isLoading } = useAuth();
 
   if (isLoading) {
     return (
@@ -86,6 +89,24 @@ function AppContent() {
 
   if (!org) {
     return <OrgSetup />;
+  }
+
+  // OperatorOS access gate: if the active org is OperatorOS-linked AND the
+  // resolver has decided the user is not allowed, force them onto the
+  // AccessDenied page regardless of which route they tried to reach. The
+  // server already 403s their API calls; this prevents a confusing empty UI.
+  if (access && access.linked && !access.allowed) {
+    const reason = access.reason ?? "no_module_role";
+    const here = window.location.pathname + window.location.search;
+    const target = `/access-denied?reason=${encodeURIComponent(reason)}`;
+    if (!here.startsWith("/access-denied")) {
+      window.history.replaceState(null, "", target);
+    }
+    return (
+      <Suspense fallback={<RouteFallback />}>
+        <AccessDeniedPage />
+      </Suspense>
+    );
   }
 
   const sidebarStyle = {
@@ -123,7 +144,9 @@ function AppContent() {
                 <Route path="/subscription" component={SubscriptionPage} />
                 <Route path="/analytics" component={AnalyticsPage} />
                 <Route path="/call-recovery" component={CallRecoveryPage} />
+                <Route path="/trash" component={TrashPage} />
                 <Route path="/admin" component={AdminPage} />
+                <Route path="/access-denied" component={AccessDeniedPage} />
                 <Route path="/guide" component={GuidePage} />
                 <Route path="/privacy" component={PrivacyPage} />
                 <Route path="/terms" component={TermsPage} />
@@ -148,6 +171,7 @@ function App() {
         <AuthProvider>
           <AppContent />
         </AuthProvider>
+        <UpgradeDialog />
         <Toaster />
       </TooltipProvider>
     </QueryClientProvider>

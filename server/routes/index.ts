@@ -26,6 +26,9 @@ import twoFactorRouter from "./twoFactor";
 import exportsRouter from "./exports";
 import auditLogRouter from "./auditLog";
 import operatorosRouter from "./operatoros";
+import entitlementsRouter from "./entitlements";
+import trashRouter from "./trash";
+import leadsRouter from "./leads";
 import leadsRouter from "./leads";
 
 declare module "express-session" {
@@ -90,7 +93,6 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.use(exportsRouter);
   app.use(auditLogRouter);
   app.use(operatorosRouter);
-  app.use(leadsRouter);
 
   return httpServer;
 }

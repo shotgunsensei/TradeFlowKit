@@ -1,0 +1,117 @@
+This child application is part of the OperatorOS ecosystem. OperatorOS is now the single source of truth for subscription plans, tenant permissions, module access, billing status, and feature entitlements.
+
+Goal:
+Update this child app so it no longer owns or controls subscription plan assignment. It must consume read-only entitlement data from OperatorOS through SSO login and optional entitlement introspection/sync endpoints.
+
+Existing assumptions:
+- SSO login from OperatorOS to this child app is already working or partially working.
+- This app may currently have local subscription/plan logic.
+- This app has local users or app data that should be preserved.
+- OperatorOS sends a signed SSO JWT during launch.
+
+Required changes:
+
+1. Remove child-app subscription authority:
+   - Do not use local subscription plan data to decide paid access.
+   - Do not allow users to upgrade, downgrade, or edit subscription plans inside this app.
+   - Do not process Stripe billing inside this child app unless it is strictly app-specific and secondary.
+   - If existing subscription tables exist, keep them for legacy reference but stop using them for access decisions.
+
+2. Add OperatorOS identity mapping:
+   Add or update local user fields:
+   - operatoros_user_id
+   - operatoros_tenant_id
+   - email
+   - name
+   - local_role
+   - last_entitlement_sync_at
+   - entitlement_snapshot_json
+
+3. SSO JWT validation:
+   On SSO login, validate:
+   - signature
+   - issuer is OperatorOS
+   - audience matches this child app/module key
+   - token expiration
+   - target_module_key matches this app
+   - target_module_enabled is true
+
+4. User creation/update:
+   When SSO login succeeds:
+   - Find local user by operatoros_user_id.
+   - If not found, create local user.
+   - Update email/name if needed.
+   - Store operatoros_tenant_id.
+   - Store entitlement_snapshot_json.
+   - Map OperatorOS module_role to this app’s local role.
+
+5. Role mapping:
+   Map roles like this:
+   - OperatorOS tenant owner => local app admin
+   - OperatorOS tenant_admin + module_admin => local app admin
+   - module_admin => local app admin
+   - module_user => local standard user
+   - viewer => read-only user if app supports it, otherwise standard user with limited features
+   - none or disabled => deny access
+
+6. Feature gating:
+   Use entitlement_snapshot_json to gate features.
+   Example:
+   - target_module_enabled controls whether the user can enter the app.
+   - target_module_access_level controls tier-level features.
+   - target_module_features controls specific features.
+   - subscription_status controls whether paid features are enabled.
+
+7. UI changes:
+   Replace any local plan/pricing management UI with:
+   “Your subscription is managed by OperatorOS.”
+
+   Show:
+   - OperatorOS Plan
+   - Subscription Status
+   - Current App Access Level
+   - Current App Role
+   - Enabled Features
+
+   Add button:
+   “Manage Billing in OperatorOS”
+   This button should link back to OperatorOS billing.
+
+8. Access denied page:
+   If the user reaches this app but does not have entitlement:
+   Show:
+   “Access to this module is managed by OperatorOS. Contact your tenant administrator or upgrade your OperatorOS plan.”
+   Add button:
+   “Return to OperatorOS”
+
+9. Optional server-to-server entitlement refresh:
+   Add endpoint:
+   POST /api/operatoros/entitlements/sync
+
+   This endpoint should:
+   - Require OPERATOROS_SERVICE_TOKEN.
+   - Accept operatoros_user_id, operatoros_tenant_id, module_key, role, access level, features, and enabled status.
+   - Update the local entitlement snapshot.
+   - Disable local access if OperatorOS says access is disabled.
+
+10. Environment variables:
+   Add support for:
+   - OPERATOROS_BASE_URL
+   - OPERATOROS_JWT_SECRET or OPERATOROS_PUBLIC_KEY
+   - OPERATOROS_ISSUER
+   - OPERATOROS_SERVICE_TOKEN
+   - CHILD_APP_MODULE_KEY
+
+11. Acceptance tests:
+   - User with enabled module can log in.
+   - User without module access is denied.
+   - Tenant owner becomes app admin.
+   - Tenant admin with module_admin becomes app admin.
+   - Regular module_user becomes standard app user.
+   - Viewer gets limited/read-only access if supported.
+   - Local child app subscription data does not override OperatorOS.
+   - Billing/manage-plan buttons redirect to OperatorOS.
+   - Entitlement snapshot updates on every SSO login.
+   - App still preserves existing local data.
+
+Make these changes incrementally and do not break the existing SSO login flow. Provide a summary of modified files and any database migrations.
