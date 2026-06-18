@@ -27,6 +27,7 @@ import {
   BookOpen,
   BarChart3,
   Trash2,
+  UserPlus,
 } from "lucide-react";
 import { useLocation, Link } from "wouter";
 import { useAuth } from "@/lib/auth";
@@ -41,6 +42,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 
 const mainNav = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
+  { title: "Leads", url: "/leads", icon: UserPlus },
   { title: "Customers", url: "/customers", icon: Users },
   { title: "Jobs", url: "/jobs", icon: Wrench },
   { title: "Quotes", url: "/quotes", icon: FileText },

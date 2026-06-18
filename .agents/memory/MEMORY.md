@@ -1,1 +1,2 @@
 - [Post-merge setup timeout](post-merge-setup-timeout.md) — post-merge script has a ~20s budget; npm audit/install blows past it (~98s) — keep the script fast and offline-cheap.
+- [GitHub push from task env](github-push-from-task-env.md) — `git push origin` to a user's GitHub remote fails in isolated task envs (no creds); do merge/commit locally, push is a Git-pane/platform action.

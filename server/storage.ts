@@ -24,6 +24,16 @@ import type {
   ReminderLog,
   UserRecoveryCode,
   AuditLogEntry,
+  Lead,
+  InsertLead,
+  LeadActivity,
+  InsertLeadActivity,
+  LeadCaptureForm,
+  InsertLeadCaptureForm,
+  LeadFollowupTask,
+  InsertLeadFollowupTask,
+  LeadSettings,
+  InsertLeadSettings,
 } from "@shared/schema";
 
 import { usersStorage } from "./storage/users";
@@ -38,8 +48,10 @@ import { automationsStorage } from "./storage/automations";
 import { billingStorage } from "./storage/billing";
 import { auditStorage } from "./storage/audit";
 import { dashboardStorage } from "./storage/dashboard";
+import { leadsStorage, type LeadFilters, type LeadStats } from "./storage/leads";
 
 export type { QuoteInput, QuoteItemInput, InvoiceInput };
+export type { LeadFilters, LeadStats };
 
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
@@ -212,6 +224,28 @@ export interface IStorage {
   }): Promise<void>;
   getAuditLog(orgId: string, opts: { limit: number; offset: number; entity?: string; action?: string; userId?: string; from?: Date; to?: Date }): Promise<{ items: (AuditLogEntry & { userName: string | null; userUsername: string | null })[]; total: number }>;
   getAuditLogForExport(orgId: string, opts: { entity?: string; action?: string; userId?: string; from?: Date; to?: Date }): Promise<(AuditLogEntry & { userName: string | null; userUsername: string | null })[]>;
+
+  getLeads(orgId: string, filters?: LeadFilters): Promise<Lead[]>;
+  getLead(orgId: string, id: string): Promise<Lead | undefined>;
+  getLeadByMissedCall(orgId: string, missedCallId: string): Promise<Lead | undefined>;
+  createLead(orgId: string, data: InsertLead & { score?: number; scoreBreakdown?: unknown }, createdBy?: string | null): Promise<Lead>;
+  updateLead(orgId: string, id: string, data: Partial<Lead>): Promise<Lead | undefined>;
+  softDeleteLead(orgId: string, id: string): Promise<void>;
+  getLeadActivities(orgId: string, leadId: string): Promise<LeadActivity[]>;
+  createLeadActivity(orgId: string, leadId: string, data: InsertLeadActivity): Promise<LeadActivity>;
+  getLeadStats(orgId: string): Promise<LeadStats>;
+  convertLeadToCustomerAndJob(orgId: string, leadId: string, options?: { createdBy?: string | null }): Promise<{ lead: Lead; customer: Customer; job: Job }>;
+  getLeadCaptureForms(orgId: string): Promise<LeadCaptureForm[]>;
+  getLeadCaptureFormByToken(publicToken: string): Promise<LeadCaptureForm | undefined>;
+  createLeadCaptureForm(orgId: string, data?: Partial<InsertLeadCaptureForm>): Promise<LeadCaptureForm>;
+  updateLeadCaptureForm(orgId: string, id: string, data: Partial<LeadCaptureForm>): Promise<LeadCaptureForm | undefined>;
+  ensureDefaultLeadCaptureForm(orgId: string): Promise<LeadCaptureForm>;
+  getLeadSettings(orgId: string): Promise<LeadSettings | undefined>;
+  upsertLeadSettings(orgId: string, data: Partial<InsertLeadSettings>): Promise<LeadSettings>;
+  createLeadFollowupTask(orgId: string, leadId: string, data: Omit<InsertLeadFollowupTask, "orgId" | "leadId">): Promise<LeadFollowupTask>;
+  getLeadFollowupTasks(orgId: string, leadId: string): Promise<LeadFollowupTask[]>;
+  getDueLeadFollowupTasks(now: Date, limit?: number): Promise<LeadFollowupTask[]>;
+  updateLeadFollowupTask(orgId: string, id: string, data: Partial<LeadFollowupTask>): Promise<LeadFollowupTask | undefined>;
 }
 
 export const storage: IStorage = {
@@ -228,4 +262,5 @@ export const storage: IStorage = {
   ...billingStorage,
   ...auditStorage,
   ...dashboardStorage,
+  ...leadsStorage,
 } as IStorage;

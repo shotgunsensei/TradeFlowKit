@@ -17,6 +17,7 @@ import { ShortcutsHelpProvider } from "@/components/shortcuts-help";
 import { UpgradeDialog } from "@/components/upgrade-dialog";
 
 const Dashboard = lazy(() => import("@/pages/dashboard"));
+const LeadsPage = lazy(() => import("@/pages/leads"));
 const CustomersPage = lazy(() => import("@/pages/customers"));
 const JobsPage = lazy(() => import("@/pages/jobs"));
 const QuotesPage = lazy(() => import("@/pages/quotes"));
@@ -124,6 +125,7 @@ function AppContent() {
               <Switch>
                 <Route path="/" component={Dashboard} />
                 <Route path="/dashboard" component={Dashboard} />
+                <Route path="/leads" component={LeadsPage} />
                 <Route path="/customers" component={CustomersPage} />
                 <Route path="/customers/:id" component={CustomerDetail} />
                 <Route path="/jobs" component={JobsPage} />

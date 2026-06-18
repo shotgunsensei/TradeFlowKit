@@ -20,6 +20,11 @@ import {
   orgAutomations,
   reminderLog,
   auditLog,
+  leads,
+  leadActivities,
+  leadCaptureForms,
+  leadFollowupTasks,
+  leadSettings,
   type Org,
   type InsertOrg,
   type Membership,
@@ -57,6 +62,11 @@ export const orgsStorage = {
 
   async deleteOrg(id: string): Promise<void> {
     await db.delete(callRecoverySubscriptions).where(eq(callRecoverySubscriptions.orgId, id));
+    await db.delete(leadFollowupTasks).where(eq(leadFollowupTasks.orgId, id));
+    await db.delete(leadActivities).where(eq(leadActivities.orgId, id));
+    await db.delete(leads).where(eq(leads.orgId, id));
+    await db.delete(leadCaptureForms).where(eq(leadCaptureForms.orgId, id));
+    await db.delete(leadSettings).where(eq(leadSettings.orgId, id));
     const orgMissedCalls = await db.select({ id: missedCalls.id }).from(missedCalls).where(eq(missedCalls.orgId, id));
     for (const mc of orgMissedCalls) {
       await db.delete(aiMessages).where(eq(aiMessages.missedCallId, mc.id));
@@ -110,6 +120,11 @@ export const orgsStorage = {
         const otherMembers = orgMembers.filter((m) => m.userId !== userId);
 
         if (otherMembers.length === 0) {
+          await tx.delete(leadFollowupTasks).where(eq(leadFollowupTasks.orgId, mem.orgId));
+          await tx.delete(leadActivities).where(eq(leadActivities.orgId, mem.orgId));
+          await tx.delete(leads).where(eq(leads.orgId, mem.orgId));
+          await tx.delete(leadCaptureForms).where(eq(leadCaptureForms.orgId, mem.orgId));
+          await tx.delete(leadSettings).where(eq(leadSettings.orgId, mem.orgId));
           const orgMc = await tx.select({ id: missedCalls.id }).from(missedCalls).where(eq(missedCalls.orgId, mem.orgId));
           for (const mc of orgMc) {
             await tx.delete(aiMessages).where(eq(aiMessages.missedCallId, mc.id));
@@ -138,6 +153,9 @@ export const orgsStorage = {
       await tx.update(jobEvents).set({ createdBy: null }).where(eq(jobEvents.createdBy, userId));
       await tx.update(quotes).set({ createdBy: null }).where(eq(quotes.createdBy, userId));
       await tx.update(invoices).set({ createdBy: null }).where(eq(invoices.createdBy, userId));
+      await tx.update(leads).set({ createdBy: null }).where(eq(leads.createdBy, userId));
+      await tx.update(leads).set({ assignedUserId: null }).where(eq(leads.assignedUserId, userId));
+      await tx.update(leadActivities).set({ createdBy: null }).where(eq(leadActivities.createdBy, userId));
 
       await tx.delete(users).where(eq(users.id, userId));
     });
