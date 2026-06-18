@@ -34,6 +34,10 @@ author = "agent"
 task = "workflow.run"
 args = "Start application"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "dark-mode-bg-check"
+
 [[workflows.workflow]]
 name = "Start application"
 author = "agent"
@@ -42,6 +46,17 @@ author = "agent"
 task = "shell.exec"
 args = "npm run dev"
 waitForPort = 5000
+
+[[workflows.workflow]]
+name = "dark-mode-bg-check"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "bash scripts/check-dark-bg.sh"
+
+[workflows.workflow.metadata]
+isValidation = true
 
 [agent]
 integrations = ["stripe:2.0.0"]

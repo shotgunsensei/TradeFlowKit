@@ -143,6 +143,17 @@ The frontend follows a page-based structure under `client/src/pages/` with reusa
 ### Seed Data
 - `server/seed.ts` provides demo data seeding with a demo user (username: `demo`, password: `demo123`) and sample organization, customers, and jobs
 
+## Dark Mode Convention
+
+All dark-mode background classes in `client/src/` **must** use the CSS-variable-based semantic utilities (e.g. `dark:bg-background`, `dark:bg-card`, `dark:bg-muted`, `dark:bg-sidebar`) so that the navy theme is applied consistently.
+
+**Bare** `dark:bg-gray-9xx` classes (e.g. `dark:bg-gray-900`, `dark:bg-gray-950`) are **not allowed** because they hard-code a grey value and bypass the theme.  The only exception is **opacity-tinted badge/chip contexts** such as `dark:bg-gray-900/30`.
+
+A CI check enforces this rule automatically:
+- Script: `scripts/check-dark-bg.sh` (run locally with `bash scripts/check-dark-bg.sh`)
+- GitHub Actions workflow: `.github/workflows/dark-mode-check.yml` (runs on every push/PR that touches `client/src/`)
+- Validation command registered as `dark-mode-bg-check` in Replit's validation system
+
 ## Testing
 
 Vitest powers unit/integration tests; Playwright powers a single end-to-end spec.
