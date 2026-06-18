@@ -74,13 +74,13 @@ const steps = [
     num: "1",
     title: "Capture every lead",
     desc: "Missed calls, new texts, walk-ins — TradeFlow captures the lead and kicks off the workflow.",
-    color: "bg-red-600",
+    color: "bg-orange-600",
   },
   {
     num: "2",
     title: "Quote & win jobs",
     desc: "Send a professional quote in 60 seconds. Customers approve directly on their phone.",
-    color: "bg-orange-600",
+    color: "bg-amber-600",
   },
   {
     num: "3",
@@ -224,7 +224,7 @@ export default function AuthPage() {
             </button>
             <button
               onClick={() => openModal("register")}
-              className="rounded-md bg-red-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-red-700 transition-colors"
+              className="rounded-md bg-orange-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-orange-700 transition-colors"
               data-testid="nav-get-started"
             >
               Get Started Free
@@ -234,17 +234,17 @@ export default function AuthPage() {
       </nav>
 
       {/* Hero */}
-      <section className="relative overflow-hidden bg-gradient-to-br from-red-50 via-orange-50 to-red-50 text-gray-900 dark:from-gray-950 dark:via-red-950 dark:to-gray-950 dark:text-white">
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-red-200/40 via-transparent to-transparent dark:from-red-900/30" />
+      <section className="relative overflow-hidden bg-gradient-to-br from-orange-50 via-amber-50 to-orange-50 text-gray-900 dark:from-slate-950 dark:via-orange-950 dark:to-slate-950 dark:text-white">
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-orange-200/40 via-transparent to-transparent dark:from-orange-900/30" />
         <div className="relative max-w-6xl mx-auto px-4 sm:px-6 py-20 md:py-28">
           <div className="max-w-3xl">
-            <div className="inline-flex items-center gap-2 rounded-full bg-red-100 border border-red-200 px-3 py-1 text-xs text-red-700 mb-6 dark:bg-red-900/40 dark:border-red-800/50 dark:text-red-300">
+            <div className="inline-flex items-center gap-2 rounded-full bg-orange-100 border border-orange-200 px-3 py-1 text-xs text-orange-700 mb-6 dark:bg-orange-900/40 dark:border-orange-800/50 dark:text-orange-300">
               <Zap className="h-3 w-3" />
               Built for electricians, plumbers, HVAC & carpenters
             </div>
             <h1 className="text-4xl sm:text-5xl md:text-6xl font-extrabold leading-tight tracking-tight mb-6">
               Run your trade business{" "}
-              <span className="bg-gradient-to-r from-red-600 to-orange-500 bg-clip-text text-transparent dark:from-red-400 dark:to-orange-300">
+              <span className="bg-gradient-to-r from-orange-500 to-amber-400 bg-clip-text text-transparent dark:from-orange-400 dark:to-amber-300">
                 from your phone
               </span>
             </h1>
@@ -255,7 +255,7 @@ export default function AuthPage() {
             <div className="flex flex-wrap gap-3">
               <button
                 onClick={() => openModal("register")}
-                className="flex items-center gap-2 rounded-lg bg-red-600 hover:bg-red-500 px-6 py-3 text-sm font-semibold text-white transition-colors shadow-lg shadow-red-200 dark:shadow-red-900/40"
+                className="flex items-center gap-2 rounded-lg bg-orange-600 hover:bg-orange-500 px-6 py-3 text-sm font-semibold text-white transition-colors shadow-lg shadow-orange-200 dark:shadow-orange-900/40"
                 data-testid="hero-get-started"
               >
                 Get Started Free
@@ -299,7 +299,7 @@ export default function AuthPage() {
               <div className="p-4 space-y-3">
                 <div className="grid grid-cols-4 gap-2">
                   {[
-                    { label: "Today's Jobs", val: "3", color: "bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-300" },
+                    { label: "Today's Jobs", val: "3", color: "bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-300" },
                     { label: "Overdue", val: "1", color: "bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-300" },
                     { label: "Pending Quotes", val: "$4,200", color: "bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300" },
                     { label: "This Month", val: "$12,840", color: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300" },
@@ -314,7 +314,7 @@ export default function AuthPage() {
                   <div className="text-[10px] text-gray-500 mb-2 font-medium dark:text-slate-400">REVENUE — LAST 30 DAYS</div>
                   <div className="flex items-end gap-1 h-12">
                     {[4, 7, 3, 9, 5, 11, 6, 8, 12, 7, 4, 10, 14, 8, 6, 11, 9, 5, 8, 13, 7, 10, 15, 11, 6, 9, 12, 8, 14, 10].map((h, i) => (
-                      <div key={i} className="flex-1 rounded-sm bg-red-500/70" style={{ height: `${(h / 15) * 100}%` }} />
+                      <div key={i} className="flex-1 rounded-sm bg-orange-500/70" style={{ height: `${(h / 15) * 100}%` }} />
                     ))}
                   </div>
                 </div>
@@ -329,7 +329,7 @@ export default function AuthPage() {
                     <div className="text-[10px] text-gray-500 mb-1.5 font-medium dark:text-slate-400">PIPELINE</div>
                     {[
                       { s: "Lead", n: 5, c: "bg-gray-400" },
-                      { s: "Quoted", n: 3, c: "bg-red-400" },
+                      { s: "Quoted", n: 3, c: "bg-orange-400" },
                       { s: "Scheduled", n: 3, c: "bg-orange-400" },
                       { s: "In Progress", n: 2, c: "bg-amber-400" },
                     ].map((row) => (
@@ -431,11 +431,11 @@ export default function AuthPage() {
               return (
                 <div
                   key={f.title}
-                  className="rounded-xl bg-white dark:bg-gray-950 border border-gray-100 dark:border-gray-800 p-5 hover:border-red-200 dark:hover:border-red-900 hover:shadow-sm transition-all"
+                  className="rounded-xl bg-white dark:bg-gray-950 border border-gray-100 dark:border-gray-800 p-5 hover:border-orange-200 dark:hover:border-orange-900 hover:shadow-sm transition-all"
                   data-testid={`feature-${f.title.toLowerCase().replace(/\s+/g, "-")}`}
                 >
-                  <div className="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-red-50 dark:bg-red-950/40 mb-3">
-                    <Icon className="h-5 w-5 text-red-700 dark:text-red-400" />
+                  <div className="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-orange-50 dark:bg-orange-950/40 mb-3">
+                    <Icon className="h-5 w-5 text-orange-700 dark:text-orange-400" />
                   </div>
                   <h3 className="font-semibold mb-1">{f.title}</h3>
                   <p className="text-sm text-gray-500 dark:text-gray-400 leading-relaxed">{f.desc}</p>
@@ -477,25 +477,25 @@ export default function AuthPage() {
                 key={plan.name}
                 className={`rounded-xl border p-5 flex flex-col ${
                   plan.highlighted
-                    ? "border-red-600 bg-red-600 text-white shadow-lg shadow-red-200 dark:shadow-red-950/40"
+                    ? "border-orange-600 bg-orange-600 text-white shadow-lg shadow-orange-200 dark:shadow-orange-950/40"
                     : "border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950"
                 }`}
                 data-testid={`plan-${plan.name.toLowerCase().replace(/\s+/g, "-")}`}
               >
                 <div className="mb-4">
-                  <div className={`text-xs font-medium uppercase tracking-wide mb-1 ${plan.highlighted ? "text-red-200" : "text-gray-600 dark:text-gray-400"}`}>
+                  <div className={`text-xs font-medium uppercase tracking-wide mb-1 ${plan.highlighted ? "text-orange-200" : "text-gray-600 dark:text-gray-400"}`}>
                     {plan.name}
                   </div>
                   <div className="flex items-baseline gap-0.5">
                     <span className="text-3xl font-extrabold">{plan.price}</span>
-                    <span className={`text-sm ${plan.highlighted ? "text-red-200" : "text-gray-600 dark:text-gray-400"}`}>{plan.period}</span>
+                    <span className={`text-sm ${plan.highlighted ? "text-orange-200" : "text-gray-600 dark:text-gray-400"}`}>{plan.period}</span>
                   </div>
-                  <p className={`text-xs mt-1 ${plan.highlighted ? "text-red-200" : "text-gray-500 dark:text-gray-400"}`}>{plan.desc}</p>
+                  <p className={`text-xs mt-1 ${plan.highlighted ? "text-orange-200" : "text-gray-500 dark:text-gray-400"}`}>{plan.desc}</p>
                 </div>
                 <ul className="space-y-1.5 flex-1 mb-5">
                   {plan.features.map((f) => (
-                    <li key={f} className={`flex items-start gap-2 text-xs ${plan.highlighted ? "text-red-100" : "text-gray-600 dark:text-gray-300"}`}>
-                      <CheckCircle2 className={`h-3.5 w-3.5 shrink-0 mt-0.5 ${plan.highlighted ? "text-red-200" : "text-emerald-600 dark:text-emerald-400"}`} />
+                    <li key={f} className={`flex items-start gap-2 text-xs ${plan.highlighted ? "text-orange-100" : "text-gray-600 dark:text-gray-300"}`}>
+                      <CheckCircle2 className={`h-3.5 w-3.5 shrink-0 mt-0.5 ${plan.highlighted ? "text-orange-200" : "text-emerald-600 dark:text-emerald-400"}`} />
                       {f}
                     </li>
                   ))}
@@ -504,8 +504,8 @@ export default function AuthPage() {
                   onClick={() => openModal(plan.tab)}
                   className={`w-full rounded-lg py-2 text-sm font-semibold transition-colors ${
                     plan.highlighted
-                      ? "bg-white text-red-700 hover:bg-red-50"
-                      : "bg-red-600 text-white hover:bg-red-700"
+                      ? "bg-white text-orange-700 hover:bg-orange-50"
+                      : "bg-orange-600 text-white hover:bg-orange-700"
                   }`}
                   data-testid={`plan-cta-${plan.name.toLowerCase().replace(/\s+/g, "-")}`}
                 >
@@ -574,9 +574,9 @@ export default function AuthPage() {
       <EcosystemSection />
 
       {/* Final CTA */}
-      <section className="bg-gradient-to-br from-red-50 via-orange-50 to-red-50 text-gray-900 py-16 dark:from-gray-950 dark:via-red-950 dark:to-gray-950 dark:text-white">
+      <section className="bg-gradient-to-br from-orange-50 via-amber-50 to-orange-50 text-gray-900 py-16 dark:from-slate-950 dark:via-orange-950 dark:to-slate-950 dark:text-white">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 text-center">
-          <div className="inline-flex items-center gap-2 rounded-full bg-red-100 border border-red-200 px-3 py-1 text-xs text-red-700 mb-5 dark:bg-red-900/40 dark:border-red-800/50 dark:text-red-300">
+          <div className="inline-flex items-center gap-2 rounded-full bg-orange-100 border border-orange-200 px-3 py-1 text-xs text-orange-700 mb-5 dark:bg-orange-900/40 dark:border-orange-800/50 dark:text-orange-300">
             <Smartphone className="h-3 w-3" />
             Works on your phone in the field
           </div>
@@ -588,7 +588,7 @@ export default function AuthPage() {
           </p>
           <button
             onClick={() => openModal("register")}
-            className="inline-flex items-center gap-2 rounded-lg bg-red-600 hover:bg-red-500 px-8 py-3.5 text-base font-semibold text-white transition-colors"
+            className="inline-flex items-center gap-2 rounded-lg bg-orange-600 hover:bg-orange-500 px-8 py-3.5 text-base font-semibold text-white transition-colors"
             data-testid="mobile-cta"
           >
             Get Started Free
