@@ -1,0 +1,1 @@
+- [Post-merge setup timeout](post-merge-setup-timeout.md) — post-merge script has a ~20s budget; npm audit/install blows past it (~98s) — keep the script fast and offline-cheap.
