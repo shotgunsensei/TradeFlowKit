@@ -201,11 +201,11 @@ export default function AuthPage() {
   }
 
   return (
-    <div className="min-h-screen bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100 font-sans">
+    <div className="min-h-screen bg-white dark:bg-background text-gray-900 dark:text-gray-100 font-sans">
       <AuthModal open={modalOpen} defaultTab={modalTab} onClose={() => setModalOpen(false)} />
 
       {/* Nav */}
-      <nav className="sticky top-0 z-50 bg-white/95 dark:bg-gray-950/95 backdrop-blur border-b border-gray-200 dark:border-gray-800">
+      <nav className="sticky top-0 z-50 bg-white/95 dark:bg-background/95 backdrop-blur border-b border-gray-200 dark:border-gray-800">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 flex h-14 items-center justify-between">
           <div className="flex items-center gap-2.5">
             <img src={tradeflowLogo} alt="TradeFlowKit" className="h-8 w-8 rounded-lg object-contain" />
@@ -348,7 +348,7 @@ export default function AuthPage() {
       </section>
 
       {/* Problem / Solution */}
-      <section className="bg-white text-gray-900 py-16 md:py-20 dark:bg-gray-950 dark:text-white">
+      <section className="bg-white text-gray-900 py-16 md:py-20 dark:bg-background dark:text-white">
         <div className="max-w-6xl mx-auto px-4 sm:px-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-12 items-center">
             <div>
@@ -394,7 +394,7 @@ export default function AuthPage() {
       </section>
 
       {/* How it works */}
-      <section className="bg-white dark:bg-gray-950 py-16 md:py-20">
+      <section className="bg-white dark:bg-background py-16 md:py-20">
         <div className="max-w-6xl mx-auto px-4 sm:px-6">
           <div className="text-center mb-12">
             <h2 className="text-3xl font-bold mb-3">How it works</h2>
@@ -404,7 +404,7 @@ export default function AuthPage() {
             {steps.map((step) => (
               <div
                 key={step.num}
-                className="relative rounded-xl border border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-900 p-6"
+                className="relative rounded-xl border border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-card p-6"
                 data-testid={`step-${step.num}`}
               >
                 <div className={`inline-flex h-9 w-9 items-center justify-center rounded-full ${step.color} text-white font-bold text-base mb-4`}>
@@ -419,7 +419,7 @@ export default function AuthPage() {
       </section>
 
       {/* Features grid */}
-      <section className="bg-gray-50 dark:bg-gray-900 py-16 md:py-20">
+      <section className="bg-gray-50 dark:bg-card py-16 md:py-20">
         <div className="max-w-6xl mx-auto px-4 sm:px-6">
           <div className="text-center mb-12">
             <h2 className="text-3xl font-bold mb-3">Everything your business needs</h2>
@@ -431,7 +431,7 @@ export default function AuthPage() {
               return (
                 <div
                   key={f.title}
-                  className="rounded-xl bg-white dark:bg-gray-950 border border-gray-100 dark:border-gray-800 p-5 hover:border-orange-200 dark:hover:border-orange-900 hover:shadow-sm transition-all"
+                  className="rounded-xl bg-white dark:bg-background border border-gray-100 dark:border-gray-800 p-5 hover:border-orange-200 dark:hover:border-orange-900 hover:shadow-sm transition-all"
                   data-testid={`feature-${f.title.toLowerCase().replace(/\s+/g, "-")}`}
                 >
                   <div className="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-orange-50 dark:bg-orange-950/40 mb-3">
@@ -447,7 +447,7 @@ export default function AuthPage() {
       </section>
 
       {/* Use cases */}
-      <section className="bg-white dark:bg-gray-950 py-16 md:py-20">
+      <section className="bg-white dark:bg-background py-16 md:py-20">
         <div className="max-w-6xl mx-auto px-4 sm:px-6">
           <div className="text-center mb-12">
             <h2 className="text-3xl font-bold mb-3">Built for your trade</h2>
@@ -455,7 +455,7 @@ export default function AuthPage() {
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
             {useCases.map((uc) => (
-              <div key={uc.trade} className="rounded-xl border border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-900 p-5">
+              <div key={uc.trade} className="rounded-xl border border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-card p-5">
                 <div className="font-semibold mb-1.5">{uc.trade}</div>
                 <div className="text-sm text-gray-500 dark:text-gray-400">{uc.desc}</div>
               </div>
@@ -465,7 +465,7 @@ export default function AuthPage() {
       </section>
 
       {/* Pricing */}
-      <section className="bg-gray-50 dark:bg-gray-900 py-16 md:py-20">
+      <section className="bg-gray-50 dark:bg-card py-16 md:py-20">
         <div className="max-w-6xl mx-auto px-4 sm:px-6">
           <div className="text-center mb-12">
             <h2 className="text-3xl font-bold mb-3">Simple, honest pricing</h2>
@@ -478,7 +478,7 @@ export default function AuthPage() {
                 className={`rounded-xl border p-5 flex flex-col ${
                   plan.highlighted
                     ? "border-orange-600 bg-orange-600 text-white shadow-lg shadow-orange-200 dark:shadow-orange-950/40"
-                    : "border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950"
+                    : "border-gray-200 dark:border-gray-800 bg-white dark:bg-background"
                 }`}
                 data-testid={`plan-${plan.name.toLowerCase().replace(/\s+/g, "-")}`}
               >
@@ -518,14 +518,14 @@ export default function AuthPage() {
       </section>
 
       {/* Testimonials */}
-      <section className="bg-white dark:bg-gray-950 py-16 md:py-20">
+      <section className="bg-white dark:bg-background py-16 md:py-20">
         <div className="max-w-6xl mx-auto px-4 sm:px-6">
           <div className="text-center mb-12">
             <h2 className="text-3xl font-bold mb-3">Trusted by tradespeople</h2>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
             {testimonials.map((t, i) => (
-              <div key={i} className="rounded-xl bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-800 p-5" data-testid={`testimonial-${i}`}>
+              <div key={i} className="rounded-xl bg-gray-50 dark:bg-card border border-gray-100 dark:border-gray-800 p-5" data-testid={`testimonial-${i}`}>
                 <div className="flex gap-0.5 mb-3">
                   {Array.from({ length: t.stars }).map((_, j) => (
                     <Star key={j} className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
@@ -543,16 +543,16 @@ export default function AuthPage() {
       </section>
 
       {/* FAQ */}
-      <section className="bg-gray-50 dark:bg-gray-900 py-16 md:py-20">
+      <section className="bg-gray-50 dark:bg-card py-16 md:py-20">
         <div className="max-w-3xl mx-auto px-4 sm:px-6">
           <div className="text-center mb-12">
             <h2 className="text-3xl font-bold mb-3">Frequently asked questions</h2>
           </div>
           <div className="space-y-3">
             {faqs.map((faq, i) => (
-              <div key={i} className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 overflow-hidden">
+              <div key={i} className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-background overflow-hidden">
                 <button
-                  className="w-full text-left px-5 py-4 flex items-center justify-between gap-3 font-medium text-sm hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors"
+                  className="w-full text-left px-5 py-4 flex items-center justify-between gap-3 font-medium text-sm hover:bg-gray-50 dark:hover:bg-card transition-colors"
                   onClick={() => setOpenFaq(openFaq === i ? null : i)}
                   data-testid={`faq-${i}`}
                 >
@@ -598,7 +598,7 @@ export default function AuthPage() {
       </section>
 
       {/* Footer */}
-      <footer className="bg-gray-50 border-t border-gray-200 py-10 dark:bg-gray-950 dark:border-gray-800">
+      <footer className="bg-gray-50 border-t border-gray-200 py-10 dark:bg-background dark:border-gray-800">
         <div className="max-w-6xl mx-auto px-4 sm:px-6">
           <div className="flex flex-col sm:flex-row items-center justify-between gap-6 mb-6">
             <div className="flex items-center gap-2.5">

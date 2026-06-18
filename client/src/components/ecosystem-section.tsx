@@ -32,7 +32,7 @@ const ecosystemProducts = [
 
 export function EcosystemSection() {
   return (
-    <section className="bg-white dark:bg-gray-950 py-16 md:py-20" data-testid="section-ecosystem">
+    <section className="bg-white dark:bg-background py-16 md:py-20" data-testid="section-ecosystem">
       <div className="max-w-6xl mx-auto px-4 sm:px-6">
         <div className="text-center mb-10">
           <div className="inline-flex items-center gap-2 rounded-full bg-gray-100 dark:bg-gray-800 px-3 py-1 text-xs font-medium text-gray-600 dark:text-gray-300 mb-3">
@@ -52,7 +52,7 @@ export function EcosystemSection() {
                 href={p.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="group rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-5 hover:border-red-300 dark:hover:border-red-900 hover:shadow-md transition-all flex flex-col"
+                className="group rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-card p-5 hover:border-red-300 dark:hover:border-red-900 hover:shadow-md transition-all flex flex-col"
                 data-testid={`ecosystem-card-${p.name.toLowerCase()}`}
               >
                 <div className="flex items-center justify-between mb-3">

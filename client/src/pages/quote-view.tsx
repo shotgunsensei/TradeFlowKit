@@ -42,7 +42,7 @@ export default function QuoteView() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 p-6">
+      <div className="min-h-screen bg-gray-50 dark:bg-background p-6">
         <div className="max-w-2xl mx-auto space-y-4">
           <Skeleton className="h-8 w-48" />
           <Skeleton className="h-48 w-full" />
@@ -79,7 +79,7 @@ export default function QuoteView() {
   const org = quote.org;
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 py-8 px-4">
+    <div className="min-h-screen bg-gray-50 dark:bg-background py-8 px-4">
       <div className="max-w-2xl mx-auto space-y-4">
         {/* Action bar — hidden when printing */}
         <div className="flex items-center justify-between print:hidden">
