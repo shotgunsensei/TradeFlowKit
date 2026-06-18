@@ -300,7 +300,7 @@ export default function AuthPage() {
                 <div className="grid grid-cols-4 gap-2">
                   {[
                     { label: "Today's Jobs", val: "3", color: "bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-300" },
-                    { label: "Overdue", val: "1", color: "bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300" },
+                    { label: "Overdue", val: "1", color: "bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-300" },
                     { label: "Pending Quotes", val: "$4,200", color: "bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300" },
                     { label: "This Month", val: "$12,840", color: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300" },
                   ].map((card) => (
