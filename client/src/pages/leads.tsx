@@ -15,7 +15,9 @@ import {
   Flame,
   Globe2,
   KanbanSquare,
+  ListChecks,
   Mail,
+  MapPin,
   MessageSquare,
   Phone,
   Plus,
@@ -23,6 +25,7 @@ import {
   Search,
   Send,
   Settings,
+  Sparkles,
   Target,
   UserCheck,
   UserPlus,
@@ -44,8 +47,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/lib/auth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import type { Lead, LeadActivity, LeadCaptureForm, LeadFollowupTask, LeadSettings } from "@shared/schema";
+import type { Lead, LeadActivity, LeadCaptureForm, LeadFollowupTask, LeadSettings, LeadSourceEvent } from "@shared/schema";
+import {
+  LEAD_TRADE_TEMPLATES,
+  getLeadTradeTemplate,
+  type LeadTradeTemplate,
+} from "@shared/leadTradeTemplates";
 
 type LeadStats = {
   newLeads: number;
@@ -58,11 +67,12 @@ type LeadStats = {
 type LeadSettingsResponse = {
   settings: LeadSettings;
   captureForm: LeadCaptureForm;
+  tradeTemplate?: LeadTradeTemplate | null;
 };
 
 type ProviderStatus = {
-  twilio: { configured: boolean };
-  sendgrid: { configured: boolean };
+  twilio: { configured: boolean; fromPhoneConfigured?: boolean };
+  sendgrid: { configured: boolean; fromEmailConfigured?: boolean };
   openai: { configured: boolean; mode: string };
 };
 
@@ -103,6 +113,31 @@ type LeadForm = {
   aiSummary: string;
 };
 
+type LeadSourceAdapterSummary = {
+  key: string;
+  label: string;
+  description: string;
+  examplePayload: Record<string, unknown>;
+};
+
+type LeadSettingsForm = {
+  autoRespond: boolean;
+  followUpEnabled: boolean;
+  hotLeadThreshold: number;
+  dryRun: boolean;
+  smsEnabled: boolean;
+  emailEnabled: boolean;
+  defaultSmsTemplate: string;
+  defaultEmailSubject: string;
+  defaultEmailTemplate: string;
+  smsComplianceFooter: string;
+  notificationPhone: string;
+  notificationEmail: string;
+  tradeTemplateKey: string;
+  serviceArea: string;
+  leadSources: string[];
+};
+
 const emptyForm: LeadForm = {
   name: "",
   phone: "",
@@ -124,7 +159,7 @@ const emptyForm: LeadForm = {
 };
 
 const statusOptions = ["new", "contacted", "qualified", "follow_up", "converted", "lost", "spam"];
-const sourceOptions = ["manual", "website_form", "missed_call", "import"];
+const sourceOptions = ["manual", "website_form", "external_webhook", "missed_call", "import"];
 const urgencyOptions = ["low", "normal", "urgent", "emergency"];
 const flowStages = [
   { key: "new", label: "Captured" },
@@ -597,7 +632,7 @@ function LeadFlow({ status }: { status: string }) {
   );
 }
 
-function LeadFields({ form, setForm }: { form: LeadForm; setForm: (next: LeadForm) => void }) {
+function LeadFields({ form, setForm, template }: { form: LeadForm; setForm: (next: LeadForm) => void; template?: LeadTradeTemplate | null }) {
   const update = (key: keyof LeadForm, value: string | boolean) => setForm({ ...form, [key]: value });
   return (
     <div className="space-y-4">
@@ -608,7 +643,17 @@ function LeadFields({ form, setForm }: { form: LeadForm; setForm: (next: LeadFor
         </div>
         <div className="space-y-1.5">
           <Label>Service Requested</Label>
-          <Input value={form.serviceType} onChange={(e) => update("serviceType", e.target.value)} data-testid="input-lead-service" />
+          {template ? (
+            <Select value={form.serviceType || undefined} onValueChange={(v) => update("serviceType", v)}>
+              <SelectTrigger data-testid="input-lead-service"><SelectValue placeholder="Choose service type" /></SelectTrigger>
+              <SelectContent>
+                {template.serviceCategories.map((service) => <SelectItem key={service} value={service}>{service}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          ) : (
+            <Input value={form.serviceType} onChange={(e) => update("serviceType", e.target.value)} data-testid="input-lead-service" />
+          )}
+          {template && <p className="text-xs text-muted-foreground">{template.exampleLeadText}</p>}
         </div>
         <div className="space-y-1.5">
           <Label>Phone</Label>
@@ -667,7 +712,13 @@ function LeadFields({ form, setForm }: { form: LeadForm; setForm: (next: LeadFor
       </div>
       <div className="space-y-1.5">
         <Label>Request Details</Label>
-        <Textarea value={form.description} onChange={(e) => update("description", e.target.value)} rows={4} data-testid="input-lead-description" />
+        <Textarea
+          value={form.description}
+          onChange={(e) => update("description", e.target.value)}
+          rows={4}
+          placeholder={template ? template.exampleLeadText : undefined}
+          data-testid="input-lead-description"
+        />
       </div>
       <label className="flex items-center gap-2 text-sm">
         <input type="checkbox" checked={form.consentToSms} onChange={(e) => update("consentToSms", e.target.checked)} />
@@ -679,6 +730,7 @@ function LeadFields({ form, setForm }: { form: LeadForm; setForm: (next: LeadFor
 
 export default function LeadsPage() {
   const { toast } = useToast();
+  const { org } = useAuth();
   const [statusFilter, setStatusFilter] = useState("all");
   const [sourceFilter, setSourceFilter] = useState("all");
   const [urgencyFilter, setUrgencyFilter] = useState("all");
@@ -689,19 +741,27 @@ export default function LeadsPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [showCapture, setShowCapture] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showSetup, setShowSetup] = useState(false);
+  const [setupStep, setSetupStep] = useState(0);
   const [createForm, setCreateForm] = useState<LeadForm>(emptyForm);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<LeadForm>(emptyForm);
-  const [settingsForm, setSettingsForm] = useState({
+  const [settingsForm, setSettingsForm] = useState<LeadSettingsForm>({
     autoRespond: true,
     followUpEnabled: true,
     hotLeadThreshold: 75,
     dryRun: true,
+    smsEnabled: false,
+    emailEnabled: false,
     defaultSmsTemplate: "",
     defaultEmailSubject: "",
     defaultEmailTemplate: "",
+    smsComplianceFooter: "Reply STOP to opt out.",
     notificationPhone: "",
     notificationEmail: "",
+    tradeTemplateKey: "",
+    serviceArea: "",
+    leadSources: [],
   });
   const [captureForm, setCaptureForm] = useState({
     id: "",
@@ -712,10 +772,19 @@ export default function LeadsPage() {
     successMessage: "Thanks. We received your request and will follow up shortly.",
     publicToken: "",
   });
+  const [testMessage, setTestMessage] = useState({
+    smsTo: "",
+    emailTo: "",
+    emailSubject: "TradeFlow test message",
+  });
+  const [selectedAdapterKey, setSelectedAdapterKey] = useState("genericJson");
 
   const { data: allLeads = [], isLoading, error: leadsError } = useQuery<Lead[]>({ queryKey: ["/api/leads"] });
   const { data: stats } = useQuery<LeadStats>({ queryKey: ["/api/leads/stats"] });
   const { data: leadSettings, error: settingsError } = useQuery<LeadSettingsResponse>({ queryKey: ["/api/leads/settings"] });
+  const { data: tradeTemplates = LEAD_TRADE_TEMPLATES } = useQuery<LeadTradeTemplate[]>({ queryKey: ["/api/leads/trade-templates"] });
+  const { data: sourceAdapters = [] } = useQuery<LeadSourceAdapterSummary[]>({ queryKey: ["/api/leads/source-adapters"] });
+  const { data: sourceEvents = [] } = useQuery<LeadSourceEvent[]>({ queryKey: ["/api/leads/source-events"] });
   const { data: providerStatus } = useQuery<ProviderStatus>({ queryKey: ["/api/leads/provider-status"] });
   const {
     data: operatorDashboard,
@@ -745,11 +814,17 @@ export default function LeadsPage() {
       followUpEnabled: leadSettings.settings.followUpEnabled,
       hotLeadThreshold: leadSettings.settings.hotLeadThreshold,
       dryRun: leadSettings.settings.dryRun,
+      smsEnabled: leadSettings.settings.smsEnabled || false,
+      emailEnabled: leadSettings.settings.emailEnabled || false,
       defaultSmsTemplate: leadSettings.settings.defaultSmsTemplate || "",
       defaultEmailSubject: leadSettings.settings.defaultEmailSubject || "",
       defaultEmailTemplate: leadSettings.settings.defaultEmailTemplate || "",
+      smsComplianceFooter: leadSettings.settings.smsComplianceFooter || "Reply STOP to opt out.",
       notificationPhone: leadSettings.settings.notificationPhone || "",
       notificationEmail: leadSettings.settings.notificationEmail || "",
+      tradeTemplateKey: leadSettings.settings.tradeTemplateKey || "",
+      serviceArea: leadSettings.settings.serviceArea || "",
+      leadSources: Array.isArray(leadSettings.settings.leadSources) ? leadSettings.settings.leadSources : [],
     });
     setCaptureForm({
       id: leadSettings.captureForm.id,
@@ -810,16 +885,35 @@ export default function LeadsPage() {
     .slice(0, 6);
   const hasDemoData = allLeads.some(isDemoLead);
   const dryRunActive = settingsForm.dryRun;
+  const activeTemplate = useMemo(
+    () => tradeTemplates.find((template) => template.tradeKey === settingsForm.tradeTemplateKey) || getLeadTradeTemplate(settingsForm.tradeTemplateKey) || null,
+    [settingsForm.tradeTemplateKey, tradeTemplates],
+  );
+  const activeLeadSources = settingsForm.leadSources.length > 0
+    ? settingsForm.leadSources
+    : activeTemplate?.defaultLeadSources || [];
   const captureEndpoint = captureForm.publicToken && typeof window !== "undefined"
     ? `${window.location.origin}/api/public/lead-capture/${captureForm.publicToken}`
     : "";
+  const selectedAdapter = sourceAdapters.find((adapter) => adapter.key === selectedAdapterKey) || sourceAdapters[0] || null;
+  const adapterEndpoint = captureForm.publicToken && selectedAdapterKey && typeof window !== "undefined"
+    ? `${window.location.origin}/api/public/lead-source/${captureForm.publicToken}/${selectedAdapterKey}`
+    : "";
+  const adapterExampleJson = selectedAdapter
+    ? JSON.stringify(selectedAdapter.examplePayload, null, 2)
+    : "";
+  const serviceFieldSnippet = activeTemplate
+    ? `<select name="serviceType">
+${activeTemplate.serviceCategories.map((service) => `  <option value="${service}">${service}</option>`).join("\n")}
+</select>`
+    : `  <input name="serviceType" placeholder="Service requested" />`;
   const embedSnippet = captureEndpoint
     ? `<form id="tradeflow-lead-form">
   <input name="name" placeholder="Name" required />
   <input name="phone" placeholder="Phone" />
   <input name="email" placeholder="Email" />
   <input name="address" placeholder="Address" />
-  <input name="serviceType" placeholder="Service requested" />
+  ${serviceFieldSnippet}
   <textarea name="description" placeholder="How can we help?"></textarea>
   <label><input type="checkbox" name="consentToSms" /> I agree to SMS follow-up</label>
   <button type="submit">Request Follow-up</button>
@@ -850,6 +944,39 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
   const copyText = async (text: string, title: string) => {
     await navigator.clipboard?.writeText(text);
     toast({ title });
+  };
+
+  const settingsWithTemplate = (template: LeadTradeTemplate, base: LeadSettingsForm = settingsForm): LeadSettingsForm => ({
+    ...base,
+    tradeTemplateKey: template.tradeKey,
+    leadSources: base.leadSources.length > 0 ? base.leadSources : template.defaultLeadSources,
+    defaultSmsTemplate: template.defaultSmsTemplate,
+    defaultEmailSubject: template.defaultEmailSubject,
+    defaultEmailTemplate: template.defaultEmailTemplate,
+    hotLeadThreshold: Math.max(base.hotLeadThreshold || 0, 75),
+    dryRun: true,
+    smsEnabled: false,
+    emailEnabled: false,
+    smsComplianceFooter: base.smsComplianceFooter || "Reply STOP to opt out.",
+  });
+
+  const selectTemplate = (tradeKey: string) => {
+    const template = tradeTemplates.find((item) => item.tradeKey === tradeKey) || getLeadTradeTemplate(tradeKey);
+    if (!template) return;
+    setSettingsForm(settingsWithTemplate(template));
+    if (!captureForm.defaultServiceType) {
+      setCaptureForm({ ...captureForm, defaultServiceType: template.serviceCategories[0] || "" });
+    }
+  };
+
+  const toggleLeadSource = (source: string) => {
+    const exists = settingsForm.leadSources.includes(source);
+    setSettingsForm({
+      ...settingsForm,
+      leadSources: exists
+        ? settingsForm.leadSources.filter((item) => item !== source)
+        : [...settingsForm.leadSources, source],
+    });
   };
 
   const createMutation = useMutation({
@@ -903,8 +1030,14 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
     onSuccess: (_data, vars) => {
       refresh();
       if (vars.action === "convert") toast({ title: "Lead converted", description: "Customer and job lead were created." });
-      else if (vars.action === "send-sms") toast({ title: "Dry-run SMS logged" });
-      else if (vars.action === "send-email") toast({ title: "Dry-run email logged" });
+      else if (vars.action === "send-sms") {
+        const mode = typeof _data?.mode === "string" ? _data.mode : "dry-run";
+        toast({ title: mode === "live" ? "SMS sent" : mode === "blocked" ? "SMS blocked" : "Dry-run SMS logged", description: _data?.reason ? String(_data.reason).replaceAll("_", " ") : undefined });
+      }
+      else if (vars.action === "send-email") {
+        const mode = typeof _data?.mode === "string" ? _data.mode : "dry-run";
+        toast({ title: mode === "live" ? "Email sent" : mode === "blocked" ? "Email blocked" : "Dry-run email logged", description: _data?.reason ? String(_data.reason).replaceAll("_", " ") : undefined });
+      }
       else toast({ title: "Lead activity recorded" });
     },
     onError: (err: Error) => toast({ title: "Action failed", description: err.message, variant: "destructive" }),
@@ -932,6 +1065,34 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
       toast({ title: "Capture form saved" });
     },
     onError: (err: Error) => toast({ title: "Form save failed", description: err.message, variant: "destructive" }),
+  });
+
+  const sendTestMessageMutation = useMutation({
+    mutationFn: async ({ channel }: { channel: "sms" | "email" }) => {
+      const destination = channel === "sms" ? testMessage.smsTo : testMessage.emailTo;
+      if (!destination.trim()) throw new Error("Enter a test destination first.");
+      const confirmed = window.confirm(`Send a live ${channel.toUpperCase()} test message to ${destination}?`);
+      if (!confirmed) throw new Error("Test message canceled.");
+      const template = channel === "sms"
+        ? settingsForm.defaultSmsTemplate || "This is a TradeFlow Lead Center SMS test. Reply STOP to opt out."
+        : settingsForm.defaultEmailTemplate || "This is a TradeFlow Lead Center email test.";
+      const res = await apiRequest("POST", "/api/leads/test-message", {
+        channel,
+        to: destination,
+        subject: channel === "email" ? testMessage.emailSubject : undefined,
+        template,
+        confirm: true,
+      });
+      return res.json();
+    },
+    onSuccess: (result, vars) => {
+      toast({
+        title: result.ok ? `${vars.channel.toUpperCase()} test sent` : `${vars.channel.toUpperCase()} test blocked`,
+        description: result.reason ? String(result.reason).replaceAll("_", " ") : undefined,
+        variant: result.ok ? "default" : "destructive",
+      });
+    },
+    onError: (err: Error) => toast({ title: "Test message not sent", description: err.message, variant: "destructive" }),
   });
 
   const openLead = (lead: Lead) => {
@@ -971,6 +1132,32 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
   const pendingFollowups = followups.filter((task) => task.status === "pending");
   const completedFollowups = followups.filter((task) => task.status === "completed");
   const failedFollowups = followups.filter((task) => task.status === "failed");
+  const setupSteps = [
+    "Choose your trade",
+    "Confirm business and service area",
+    "Choose lead sources",
+    "Review service categories",
+    "Review message templates",
+    "Review follow-up sequence",
+    "Finish setup",
+  ];
+  const finishSetup = () => {
+    saveSettingsMutation.mutate();
+    setShowSetup(false);
+    setSetupStep(0);
+  };
+  const smsReady = !settingsForm.dryRun
+    && settingsForm.smsEnabled
+    && !!providerStatus?.twilio.configured
+    && !!providerStatus?.twilio.fromPhoneConfigured
+    && !!settingsForm.defaultSmsTemplate.trim()
+    && !!settingsForm.smsComplianceFooter.trim();
+  const emailReady = !settingsForm.dryRun
+    && settingsForm.emailEnabled
+    && !!providerStatus?.sendgrid.configured
+    && !!providerStatus?.sendgrid.fromEmailConfigured
+    && !!settingsForm.defaultEmailSubject.trim()
+    && !!settingsForm.defaultEmailTemplate.trim();
 
   return (
     <div className="flex flex-col h-full">
@@ -990,6 +1177,10 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
             <Button size="sm" variant="outline" onClick={() => setShowCapture(true)}>
               <Globe2 className="h-4 w-4 mr-1" />
               View Embed Code
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => setShowSetup(true)}>
+              <Sparkles className="h-4 w-4 mr-1" />
+              Lead Setup
             </Button>
             <Button size="sm" variant="outline" onClick={() => setShowSettings(true)}>
               <Settings className="h-4 w-4 mr-1" />
@@ -1022,6 +1213,60 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
             <AlertDescription>Dry-run mode is active, so messages are prepared in the timeline without sending SMS or email.</AlertDescription>
           </Alert>
         )}
+
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant={activeTemplate ? "default" : "outline"}>{activeTemplate?.tradeName || "No trade selected"}</Badge>
+                  {settingsForm.serviceArea && <Badge variant="secondary"><MapPin className="mr-1 h-3 w-3" />{settingsForm.serviceArea}</Badge>}
+                  <Badge variant="outline">Dry-run templates</Badge>
+                </div>
+                <h2 className="text-base font-semibold">Trade-specific lead setup</h2>
+                <p className="max-w-3xl text-sm text-muted-foreground">
+                  Choose a contractor template to tune service choices, hot lead signals, qualification prompts, and follow-up defaults for the trade.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" variant="outline" onClick={() => setShowSetup(true)}>
+                  <Sparkles className="mr-1 h-4 w-4" />
+                  Run setup
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => setShowSettings(true)}>Review settings</Button>
+              </div>
+            </div>
+            {activeTemplate ? (
+              <div className="mt-4 grid gap-3 lg:grid-cols-4">
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs font-medium text-muted-foreground">Service categories</p>
+                  <p className="mt-1 text-sm">{activeTemplate.serviceCategories.slice(0, 4).join(", ")}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs font-medium text-muted-foreground">Hot lead keywords</p>
+                  <p className="mt-1 text-sm">{activeTemplate.urgencyKeywords.slice(0, 4).join(", ")}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs font-medium text-muted-foreground">Follow-up rhythm</p>
+                  <p className="mt-1 text-sm">{activeTemplate.defaultFollowUpSequence.map((step) => step.label).join(", ")}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs font-medium text-muted-foreground">Qualification prompts</p>
+                  <p className="mt-1 text-sm">{activeTemplate.qualificationQuestions.slice(0, 2).join(" ")}</p>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                {tradeTemplates.slice(0, 4).map((template) => (
+                  <button key={template.tradeKey} type="button" className="rounded-lg border p-3 text-left hover:bg-muted/40" onClick={() => selectTemplate(template.tradeKey)}>
+                    <p className="text-sm font-medium">{template.tradeName}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">{template.serviceCategories.slice(0, 3).join(", ")}</p>
+                  </button>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
         <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">
           <OperatorList
@@ -1367,12 +1612,162 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
       <Dialog open={showCreate} onOpenChange={setShowCreate}>
         <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-auto">
           <DialogHeader><DialogTitle>New Lead</DialogTitle></DialogHeader>
-          <LeadFields form={createForm} setForm={setCreateForm} />
+          <LeadFields form={createForm} setForm={setCreateForm} template={activeTemplate} />
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={() => setShowCreate(false)}>Cancel</Button>
             <Button onClick={() => createMutation.mutate()} disabled={createMutation.isPending || !createForm.name.trim()} data-testid="button-save-lead">
               {createMutation.isPending ? "Creating..." : "Create Lead"}
             </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showSetup} onOpenChange={setShowSetup}>
+        <DialogContent className="sm:max-w-5xl max-h-[92vh] overflow-auto">
+          <DialogHeader><DialogTitle>Lead Conversion Setup</DialogTitle></DialogHeader>
+          <div className="grid gap-5 lg:grid-cols-[240px_1fr]">
+            <div className="space-y-2">
+              {setupSteps.map((step, index) => (
+                <button
+                  key={step}
+                  type="button"
+                  onClick={() => setSetupStep(index)}
+                  className={`w-full rounded-lg border p-3 text-left text-sm ${setupStep === index ? "border-primary bg-primary/5 text-primary" : "hover:bg-muted/40"}`}
+                >
+                  <span className="text-xs text-muted-foreground">Step {index + 1}</span>
+                  <span className="block font-medium">{step}</span>
+                </button>
+              ))}
+            </div>
+            <div className="space-y-4">
+              {setupStep === 0 && (
+                <div className="space-y-3">
+                  <h3 className="text-lg font-semibold">Choose your trade</h3>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {tradeTemplates.map((template) => (
+                      <button
+                        key={template.tradeKey}
+                        type="button"
+                        onClick={() => selectTemplate(template.tradeKey)}
+                        className={`rounded-lg border p-3 text-left hover:bg-muted/40 ${settingsForm.tradeTemplateKey === template.tradeKey ? "border-primary bg-primary/5" : ""}`}
+                      >
+                        <p className="font-medium">{template.tradeName}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">{template.exampleLeadText}</p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {setupStep === 1 && (
+                <div className="space-y-3">
+                  <h3 className="text-lg font-semibold">Confirm business and service area</h3>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <Label>Business name</Label>
+                      <Input readOnly value={org?.name || ""} placeholder="Organization name" />
+                      <p className="text-xs text-muted-foreground">Business name is managed in organization settings.</p>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Service area</Label>
+                      <Input value={settingsForm.serviceArea} onChange={(e) => setSettingsForm({ ...settingsForm, serviceArea: e.target.value })} placeholder="Example: Charlotte metro, 25-mile radius" />
+                    </div>
+                  </div>
+                </div>
+              )}
+              {setupStep === 2 && (
+                <div className="space-y-3">
+                  <h3 className="text-lg font-semibold">Choose lead sources</h3>
+                  <div className="flex flex-wrap gap-2">
+                    {(activeTemplate?.defaultLeadSources || ["Website Form", "Missed Call", "Referral", "Manual Entry"]).map((source) => (
+                      <Button key={source} type="button" variant={settingsForm.leadSources.includes(source) ? "default" : "outline"} onClick={() => toggleLeadSource(source)}>
+                        {source}
+                      </Button>
+                    ))}
+                  </div>
+                  <p className="text-sm text-muted-foreground">Selected sources help staff use consistent lead labels. They do not connect external platforms yet.</p>
+                </div>
+              )}
+              {setupStep === 3 && (
+                <div className="space-y-3">
+                  <h3 className="text-lg font-semibold">Review service categories</h3>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {(activeTemplate?.serviceCategories || []).map((service) => (
+                      <div key={service} className="rounded-lg border p-3 text-sm">{service}</div>
+                    ))}
+                  </div>
+                  {!activeTemplate && <p className="text-sm text-muted-foreground">Choose a trade first to see service categories.</p>}
+                </div>
+              )}
+              {setupStep === 4 && (
+                <div className="space-y-3">
+                  <h3 className="text-lg font-semibold">Review message templates</h3>
+                  <div className="space-y-1.5">
+                    <Label>SMS template</Label>
+                    <Textarea rows={2} value={settingsForm.defaultSmsTemplate} onChange={(e) => setSettingsForm({ ...settingsForm, defaultSmsTemplate: e.target.value })} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Email subject</Label>
+                    <Input value={settingsForm.defaultEmailSubject} onChange={(e) => setSettingsForm({ ...settingsForm, defaultEmailSubject: e.target.value })} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Email template</Label>
+                    <Textarea rows={4} value={settingsForm.defaultEmailTemplate} onChange={(e) => setSettingsForm({ ...settingsForm, defaultEmailTemplate: e.target.value })} />
+                  </div>
+                  <Alert>
+                    <MessageSquare className="h-4 w-4" />
+                    <AlertTitle>Dry-run only</AlertTitle>
+                    <AlertDescription>Setup prepares templates and follow-up tasks. It does not send SMS or email.</AlertDescription>
+                  </Alert>
+                </div>
+              )}
+              {setupStep === 5 && (
+                <div className="space-y-3">
+                  <h3 className="text-lg font-semibold">Review follow-up sequence</h3>
+                  <div className="space-y-2">
+                    {(activeTemplate?.defaultFollowUpSequence || []).map((step) => (
+                      <div key={step.stepNumber} className="rounded-lg border p-3">
+                        <p className="text-sm font-medium">{step.label}</p>
+                        <p className="text-xs text-muted-foreground">Day {step.delayDays} · {step.channel.toUpperCase()} · {step.messageTemplate}</p>
+                      </div>
+                    ))}
+                  </div>
+                  {!activeTemplate && <p className="text-sm text-muted-foreground">Choose a trade first to see follow-up defaults.</p>}
+                </div>
+              )}
+              {setupStep === 6 && (
+                <div className="space-y-4">
+                  <h3 className="text-lg font-semibold">Finish setup</h3>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs text-muted-foreground">Trade</p>
+                      <p className="font-medium">{activeTemplate?.tradeName || "Not selected"}</p>
+                    </div>
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs text-muted-foreground">Service area</p>
+                      <p className="font-medium">{settingsForm.serviceArea || "Not set"}</p>
+                    </div>
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs text-muted-foreground">Lead sources</p>
+                      <p className="font-medium">{activeLeadSources.join(", ") || "Not set"}</p>
+                    </div>
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs text-muted-foreground">Messaging</p>
+                      <p className="font-medium">Dry-run mode stays on</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+              <div className="flex items-center justify-between border-t pt-4">
+                <Button variant="outline" disabled={setupStep === 0} onClick={() => setSetupStep(Math.max(0, setupStep - 1))}>Back</Button>
+                {setupStep < setupSteps.length - 1 ? (
+                  <Button onClick={() => setSetupStep(Math.min(setupSteps.length - 1, setupStep + 1))}>Next</Button>
+                ) : (
+                  <Button onClick={finishSetup} disabled={!settingsForm.tradeTemplateKey || saveSettingsMutation.isPending}>
+                    {saveSettingsMutation.isPending ? "Saving..." : "Finish setup"}
+                  </Button>
+                )}
+              </div>
+            </div>
           </div>
         </DialogContent>
       </Dialog>
@@ -1398,7 +1793,16 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
                 </div>
                 <div className="space-y-1.5">
                   <Label>Default Service</Label>
-                  <Input value={captureForm.defaultServiceType} onChange={(e) => setCaptureForm({ ...captureForm, defaultServiceType: e.target.value })} />
+                  {activeTemplate ? (
+                    <Select value={captureForm.defaultServiceType || undefined} onValueChange={(v) => setCaptureForm({ ...captureForm, defaultServiceType: v })}>
+                      <SelectTrigger><SelectValue placeholder="Choose default service" /></SelectTrigger>
+                      <SelectContent>
+                        {activeTemplate.serviceCategories.map((service) => <SelectItem key={service} value={service}>{service}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Input value={captureForm.defaultServiceType} onChange={(e) => setCaptureForm({ ...captureForm, defaultServiceType: e.target.value })} />
+                  )}
                 </div>
                 <label className="flex items-center justify-between rounded-md border px-3 py-2">
                   <span className="text-sm font-medium">Enabled</span>
@@ -1436,7 +1840,16 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
                   <Input readOnly placeholder="Phone" />
                   <Input readOnly placeholder="Email" />
                   <Input readOnly placeholder="Address" />
-                  <Input readOnly placeholder="Service requested" value={captureForm.defaultServiceType} />
+                  {activeTemplate ? (
+                    <Select value={captureForm.defaultServiceType || activeTemplate.serviceCategories[0]}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {activeTemplate.serviceCategories.map((service) => <SelectItem key={service} value={service}>{service}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Input readOnly placeholder="Service requested" value={captureForm.defaultServiceType} />
+                  )}
                   <Textarea readOnly placeholder="How can we help?" />
                   <label className="flex items-center gap-2 text-sm text-muted-foreground"><input type="checkbox" readOnly /> I agree to SMS follow-up</label>
                 </CardContent>
@@ -1454,11 +1867,131 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
         <DialogContent className="sm:max-w-3xl max-h-[92vh] overflow-auto">
           <DialogHeader><DialogTitle>Lead Settings</DialogTitle></DialogHeader>
           <div className="space-y-4">
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-sm">
+                  <ListChecks className="h-4 w-4 text-primary" />
+                  Trade template
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label>Active trade</Label>
+                    <Select value={settingsForm.tradeTemplateKey || undefined} onValueChange={selectTemplate}>
+                      <SelectTrigger><SelectValue placeholder="Choose trade" /></SelectTrigger>
+                      <SelectContent>
+                        {tradeTemplates.map((template) => (
+                          <SelectItem key={template.tradeKey} value={template.tradeKey}>{template.tradeName}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Service area</Label>
+                    <Input value={settingsForm.serviceArea} onChange={(e) => setSettingsForm({ ...settingsForm, serviceArea: e.target.value })} placeholder="City, county, or service radius" />
+                  </div>
+                </div>
+                {activeTemplate && (
+                  <div className="space-y-2">
+                    <Label>Lead sources</Label>
+                    <div className="flex flex-wrap gap-2">
+                      {activeTemplate.defaultLeadSources.map((source) => (
+                        <Button
+                          key={source}
+                          type="button"
+                          size="sm"
+                          variant={settingsForm.leadSources.includes(source) ? "default" : "outline"}
+                          onClick={() => toggleLeadSource(source)}
+                        >
+                          {source}
+                        </Button>
+                      ))}
+                    </div>
+                    <p className="text-xs text-muted-foreground">These labels tune setup defaults and public-form copy. They do not expose org IDs or secrets.</p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-sm">
+                  <Globe2 className="h-4 w-4 text-primary" />
+                  Lead sources
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="grid gap-3 sm:grid-cols-[220px_1fr]">
+                  <div className="space-y-1.5">
+                    <Label>Source adapter</Label>
+                    <Select value={selectedAdapterKey} onValueChange={setSelectedAdapterKey}>
+                      <SelectTrigger><SelectValue placeholder="Choose adapter" /></SelectTrigger>
+                      <SelectContent>
+                        {sourceAdapters.map((adapter) => (
+                          <SelectItem key={adapter.key} value={adapter.key}>{adapter.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Public adapter endpoint</Label>
+                    <div className="flex gap-2">
+                      <Input readOnly value={adapterEndpoint} />
+                      <Button variant="outline" onClick={() => copyText(adapterEndpoint, "Lead source endpoint copied")} disabled={!adapterEndpoint}>
+                        <Copy className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant={captureForm.isEnabled ? "default" : "outline"}>{captureForm.isEnabled ? "Enabled" : "Disabled"}</Badge>
+                  <Badge variant="secondary">{selectedAdapter?.label || "Adapter"}</Badge>
+                  <span className="text-xs text-muted-foreground">{selectedAdapter?.description || "External payloads normalize into internal leads."}</span>
+                </div>
+                <div className="grid gap-3 lg:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <Label>Example JSON payload</Label>
+                      <Button size="sm" variant="outline" onClick={() => copyText(adapterExampleJson, "Example payload copied")} disabled={!adapterExampleJson}>
+                        <Copy className="mr-1 h-3 w-3" />
+                        Copy JSON
+                      </Button>
+                    </div>
+                    <Textarea readOnly rows={10} value={adapterExampleJson} className="font-mono text-xs" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Recent adapter events</Label>
+                    <div className="space-y-2 rounded-lg border p-2">
+                      {sourceEvents.length === 0 ? (
+                        <p className="p-3 text-sm text-muted-foreground">No external source events yet. Successful and blocked adapter submissions will appear here.</p>
+                      ) : sourceEvents.slice(0, 5).map((event) => (
+                        <div key={event.id} className="rounded-md border p-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-sm font-medium">{event.adapterKey}</p>
+                            <Badge variant={event.status === "success" ? "default" : "destructive"}>{labelize(event.status)}</Badge>
+                          </div>
+                          <p className="text-xs text-muted-foreground">{formatDistanceToNow(new Date(event.createdAt), { addSuffix: true })}</p>
+                          {event.error && <p className="text-xs text-destructive">{event.error}</p>}
+                          {event.leadId && <p className="text-xs text-muted-foreground">Lead captured</p>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
             <div className="grid sm:grid-cols-3 gap-3">
-              <Card><CardContent className="p-3"><p className="text-xs text-muted-foreground">Twilio</p><Badge variant={providerStatus?.twilio.configured ? "default" : "outline"}>{providerStatus?.twilio.configured ? "Configured" : "Not configured"}</Badge></CardContent></Card>
-              <Card><CardContent className="p-3"><p className="text-xs text-muted-foreground">SendGrid</p><Badge variant={providerStatus?.sendgrid.configured ? "default" : "outline"}>{providerStatus?.sendgrid.configured ? "Configured" : "Not configured"}</Badge></CardContent></Card>
+              <Card><CardContent className="p-3"><p className="text-xs text-muted-foreground">Twilio</p><Badge variant={providerStatus?.twilio.configured ? "default" : "outline"}>{providerStatus?.twilio.configured ? "Configured" : "Not configured"}</Badge><p className="mt-1 text-xs text-muted-foreground">{providerStatus?.twilio.fromPhoneConfigured ? "From phone ready" : "From phone missing"}</p></CardContent></Card>
+              <Card><CardContent className="p-3"><p className="text-xs text-muted-foreground">SendGrid</p><Badge variant={providerStatus?.sendgrid.configured ? "default" : "outline"}>{providerStatus?.sendgrid.configured ? "Configured" : "Not configured"}</Badge><p className="mt-1 text-xs text-muted-foreground">{providerStatus?.sendgrid.fromEmailConfigured ? "From email ready" : "From email missing"}</p></CardContent></Card>
               <Card><CardContent className="p-3"><p className="text-xs text-muted-foreground">OpenAI</p><Badge variant={providerStatus?.openai.configured ? "default" : "secondary"}>{providerStatus?.openai.configured ? "Configured" : "Fallback mode"}</Badge></CardContent></Card>
             </div>
+            <Alert variant={settingsForm.dryRun ? "default" : "destructive"}>
+              <MessageSquare className="h-4 w-4" />
+              <AlertTitle>{settingsForm.dryRun ? "Dry-run: messages are logged but not sent" : "Live: messages may be sent to leads"}</AlertTitle>
+              <AlertDescription>
+                Live SMS and email still require channel enablement, provider readiness, valid recipients, and consent checks before any message is sent.
+              </AlertDescription>
+            </Alert>
             <div className="grid sm:grid-cols-2 gap-3">
               <label className="flex items-center justify-between rounded-md border px-3 py-2"><span className="text-sm font-medium">Auto-response enabled</span><Switch checked={settingsForm.autoRespond} onCheckedChange={(v) => setSettingsForm({ ...settingsForm, autoRespond: v })} /></label>
               <label className="flex items-center justify-between rounded-md border px-3 py-2"><span className="text-sm font-medium">Follow-up enabled</span><Switch checked={settingsForm.followUpEnabled} onCheckedChange={(v) => setSettingsForm({ ...settingsForm, followUpEnabled: v })} /></label>
@@ -1467,6 +2000,8 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
                 <Input type="number" min={0} max={100} value={settingsForm.hotLeadThreshold} onChange={(e) => setSettingsForm({ ...settingsForm, hotLeadThreshold: Number(e.target.value) })} />
               </div>
               <label className="flex items-center justify-between rounded-md border px-3 py-2"><span className="text-sm font-medium">Dry-run mode</span><Switch checked={settingsForm.dryRun} onCheckedChange={(v) => setSettingsForm({ ...settingsForm, dryRun: v })} /></label>
+              <label className="flex items-center justify-between rounded-md border px-3 py-2"><span className="text-sm font-medium">SMS enabled</span><Switch checked={settingsForm.smsEnabled} onCheckedChange={(v) => setSettingsForm({ ...settingsForm, smsEnabled: v })} /></label>
+              <label className="flex items-center justify-between rounded-md border px-3 py-2"><span className="text-sm font-medium">Email enabled</span><Switch checked={settingsForm.emailEnabled} onCheckedChange={(v) => setSettingsForm({ ...settingsForm, emailEnabled: v })} /></label>
               <div className="space-y-1.5">
                 <Label>Notification Phone</Label>
                 <Input value={settingsForm.notificationPhone} onChange={(e) => setSettingsForm({ ...settingsForm, notificationPhone: e.target.value })} />
@@ -1476,9 +2011,33 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
                 <Input value={settingsForm.notificationEmail} onChange={(e) => setSettingsForm({ ...settingsForm, notificationEmail: e.target.value })} />
               </div>
             </div>
+            <Card>
+              <CardHeader className="pb-2"><CardTitle className="text-sm">Provider readiness checklist</CardTitle></CardHeader>
+              <CardContent className="grid gap-2 sm:grid-cols-2">
+                {[
+                  ["Dry-run is off", !settingsForm.dryRun],
+                  ["SMS channel enabled", settingsForm.smsEnabled],
+                  ["Twilio and from phone ready", !!providerStatus?.twilio.configured && !!providerStatus?.twilio.fromPhoneConfigured],
+                  ["SMS opt-out wording present", !!settingsForm.smsComplianceFooter.trim()],
+                  ["Email channel enabled", settingsForm.emailEnabled],
+                  ["SendGrid and from email ready", !!providerStatus?.sendgrid.configured && !!providerStatus?.sendgrid.fromEmailConfigured],
+                  ["Email subject/body present", !!settingsForm.defaultEmailSubject.trim() && !!settingsForm.defaultEmailTemplate.trim()],
+                ].map(([label, ready]) => (
+                  <div key={String(label)} className="flex items-center gap-2 text-sm">
+                    {ready ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <XCircle className="h-4 w-4 text-muted-foreground" />}
+                    <span>{label}</span>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
             <div className="space-y-1.5">
               <Label>Default SMS Template</Label>
               <Textarea rows={2} value={settingsForm.defaultSmsTemplate} onChange={(e) => setSettingsForm({ ...settingsForm, defaultSmsTemplate: e.target.value })} placeholder="Hi {name}, this is {business}..." />
+            </div>
+            <div className="space-y-1.5">
+              <Label>SMS Compliance Footer</Label>
+              <Input value={settingsForm.smsComplianceFooter} onChange={(e) => setSettingsForm({ ...settingsForm, smsComplianceFooter: e.target.value })} placeholder="Reply STOP to opt out." />
+              <p className="text-xs text-muted-foreground">Required before live SMS can send. Keep opt-out wording visible and plain.</p>
             </div>
             <div className="space-y-1.5">
               <Label>Default Email Subject</Label>
@@ -1488,6 +2047,26 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
               <Label>Default Email Template</Label>
               <Textarea rows={3} value={settingsForm.defaultEmailTemplate} onChange={(e) => setSettingsForm({ ...settingsForm, defaultEmailTemplate: e.target.value })} placeholder="Hi {name}, thanks for reaching out..." />
             </div>
+            <Card>
+              <CardHeader className="pb-2"><CardTitle className="text-sm">Send test messages</CardTitle></CardHeader>
+              <CardContent className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>Test SMS destination</Label>
+                  <Input value={testMessage.smsTo} onChange={(e) => setTestMessage({ ...testMessage, smsTo: e.target.value })} placeholder="+15551234567" />
+                  <Button size="sm" variant="outline" onClick={() => sendTestMessageMutation.mutate({ channel: "sms" })} disabled={!smsReady || sendTestMessageMutation.isPending}>
+                    Send test SMS
+                  </Button>
+                </div>
+                <div className="space-y-2">
+                  <Label>Test email destination</Label>
+                  <Input value={testMessage.emailTo} onChange={(e) => setTestMessage({ ...testMessage, emailTo: e.target.value })} placeholder="owner@example.com" />
+                  <Input value={testMessage.emailSubject} onChange={(e) => setTestMessage({ ...testMessage, emailSubject: e.target.value })} placeholder="Test email subject" />
+                  <Button size="sm" variant="outline" onClick={() => sendTestMessageMutation.mutate({ channel: "email" })} disabled={!emailReady || sendTestMessageMutation.isPending}>
+                    Send test email
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
             <Button onClick={() => saveSettingsMutation.mutate()} disabled={saveSettingsMutation.isPending}>Save Settings</Button>
           </div>
         </DialogContent>
@@ -1526,8 +2105,8 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
                     <Button size="sm" variant="outline" onClick={() => actionMutation.mutate({ action: "score" })}><RefreshCw className="h-4 w-4 mr-1" />Re-score</Button>
                     <Button size="sm" variant="outline" onClick={() => updateMutation.mutate({ status: "contacted" })}>Mark Contacted</Button>
                     <Button size="sm" variant="outline" onClick={() => updateMutation.mutate({ status: "qualified" })}>Mark Qualified</Button>
-                    <Button size="sm" variant="outline" onClick={() => actionMutation.mutate({ action: "send-sms" })}><MessageSquare className="h-4 w-4 mr-1" />Dry-run SMS</Button>
-                    <Button size="sm" variant="outline" onClick={() => actionMutation.mutate({ action: "send-email" })}><Mail className="h-4 w-4 mr-1" />Dry-run Email</Button>
+                    <Button size="sm" variant="outline" onClick={() => actionMutation.mutate({ action: "send-sms" })}><MessageSquare className="h-4 w-4 mr-1" />{settingsForm.dryRun ? "Dry-run SMS" : "Send SMS"}</Button>
+                    <Button size="sm" variant="outline" onClick={() => actionMutation.mutate({ action: "send-email" })}><Mail className="h-4 w-4 mr-1" />{settingsForm.dryRun ? "Dry-run Email" : "Send Email"}</Button>
                     <Button size="sm" onClick={() => actionMutation.mutate({ action: "convert" })} disabled={selectedLead.status === "converted"}><Target className="h-4 w-4 mr-1" />Convert</Button>
                     <Button size="sm" variant="destructive" onClick={() => updateMutation.mutate({ status: "lost", lostReason: editForm.lostReason || "Marked lost by user" })} disabled={selectedLead.status === "converted"}>Mark Lost</Button>
                   </div>
@@ -1550,7 +2129,7 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
                           <SelectContent>{statusOptions.map((s) => <SelectItem key={s} value={s}>{labelize(s)}</SelectItem>)}</SelectContent>
                         </Select>
                       </div>
-                      <LeadFields form={editForm} setForm={setEditForm} />
+                      <LeadFields form={editForm} setForm={setEditForm} template={activeTemplate} />
                       <div className="space-y-1.5">
                         <Label>AI Summary</Label>
                         <Textarea value={editForm.aiSummary} onChange={(e) => setEditForm({ ...editForm, aiSummary: e.target.value })} rows={3} />

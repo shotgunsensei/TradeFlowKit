@@ -9,11 +9,13 @@ import {
   leadCaptureForms,
   leadFollowupTasks,
   leadSettings,
+  leadSourceEvents,
   leads,
   type Customer,
   type InsertLeadCaptureForm,
   type InsertLeadFollowupTask,
   type InsertLeadSettings,
+  type InsertLeadSourceEvent,
   type InsertLead,
   type InsertLeadActivity,
   type Job,
@@ -22,6 +24,7 @@ import {
   type LeadCaptureForm,
   type LeadFollowupTask,
   type LeadSettings,
+  type LeadSourceEvent,
 } from "@shared/schema";
 
 export interface LeadFilters {
@@ -336,11 +339,19 @@ export const leadsStorage = {
       followUpEnabled: data.followUpEnabled ?? true,
       hotLeadThreshold: data.hotLeadThreshold ?? 75,
       dryRun: data.dryRun ?? true,
+      smsEnabled: data.smsEnabled ?? false,
+      emailEnabled: data.emailEnabled ?? false,
       defaultSmsTemplate: data.defaultSmsTemplate || null,
       defaultEmailSubject: data.defaultEmailSubject || null,
       defaultEmailTemplate: data.defaultEmailTemplate || null,
+      smsComplianceFooter: data.smsComplianceFooter || "Reply STOP to opt out.",
       notificationPhone: data.notificationPhone || null,
       notificationEmail: data.notificationEmail || null,
+      tradeTemplateKey: data.tradeTemplateKey || null,
+      serviceArea: data.serviceArea || null,
+      leadSources: Array.isArray(data.leadSources)
+        ? data.leadSources.filter((source): source is string => typeof source === "string")
+        : [],
     };
     if (existing) {
       const [updated] = await db
@@ -393,5 +404,25 @@ export const leadsStorage = {
       .where(and(eq(leadFollowupTasks.orgId, orgId), eq(leadFollowupTasks.id, id)))
       .returning();
     return task;
+  },
+
+  async createLeadSourceEvent(orgId: string, data: Omit<InsertLeadSourceEvent, "orgId">): Promise<LeadSourceEvent> {
+    const [event] = await db
+      .insert(leadSourceEvents)
+      .values({
+        ...data,
+        orgId,
+      } as typeof leadSourceEvents.$inferInsert)
+      .returning();
+    return event;
+  },
+
+  async getLeadSourceEvents(orgId: string, limit = 25): Promise<LeadSourceEvent[]> {
+    return db
+      .select()
+      .from(leadSourceEvents)
+      .where(eq(leadSourceEvents.orgId, orgId))
+      .orderBy(desc(leadSourceEvents.createdAt))
+      .limit(limit);
   },
 };

@@ -541,6 +541,22 @@ export const leadFollowupTasks = pgTable("lead_followup_tasks", {
   index("lead_followup_tasks_org_lead_idx").on(t.orgId, t.leadId),
 ]);
 
+export const leadSourceEvents = pgTable("lead_source_events", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  orgId: varchar("org_id").notNull().references(() => orgs.id),
+  captureFormId: varchar("capture_form_id").references(() => leadCaptureForms.id),
+  adapterKey: text("adapter_key").notNull(),
+  status: text("status").notNull(),
+  leadId: varchar("lead_id").references(() => leads.id),
+  error: text("error"),
+  metadata: jsonb("metadata"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [
+  index("lead_source_events_org_created_idx").on(t.orgId, t.createdAt),
+  index("lead_source_events_org_adapter_idx").on(t.orgId, t.adapterKey),
+  index("lead_source_events_capture_form_idx").on(t.captureFormId),
+]);
+
 export const leadSettings = pgTable("lead_settings", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   orgId: varchar("org_id").notNull().unique().references(() => orgs.id),
@@ -548,11 +564,17 @@ export const leadSettings = pgTable("lead_settings", {
   followUpEnabled: boolean("follow_up_enabled").notNull().default(true),
   hotLeadThreshold: integer("hot_lead_threshold").notNull().default(75),
   dryRun: boolean("dry_run").notNull().default(true),
+  smsEnabled: boolean("sms_enabled").notNull().default(false),
+  emailEnabled: boolean("email_enabled").notNull().default(false),
   defaultSmsTemplate: text("default_sms_template"),
   defaultEmailSubject: text("default_email_subject"),
   defaultEmailTemplate: text("default_email_template"),
+  smsComplianceFooter: text("sms_compliance_footer"),
   notificationPhone: text("notification_phone"),
   notificationEmail: text("notification_email"),
+  tradeTemplateKey: text("trade_template_key"),
+  serviceArea: text("service_area"),
+  leadSources: jsonb("lead_sources").$type<string[]>().default(sql`'[]'::jsonb`),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 }, (t) => [
   index("lead_settings_org_idx").on(t.orgId),
@@ -635,6 +657,11 @@ export const insertLeadFollowupTaskSchema = createInsertSchema(leadFollowupTasks
   updatedAt: true,
 });
 
+export const insertLeadSourceEventSchema = createInsertSchema(leadSourceEvents).omit({
+  id: true,
+  createdAt: true,
+});
+
 export const insertLeadSettingsSchema = createInsertSchema(leadSettings).omit({
   id: true,
   updatedAt: true,
@@ -644,6 +671,8 @@ export type LeadCaptureForm = typeof leadCaptureForms.$inferSelect;
 export type InsertLeadCaptureForm = z.infer<typeof insertLeadCaptureFormSchema>;
 export type LeadFollowupTask = typeof leadFollowupTasks.$inferSelect;
 export type InsertLeadFollowupTask = z.infer<typeof insertLeadFollowupTaskSchema>;
+export type LeadSourceEvent = typeof leadSourceEvents.$inferSelect;
+export type InsertLeadSourceEvent = z.infer<typeof insertLeadSourceEventSchema>;
 export type LeadSettings = typeof leadSettings.$inferSelect;
 export type InsertLeadSettings = z.infer<typeof insertLeadSettingsSchema>;
 

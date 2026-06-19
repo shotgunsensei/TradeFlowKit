@@ -5,11 +5,17 @@ import { z } from "zod";
 import { requireAuth, requireOrg, checkPlanLimit } from "../middleware";
 import { storage } from "../storage";
 import { scoreLead } from "../leadScoring";
-import { isTwilioConfigured } from "../twilioClient";
 import {
-  recordDryRunEmailActivity,
-  recordDryRunSmsActivity,
-  renderLeadTemplate,
+  getLeadSourceAdapter,
+  getPublicLeadSourceAdapters,
+  type NormalizedLeadSourcePayload,
+} from "../leadSourceAdapters";
+import { LEAD_TRADE_TEMPLATES, getLeadTradeTemplate, isLeadTradeKey } from "../leadTradeTemplates";
+import {
+  getLeadMessagingProviderStatus,
+  sendLeadEmail,
+  sendLeadSms,
+  sendLeadTestMessage,
 } from "../leadMessaging";
 
 const router = Router();
@@ -69,16 +75,30 @@ const emailBodySchema = z.object({
   template: z.string().trim().optional(),
 });
 
+const testMessageSchema = z.object({
+  channel: z.enum(["sms", "email"]),
+  to: z.string().trim().min(1, "Test destination is required"),
+  subject: z.string().trim().optional(),
+  template: z.string().trim().min(1, "Test message template is required"),
+  confirm: z.boolean().refine((value) => value === true, "Confirm test message before sending"),
+});
+
 const leadSettingsSchema = z.object({
   autoRespond: z.boolean().optional(),
   followUpEnabled: z.boolean().optional(),
   hotLeadThreshold: z.number().int().min(0).max(100).optional(),
   dryRun: z.boolean().optional(),
+  smsEnabled: z.boolean().optional(),
+  emailEnabled: z.boolean().optional(),
   defaultSmsTemplate: z.string().trim().optional().nullable(),
   defaultEmailSubject: z.string().trim().optional().nullable(),
   defaultEmailTemplate: z.string().trim().optional().nullable(),
+  smsComplianceFooter: z.string().trim().optional().nullable(),
   notificationPhone: z.string().trim().optional().nullable(),
   notificationEmail: z.string().trim().email("Invalid notification email").optional().or(z.literal("")).nullable(),
+  tradeTemplateKey: z.string().trim().optional().nullable(),
+  serviceArea: z.string().trim().optional().nullable(),
+  leadSources: z.array(z.string().trim().min(1)).optional().nullable(),
 });
 
 const captureFormSchema = z.object({
@@ -167,35 +187,39 @@ async function getOrCreateLeadSettings(orgId: string) {
   return storage.upsertLeadSettings(orgId, {});
 }
 
+async function getActiveLeadTemplate(orgId: string) {
+  const settings = await getOrCreateLeadSettings(orgId);
+  return getLeadTradeTemplate(settings.tradeTemplateKey);
+}
+
 async function scheduleDefaultFollowups(orgId: string, lead: any) {
   const settings = await getOrCreateLeadSettings(orgId);
   if (!settings.followUpEnabled) return;
   const channel = selectFollowupChannel(lead);
   if (!channel) return;
-  const template = channel === "sms"
+  const tradeTemplate = getLeadTradeTemplate(settings.tradeTemplateKey);
+  const sequence = tradeTemplate?.defaultFollowUpSequence.length
+    ? tradeTemplate.defaultFollowUpSequence
+    : [
+      { stepNumber: 1, delayDays: 1, channel, messageTemplate: channel === "sms" ? settings.defaultSmsTemplate || DEFAULT_SMS_TEMPLATE : settings.defaultEmailTemplate || DEFAULT_EMAIL_TEMPLATE },
+      { stepNumber: 2, delayDays: 3, channel, messageTemplate: channel === "sms" ? settings.defaultSmsTemplate || DEFAULT_SMS_TEMPLATE : settings.defaultEmailTemplate || DEFAULT_EMAIL_TEMPLATE },
+    ];
+  const fallbackTemplate = channel === "sms"
     ? settings.defaultSmsTemplate || DEFAULT_SMS_TEMPLATE
     : settings.defaultEmailTemplate || DEFAULT_EMAIL_TEMPLATE;
 
-  await storage.createLeadFollowupTask(orgId, lead.id, {
-    stepNumber: 1,
-    channel,
-    dueAt: plusDays(1),
-    status: "pending",
-    messageTemplate: template,
-    lastAttemptAt: null,
-    completedAt: null,
-    error: null,
-  });
-  await storage.createLeadFollowupTask(orgId, lead.id, {
-    stepNumber: 2,
-    channel,
-    dueAt: plusDays(3),
-    status: "pending",
-    messageTemplate: template,
-    lastAttemptAt: null,
-    completedAt: null,
-    error: null,
-  });
+  for (const step of sequence) {
+    await storage.createLeadFollowupTask(orgId, lead.id, {
+      stepNumber: step.stepNumber,
+      channel: step.channel === "sms" && !lead.consentToSms ? "email" : step.channel,
+      dueAt: plusDays(step.delayDays),
+      status: "pending",
+      messageTemplate: step.messageTemplate || fallbackTemplate,
+      lastAttemptAt: null,
+      completedAt: null,
+      error: null,
+    });
+  }
 }
 
 async function recordInitialAutoResponse(orgId: string, lead: any) {
@@ -203,15 +227,67 @@ async function recordInitialAutoResponse(orgId: string, lead: any) {
   if (!settings.autoRespond) return;
   const org = await storage.getOrg(orgId);
   if (lead.consentToSms && lead.phone?.trim()) {
-    const body = renderLeadTemplate(settings.defaultSmsTemplate || DEFAULT_SMS_TEMPLATE, lead, org);
-    await recordDryRunSmsActivity({ orgId, lead, body, createdBy: null });
+    await sendLeadSms({
+      orgId,
+      lead,
+      org,
+      template: settings.defaultSmsTemplate || DEFAULT_SMS_TEMPLATE,
+      createdBy: null,
+    });
     return;
   }
   if (lead.email?.trim()) {
-    const subject = renderLeadTemplate(settings.defaultEmailSubject || DEFAULT_EMAIL_SUBJECT, lead, org);
-    const body = renderLeadTemplate(settings.defaultEmailTemplate || DEFAULT_EMAIL_TEMPLATE, lead, org);
-    await recordDryRunEmailActivity({ orgId, lead, subject, body, createdBy: null });
+    await sendLeadEmail({
+      orgId,
+      lead,
+      org,
+      subject: settings.defaultEmailSubject || DEFAULT_EMAIL_SUBJECT,
+      template: settings.defaultEmailTemplate || DEFAULT_EMAIL_TEMPLATE,
+      createdBy: null,
+    });
   }
+}
+
+async function createLeadFromAdapterPayload(orgId: string, payload: NormalizedLeadSourcePayload, captureFormId?: string | null) {
+  const settings = await getOrCreateLeadSettings(orgId);
+  const scored = scoreLead(payload, { tradeTemplateKey: settings.tradeTemplateKey });
+  const lead = await storage.createLead(orgId, {
+    source: payload.source,
+    sourceDetail: payload.sourceDetail,
+    status: "new",
+    name: payload.name,
+    phone: payload.phone,
+    email: payload.email,
+    address: payload.address,
+    serviceType: payload.serviceType,
+    description: payload.description,
+    urgency: scored.urgency,
+    preferredContact: payload.preferredContact,
+    preferredTime: payload.preferredTime,
+    consentToSms: payload.consentToSms,
+    consentSource: payload.consentToSms ? payload.source : null,
+    score: scored.score,
+    scoreBreakdown: scored.breakdown,
+    metadata: {
+      ...payload.metadata,
+      captureFormId: captureFormId || null,
+      normalizedBy: "lead_source_adapter",
+    },
+  } as any, null);
+
+  await storage.createLeadActivity(orgId, lead.id, {
+    type: "created",
+    status: "new",
+    subject: "Lead captured",
+    body: `Captured from ${payload.sourceDetail || payload.source}.`,
+    metadata: { captureFormId: captureFormId || null, score: scored.score, adapterKey: payload.metadata.adapterKey },
+    createdBy: null,
+  });
+
+  await recordInitialAutoResponse(orgId, lead);
+  await scheduleDefaultFollowups(orgId, lead);
+
+  return lead;
 }
 
 router.post("/api/public/lead-capture/:publicToken", publicLeadCaptureLimiter, async (req: Request, res: Response) => {
@@ -247,7 +323,8 @@ router.post("/api/public/lead-capture/:publicToken", publicLeadCaptureLimiter, a
       consentSource: data.consentToSms ? "public_lead_capture" : null,
       metadata: { captureFormId: form.id },
     };
-    const scored = scoreLead(payload);
+    const settings = await getOrCreateLeadSettings(form.orgId);
+    const scored = scoreLead(payload, { tradeTemplateKey: settings.tradeTemplateKey });
     const lead = await storage.createLead(form.orgId, {
       ...payload,
       urgency: scored.urgency,
@@ -302,19 +379,107 @@ router.get("/api/leads/settings", requireAuth, requireOrg, async (req: Request, 
     const orgId = req.session.orgId!;
     const settings = await getOrCreateLeadSettings(orgId);
     const form = await storage.ensureDefaultLeadCaptureForm(orgId);
-    res.json({ settings, captureForm: form });
+    res.json({ settings, captureForm: form, tradeTemplate: getLeadTradeTemplate(settings.tradeTemplateKey) || null });
   } catch (err) {
     res.status(500).send(errMsg(err));
   }
 });
 
+router.post("/api/public/lead-source/:publicToken/:adapterKey", publicLeadCaptureLimiter, async (req: Request, res: Response) => {
+  const adapterKey = String(req.params.adapterKey || "");
+  try {
+    const form = await storage.getLeadCaptureFormByToken(req.params.publicToken as string);
+    if (!form) {
+      return res.status(404).json({ error: "Lead source not found" });
+    }
+    if (!form.isEnabled) {
+      await storage.createLeadSourceEvent(form.orgId, {
+        captureFormId: form.id,
+        adapterKey,
+        status: "failed",
+        leadId: null,
+        error: "source_disabled",
+        metadata: { reason: "source_disabled" },
+      });
+      return res.status(404).json({ error: "Lead source not found" });
+    }
+
+    const adapter = getLeadSourceAdapter(adapterKey);
+    if (!adapter) {
+      await storage.createLeadSourceEvent(form.orgId, {
+        captureFormId: form.id,
+        adapterKey,
+        status: "failed",
+        leadId: null,
+        error: "adapter_not_supported",
+        metadata: { adapterKey },
+      });
+      return res.status(400).json({ error: "Lead source adapter is not supported" });
+    }
+
+    let normalized: NormalizedLeadSourcePayload;
+    try {
+      normalized = adapter.normalize(req.body);
+    } catch (err) {
+      await storage.createLeadSourceEvent(form.orgId, {
+        captureFormId: form.id,
+        adapterKey,
+        status: "failed",
+        leadId: null,
+        error: errMsg(err),
+        metadata: { adapterKey, reason: "normalization_failed" },
+      });
+      return res.status(400).json({ error: errMsg(err) });
+    }
+
+    const lead = await createLeadFromAdapterPayload(form.orgId, {
+      ...normalized,
+      sourceDetail: normalized.sourceDetail || form.sourceLabel,
+      serviceType: normalized.serviceType || form.defaultServiceType || "",
+      metadata: {
+        ...normalized.metadata,
+        adapterKey,
+      },
+    }, form.id);
+
+    await storage.createLeadSourceEvent(form.orgId, {
+      captureFormId: form.id,
+      adapterKey,
+      status: "success",
+      leadId: lead.id,
+      error: null,
+      metadata: {
+        adapterKey,
+        source: lead.source,
+        sourceDetail: lead.sourceDetail,
+        hasPhone: !!lead.phone,
+        hasEmail: !!lead.email,
+        serviceType: lead.serviceType || null,
+      },
+    });
+
+    return res.json({ ok: true, message: form.successMessage });
+  } catch (err) {
+    req.log?.error({ err: errMsg(err), adapterKey }, "Lead source adapter intake failed");
+    return res.status(500).json({ error: "Lead source intake failed. Please try again later." });
+  }
+});
+
+router.get("/api/leads/trade-templates", requireAuth, requireOrg, async (_req: Request, res: Response) => {
+  res.json(LEAD_TRADE_TEMPLATES);
+});
+
+router.get("/api/leads/source-adapters", requireAuth, requireOrg, async (_req: Request, res: Response) => {
+  res.json(getPublicLeadSourceAdapters());
+});
+
 router.get("/api/leads/provider-status", requireAuth, requireOrg, async (_req: Request, res: Response) => {
   try {
-    const twilioConfigured = await isTwilioConfigured();
+    const status = await getLeadMessagingProviderStatus();
     res.json({
-      twilio: { configured: twilioConfigured },
-      sendgrid: { configured: !!(process.env.SENDGRID_API_KEY && process.env.SENDGRID_FROM_EMAIL) },
-      openai: { configured: !!process.env.OPENAI_API_KEY, mode: process.env.OPENAI_API_KEY ? "openai" : "fallback" },
+      twilio: { configured: status.twilioConfigured, fromPhoneConfigured: status.twilioFromPhoneConfigured },
+      sendgrid: { configured: status.sendgridConfigured, fromEmailConfigured: status.sendgridFromEmailConfigured },
+      openai: { configured: status.openaiConfigured, mode: status.openaiMode },
     });
   } catch (err) {
     res.status(500).send(errMsg(err));
@@ -430,11 +595,47 @@ router.patch("/api/leads/settings", requireAuth, requireOrg, async (req: Request
     if (!parsed.success) {
       return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid lead settings" });
     }
+    if (parsed.data.tradeTemplateKey && !isLeadTradeKey(parsed.data.tradeTemplateKey)) {
+      return res.status(400).json({ error: "Invalid trade template" });
+    }
     const settings = await storage.upsertLeadSettings(req.session.orgId!, {
       ...parsed.data,
       notificationEmail: parsed.data.notificationEmail || null,
+      tradeTemplateKey: parsed.data.tradeTemplateKey || null,
+      serviceArea: parsed.data.serviceArea || null,
+      leadSources: parsed.data.leadSources || [],
+      smsComplianceFooter: parsed.data.smsComplianceFooter || "Reply STOP to opt out.",
     });
     res.json(settings);
+  } catch (err) {
+    res.status(500).send(errMsg(err));
+  }
+});
+
+router.post("/api/leads/settings/apply-template", requireAuth, requireOrg, async (req: Request, res: Response) => {
+  try {
+    const parsed = z.object({
+      tradeTemplateKey: z.string().trim().min(1),
+      serviceArea: z.string().trim().optional().nullable(),
+      leadSources: z.array(z.string().trim().min(1)).optional().nullable(),
+    }).safeParse(req.body || {});
+    if (!parsed.success || !isLeadTradeKey(parsed.data.tradeTemplateKey)) {
+      return res.status(400).json({ error: "Invalid trade template" });
+    }
+
+    const template = getLeadTradeTemplate(parsed.data.tradeTemplateKey)!;
+    const settings = await storage.upsertLeadSettings(req.session.orgId!, {
+      tradeTemplateKey: template.tradeKey,
+      serviceArea: parsed.data.serviceArea || null,
+      leadSources: parsed.data.leadSources?.length ? parsed.data.leadSources : template.defaultLeadSources,
+      defaultSmsTemplate: template.defaultSmsTemplate,
+      defaultEmailSubject: template.defaultEmailSubject,
+      defaultEmailTemplate: template.defaultEmailTemplate,
+      hotLeadThreshold: 75,
+      dryRun: true,
+    });
+
+    res.json({ settings, tradeTemplate: template });
   } catch (err) {
     res.status(500).send(errMsg(err));
   }
@@ -457,6 +658,15 @@ router.patch("/api/leads/capture-form/:id", requireAuth, requireOrg, async (req:
   }
 });
 
+router.get("/api/leads/source-events", requireAuth, requireOrg, async (req: Request, res: Response) => {
+  try {
+    const limit = typeof req.query.limit === "string" ? Math.min(100, Math.max(1, Number(req.query.limit) || 25)) : 25;
+    res.json(await storage.getLeadSourceEvents(req.session.orgId!, limit));
+  } catch (err) {
+    res.status(500).send(errMsg(err));
+  }
+});
+
 router.get("/api/leads/:id", requireAuth, requireOrg, async (req: Request, res: Response) => {
   try {
     const lead = await storage.getLead(req.session.orgId!, req.params.id as string);
@@ -474,7 +684,8 @@ router.post("/api/leads", requireAuth, requireOrg, async (req: Request, res: Res
       return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid lead" });
     }
     const payload = toLeadPayload(parsed.data);
-    const scored = scoreLead(payload);
+    const tradeTemplate = await getActiveLeadTemplate(req.session.orgId!);
+    const scored = scoreLead(payload, { template: tradeTemplate });
     const lead = await storage.createLead(req.session.orgId!, {
       ...payload,
       urgency: scored.urgency,
@@ -490,6 +701,7 @@ router.post("/api/leads", requireAuth, requireOrg, async (req: Request, res: Res
       metadata: { score: scored.score, recommendedAction: scored.recommendedAction },
       createdBy: req.session.userId || null,
     });
+    await scheduleDefaultFollowups(req.session.orgId!, lead);
     await storage.recordAudit({ orgId: req.session.orgId!, userId: req.session.userId, action: "create", entity: "lead", entityId: lead.id, after: lead });
     res.json(lead);
   } catch (err) {
@@ -595,7 +807,8 @@ router.post("/api/leads/:id/score", requireAuth, requireOrg, async (req: Request
     const orgId = req.session.orgId!;
     const lead = await storage.getLead(orgId, req.params.id as string);
     if (!lead) return res.status(404).send("Lead not found");
-    const scored = scoreLead(lead);
+    const tradeTemplate = await getActiveLeadTemplate(orgId);
+    const scored = scoreLead(lead, { template: tradeTemplate });
     const updated = await storage.updateLead(orgId, lead.id, {
       score: scored.score,
       scoreBreakdown: scored.breakdown,
@@ -623,10 +836,10 @@ router.post("/api/leads/:id/send-sms", requireAuth, requireOrg, async (req: Requ
     const parsed = smsBodySchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: "Invalid SMS request" });
     const org = await storage.getOrg(orgId);
-    const template = parsed.data.template || "Hi {name}, this is {business}. We received your request about {service}. What is the best time to follow up?";
-    const body = renderLeadTemplate(template, lead, org);
-    const activity = await recordDryRunSmsActivity({ orgId, lead, body, createdBy: req.session.userId || null });
-    res.json({ ok: true, dryRun: true, activity });
+    const settings = await getOrCreateLeadSettings(orgId);
+    const template = parsed.data.template || settings.defaultSmsTemplate || "Hi {name}, this is {business}. We received your request about {service}. What is the best time to follow up?";
+    const result = await sendLeadSms({ orgId, lead, org, template, createdBy: req.session.userId || null });
+    res.json({ ...result, dryRun: result.mode === "dry-run" });
   } catch (err) {
     res.status(500).send(errMsg(err));
   }
@@ -640,11 +853,44 @@ router.post("/api/leads/:id/send-email", requireAuth, requireOrg, async (req: Re
     const parsed = emailBodySchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: "Invalid email request" });
     const org = await storage.getOrg(orgId);
-    const subject = parsed.data.subject || `Following up from ${org?.name || "TradeFlow"}`;
-    const template = parsed.data.template || "Hi {name}, thanks for reaching out about {service}. We can help qualify the request and get you booked.";
-    const body = renderLeadTemplate(template, lead, org);
-    const activity = await recordDryRunEmailActivity({ orgId, lead, subject, body, createdBy: req.session.userId || null });
-    res.json({ ok: true, dryRun: true, activity });
+    const settings = await getOrCreateLeadSettings(orgId);
+    const subject = parsed.data.subject || settings.defaultEmailSubject || `Following up from ${org?.name || "TradeFlow"}`;
+    const template = parsed.data.template || settings.defaultEmailTemplate || "Hi {name}, thanks for reaching out about {service}. We can help qualify the request and get you booked.";
+    const result = await sendLeadEmail({ orgId, lead, org, subject, template, createdBy: req.session.userId || null });
+    res.json({ ...result, dryRun: result.mode === "dry-run" });
+  } catch (err) {
+    res.status(500).send(errMsg(err));
+  }
+});
+
+router.post("/api/leads/test-message", requireAuth, requireOrg, async (req: Request, res: Response) => {
+  try {
+    const parsed = testMessageSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid test message" });
+    const orgId = req.session.orgId!;
+    const org = await storage.getOrg(orgId);
+    const result = await sendLeadTestMessage({
+      orgId,
+      org,
+      channel: parsed.data.channel,
+      to: parsed.data.to,
+      subject: parsed.data.subject,
+      template: parsed.data.template,
+    });
+    await storage.recordAudit({
+      orgId,
+      userId: req.session.userId,
+      action: "test_message",
+      entity: "lead_message_provider",
+      after: {
+        channel: parsed.data.channel,
+        mode: result.mode,
+        ok: result.ok,
+        reason: result.reason,
+        recipient: parsed.data.to,
+      },
+    });
+    res.json(result);
   } catch (err) {
     res.status(500).send(errMsg(err));
   }

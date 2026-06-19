@@ -1,4 +1,5 @@
 import type { Lead } from "@shared/schema";
+import { getLeadTradeTemplate, type LeadTradeTemplate } from "@shared/leadTradeTemplates";
 
 export type LeadUrgency = "low" | "normal" | "urgent" | "emergency";
 
@@ -8,6 +9,11 @@ export interface LeadScoreResult {
   breakdown: Record<string, number | string | boolean>;
   recommendedAction: string;
 }
+
+export type LeadScoreOptions = {
+  tradeTemplateKey?: string | null;
+  template?: LeadTradeTemplate | null;
+};
 
 type LeadScoreInput = Partial<Pick<
   Lead,
@@ -64,16 +70,23 @@ function textForLead(lead: LeadScoreInput): string {
   ].filter(Boolean).join(" ");
 }
 
-function inferUrgency(lead: LeadScoreInput, text: string): LeadUrgency {
+function matchesAny(text: string, keywords: string[] = []): string[] {
+  const lower = text.toLowerCase();
+  return keywords.filter((keyword) => lower.includes(keyword.toLowerCase()));
+}
+
+function inferUrgency(lead: LeadScoreInput, text: string, template?: LeadTradeTemplate): LeadUrgency {
   if (lead.urgency === "emergency" || EMERGENCY_PATTERNS.some((p) => p.test(text))) return "emergency";
+  if (template && lead.urgency !== "low" && matchesAny(text, template.urgencyKeywords).length > 0) return "emergency";
   if (lead.urgency === "urgent") return "urgent";
   if (lead.urgency === "low") return "low";
   return "normal";
 }
 
-export function scoreLead(lead: LeadScoreInput): LeadScoreResult {
+export function scoreLead(lead: LeadScoreInput, options: LeadScoreOptions = {}): LeadScoreResult {
   const text = textForLead(lead);
-  const urgency = inferUrgency(lead, text);
+  const template = options.template || getLeadTradeTemplate(options.tradeTemplateKey);
+  const urgency = inferUrgency(lead, text, template);
   const breakdown: Record<string, number | string | boolean> = {};
   let score = 35;
 
@@ -133,6 +146,39 @@ export function scoreLead(lead: LeadScoreInput): LeadScoreResult {
   if (SPAM_PATTERNS.some((p) => p.test(text))) {
     score -= 45;
     breakdown.spamSignals = -45;
+  }
+
+  if (template) {
+    const serviceMatches = matchesAny(text, template.serviceCategories);
+    const urgencyMatches = matchesAny(text, template.urgencyKeywords);
+    const valueMatches = matchesAny(text, template.highValueKeywords);
+    const disqualificationMatches = matchesAny(text, template.disqualificationKeywords);
+
+    breakdown.tradeTemplate = template.tradeKey;
+
+    if (serviceMatches.length > 0) {
+      score += template.leadScoringModifiers.serviceCategoryBoost;
+      breakdown.tradeServiceCategory = template.leadScoringModifiers.serviceCategoryBoost;
+      breakdown.tradeServiceMatched = serviceMatches[0];
+    }
+
+    if (urgencyMatches.length > 0) {
+      score += template.leadScoringModifiers.urgencyKeywordBoost;
+      breakdown.tradeUrgencyKeyword = template.leadScoringModifiers.urgencyKeywordBoost;
+      breakdown.tradeUrgencyMatched = urgencyMatches[0];
+    }
+
+    if (valueMatches.length > 0) {
+      score += template.leadScoringModifiers.highValueKeywordBoost;
+      breakdown.tradeHighValueKeyword = template.leadScoringModifiers.highValueKeywordBoost;
+      breakdown.tradeHighValueMatched = valueMatches[0];
+    }
+
+    if (disqualificationMatches.length > 0) {
+      score += template.leadScoringModifiers.disqualificationPenalty;
+      breakdown.tradeDisqualificationSignal = template.leadScoringModifiers.disqualificationPenalty;
+      breakdown.tradeDisqualificationMatched = disqualificationMatches[0];
+    }
   }
 
   const finalScore = clamp(score);

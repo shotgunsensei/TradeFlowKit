@@ -34,6 +34,8 @@ import type {
   InsertLeadFollowupTask,
   LeadSettings,
   InsertLeadSettings,
+  LeadSourceEvent,
+  InsertLeadSourceEvent,
 } from "@shared/schema";
 
 import { usersStorage } from "./storage/users";
@@ -167,6 +169,8 @@ export interface IStorage {
   getLeadFollowupTasks(orgId: string, leadId: string): Promise<LeadFollowupTask[]>;
   getDueLeadFollowupTasks(now: Date, limit?: number): Promise<LeadFollowupTask[]>;
   updateLeadFollowupTask(orgId: string, id: string, data: Partial<LeadFollowupTask>): Promise<LeadFollowupTask | undefined>;
+  createLeadSourceEvent(orgId: string, data: Omit<InsertLeadSourceEvent, "orgId">): Promise<LeadSourceEvent>;
+  getLeadSourceEvents(orgId: string, limit?: number): Promise<LeadSourceEvent[]>;
 
   createMissedCall(orgId: string, data: { callerPhone: string; callerName?: string; twilioCallSid?: string }): Promise<MissedCall>;
   getMissedCall(id: string): Promise<MissedCall | undefined>;

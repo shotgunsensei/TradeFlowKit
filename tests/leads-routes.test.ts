@@ -218,6 +218,71 @@ describeWithDb("Lead routes", () => {
     expect(messages.every((activity: any) => activity.metadata?.dryRun === true)).toBe(true);
   });
 
+  it("accepts generic webhook adapter submissions into org-scoped internal leads", async () => {
+    const form = await storage.createLeadCaptureForm(orgA.id, {
+      name: "Webhook Intake",
+      sourceLabel: "Webhook Intake",
+      isEnabled: true,
+      successMessage: "Received.",
+    });
+
+    const captured = await request(appA)
+      .post(`/api/public/lead-source/${form.publicToken}/genericJson`)
+      .send({
+        name: "Webhook Lead",
+        phone: "555-0888",
+        email: "webhook@example.com",
+        serviceType: "No cooling",
+        description: "AC stopped today.",
+        consentToSms: true,
+      });
+
+    expect(captured.status).toBe(200);
+    expect(captured.body).toEqual({ ok: true, message: "Received." });
+
+    const orgALeads = await request(appA).get("/api/leads");
+    const created = orgALeads.body.find((lead: any) => lead.email === "webhook@example.com");
+    expect(created).toBeTruthy();
+    expect(created.orgId).toBe(orgA.id);
+
+    const crossOrgRead = await request(appB).get(`/api/leads/${created.id}`);
+    expect(crossOrgRead.status).toBe(404);
+
+    const events = await request(appA).get("/api/leads/source-events");
+    expect(events.status).toBe(200);
+    expect(events.body.some((event: any) => event.adapterKey === "genericJson" && event.status === "success" && event.leadId === created.id)).toBe(true);
+  });
+
+  it("rejects invalid tokens, disabled sources, and malformed adapter payloads", async () => {
+    const invalidToken = await request(appA)
+      .post("/api/public/lead-source/not-a-real-token/genericJson")
+      .send({ name: "No Token", phone: "555-0000" });
+    expect(invalidToken.status).toBe(404);
+
+    const disabledForm = await storage.createLeadCaptureForm(orgA.id, {
+      name: "Disabled Webhook",
+      sourceLabel: "Disabled",
+      isEnabled: false,
+      successMessage: "Received.",
+    });
+    const disabled = await request(appA)
+      .post(`/api/public/lead-source/${disabledForm.publicToken}/genericJson`)
+      .send({ name: "Disabled", phone: "555-0001" });
+    expect(disabled.status).toBe(404);
+
+    const form = await storage.createLeadCaptureForm(orgA.id, {
+      name: "Malformed Webhook",
+      sourceLabel: "Malformed",
+      isEnabled: true,
+      successMessage: "Received.",
+    });
+    const malformed = await request(appA)
+      .post(`/api/public/lead-source/${form.publicToken}/genericJson`)
+      .send({ phone: "555-0002" });
+    expect(malformed.status).toBe(400);
+    expect(malformed.body.error).toMatch(/Name is required/);
+  });
+
   it("converts a qualified lead to a customer and job lead", async () => {
     const created = await request(appA).post("/api/leads").send({
       name: "Convert Route",
