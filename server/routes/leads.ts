@@ -2,9 +2,15 @@ import { errMsg } from "../errors";
 import { Router, type Request, type Response } from "express";
 import rateLimit from "express-rate-limit";
 import { z } from "zod";
-import { requireAuth, requireOrg, checkPlanLimit } from "../middleware";
+import { requireAuth, requireOrg, checkPlanLimit, resolveRequestAccess } from "../middleware";
 import { storage } from "../storage";
 import { scoreLead } from "../leadScoring";
+import { LEAD_CONVERSION_CENTER_MODULE } from "@shared/modules";
+import {
+  LIVE_LEADS_CONFIRMATION_PHRASE,
+  getLeadProductionReadiness,
+  type LeadProductionReadinessInput,
+} from "@shared/leadProductionReadiness";
 import {
   getLeadSourceAdapter,
   getPublicLeadSourceAdapters,
@@ -100,6 +106,11 @@ const leadSettingsSchema = z.object({
   serviceArea: z.string().trim().optional().nullable(),
   leadSources: z.array(z.string().trim().min(1)).optional().nullable(),
 });
+
+const leadSettingsPatchSchema = z.object({
+  settings: leadSettingsSchema.optional(),
+  liveConfirmationPhrase: z.string().trim().optional(),
+}).passthrough();
 
 const captureFormSchema = z.object({
   name: z.string().trim().min(1).optional(),
@@ -289,6 +300,256 @@ async function createLeadFromAdapterPayload(orgId: string, payload: NormalizedLe
 
   return lead;
 }
+
+function monthStart(date = new Date()) {
+  return new Date(date.getFullYear(), date.getMonth(), 1);
+}
+
+function hasDemoLeadMetadata(lead: { metadata?: unknown }) {
+  return !!(
+    lead.metadata &&
+    typeof lead.metadata === "object" &&
+    (lead.metadata as Record<string, unknown>).demoLeadSeed
+  );
+}
+
+function activityMode(activity: { status?: string | null; metadata?: unknown }) {
+  const metadata = activity.metadata && typeof activity.metadata === "object"
+    ? activity.metadata as Record<string, unknown>
+    : {};
+  const mode = typeof metadata.mode === "string" ? metadata.mode : activity.status;
+  return mode || "";
+}
+
+function hasPassedProviderTest(auditItems: Array<{ after?: unknown }>, channel: "sms" | "email") {
+  return auditItems.some((item) => {
+    const after = item.after && typeof item.after === "object" ? item.after as Record<string, unknown> : {};
+    return after.channel === channel && after.ok === true && after.mode === "live";
+  });
+}
+
+async function buildLeadProductionReadinessInput(req: Request, overrideSettings?: Partial<Awaited<ReturnType<typeof getOrCreateLeadSettings>>>): Promise<LeadProductionReadinessInput> {
+  const orgId = req.session.orgId!;
+  const [baseSettings, forms, leads, sourceEvents, providerStatus, accessCtx, providerTests] = await Promise.all([
+    getOrCreateLeadSettings(orgId),
+    storage.getLeadCaptureForms(orgId),
+    storage.getLeads(orgId),
+    storage.getLeadSourceEvents(orgId, 50),
+    getLeadMessagingProviderStatus(),
+    resolveRequestAccess(req),
+    storage.getAuditLog(orgId, { limit: 50, offset: 0, entity: "lead_message_provider", action: "test_message" }),
+  ]);
+  const settings = { ...baseSettings, ...(overrideSettings || {}) };
+  const activeForms = forms.filter((form) => form.isEnabled);
+  const successfulSourceEvents = sourceEvents.filter((event) => event.status === "success");
+  const configuredLeadSourceLabels = Array.isArray(settings.leadSources) ? settings.leadSources : [];
+  const businessInfoConfigured = !!((accessCtx?.org.phone || accessCtx?.org.email || accessCtx?.org.address || "").trim());
+  const lastLeadReceivedAt = leads
+    .map((lead) => new Date(lead.createdAt).getTime())
+    .filter((time) => !Number.isNaN(time))
+    .sort((a, b) => b - a)[0];
+
+  return {
+    enabled: accessCtx?.access.features.lead_conversion_center ?? true,
+    activeTradeTemplate: !!getLeadTradeTemplate(settings.tradeTemplateKey),
+    businessInfoConfigured,
+    publicFormsEnabled: activeForms.length > 0,
+    activeLeadSources: new Set(successfulSourceEvents.map((event) => event.adapterKey)).size + configuredLeadSourceLabels.length,
+    lastLeadReceivedAt: lastLeadReceivedAt ? new Date(lastLeadReceivedAt) : null,
+    dryRun: settings.dryRun,
+    smsEnabled: settings.smsEnabled,
+    emailEnabled: settings.emailEnabled,
+    autoRespondEnabled: settings.autoRespond,
+    followUpEnabled: settings.followUpEnabled,
+    defaultSmsTemplate: settings.defaultSmsTemplate,
+    defaultEmailSubject: settings.defaultEmailSubject,
+    defaultEmailTemplate: settings.defaultEmailTemplate,
+    smsComplianceFooter: settings.smsComplianceFooter,
+    smsConfigured: providerStatus.twilioConfigured,
+    emailConfigured: providerStatus.sendgridConfigured,
+    openAiConfiguredOrFallback: providerStatus.openaiConfigured || providerStatus.openaiMode === "fallback",
+    fromPhoneConfigured: providerStatus.twilioFromPhoneConfigured,
+    fromEmailConfigured: providerStatus.sendgridFromEmailConfigured,
+    testSmsSent: hasPassedProviderTest(providerTests.items, "sms"),
+    testEmailSent: hasPassedProviderTest(providerTests.items, "email"),
+    templatesReviewed: !!(
+      settings.defaultSmsTemplate?.trim() &&
+      settings.defaultEmailSubject?.trim() &&
+      settings.defaultEmailTemplate?.trim()
+    ),
+    demoDataPresent: leads.some(hasDemoLeadMetadata),
+  };
+}
+
+async function buildLeadProductionReadiness(req: Request, overrideSettings?: Partial<Awaited<ReturnType<typeof getOrCreateLeadSettings>>>) {
+  return getLeadProductionReadiness(await buildLeadProductionReadinessInput(req, overrideSettings));
+}
+
+router.get("/api/leads/module-status", requireAuth, requireOrg, async (req: Request, res: Response) => {
+  try {
+    const orgId = req.session.orgId!;
+    const [settings, forms, leads, sourceEvents, providerStatus, accessCtx] = await Promise.all([
+      getOrCreateLeadSettings(orgId),
+      storage.getLeadCaptureForms(orgId),
+      storage.getLeads(orgId),
+      storage.getLeadSourceEvents(orgId, 50),
+      getLeadMessagingProviderStatus(),
+      resolveRequestAccess(req),
+    ]);
+
+    const now = new Date();
+    const startOfMonth = monthStart(now);
+    const activeForms = forms.filter((form) => form.isEnabled);
+    const successfulSourceEvents = sourceEvents.filter((event) => event.status === "success");
+    const activeAdapterKeys = new Set(successfulSourceEvents.map((event) => event.adapterKey));
+    const configuredLeadSourceLabels = Array.isArray(settings.leadSources) ? settings.leadSources : [];
+    const activeTradeTemplate = getLeadTradeTemplate(settings.tradeTemplateKey);
+    const smsReady = !!(
+      providerStatus.twilioConfigured &&
+      providerStatus.twilioFromPhoneConfigured &&
+      settings.defaultSmsTemplate?.trim() &&
+      settings.smsComplianceFooter?.trim()
+    );
+    const emailReady = !!(
+      providerStatus.sendgridConfigured &&
+      providerStatus.sendgridFromEmailConfigured &&
+      settings.defaultEmailSubject?.trim() &&
+      settings.defaultEmailTemplate?.trim()
+    );
+    const messagingLive = !settings.dryRun && (
+      (settings.smsEnabled && smsReady) ||
+      (settings.emailEnabled && emailReady)
+    );
+    const enabled = accessCtx?.access.features.lead_conversion_center ?? true;
+    const totalLeads = leads.length;
+    const hotThreshold = settings.hotLeadThreshold || 75;
+    const hotLeads = leads.filter((lead) => lead.score >= hotThreshold && !["converted", "lost", "spam"].includes(lead.status)).length;
+    const overdueFollowUps = leads.filter((lead) =>
+      lead.nextFollowUpAt &&
+      new Date(lead.nextFollowUpAt).getTime() <= now.getTime() &&
+      !["converted", "lost", "spam"].includes(lead.status)
+    ).length;
+    const convertedThisMonth = leads.filter((lead) =>
+      lead.convertedAt &&
+      new Date(lead.convertedAt).getTime() >= startOfMonth.getTime()
+    ).length;
+    const demoDataPresent = leads.some(hasDemoLeadMetadata);
+
+    let followupsScheduled = 0;
+    let messagesPrepared = 0;
+    let messagesSent = 0;
+    let messagesDryRun = 0;
+    const failedMessageAttempts: Array<{ leadId: string; reason: string }> = [];
+
+    for (const lead of leads) {
+      const [activities, tasks] = await Promise.all([
+        storage.getLeadActivities(orgId, lead.id),
+        storage.getLeadFollowupTasks(orgId, lead.id),
+      ]);
+      followupsScheduled += tasks.length;
+      for (const activity of activities) {
+        if (activity.type !== "message") continue;
+        const mode = activityMode(activity);
+        if (mode === "live") messagesSent += 1;
+        if (mode === "dry-run" || activity.status === "dry_run") messagesDryRun += 1;
+        if (mode === "dry-run" || mode === "blocked" || mode === "live" || mode === "error" || activity.status === "dry_run") {
+          messagesPrepared += 1;
+        }
+        if (activity.error || mode === "error" || mode === "blocked") {
+          failedMessageAttempts.push({
+            leadId: lead.id,
+            reason: activity.error || String((activity.metadata as Record<string, unknown> | null)?.reason || mode),
+          });
+        }
+      }
+    }
+
+    const publicFormsConfigured = activeForms.length > 0;
+    const leadSourcesConfigured = activeAdapterKeys.size > 0 || configuredLeadSourceLabels.length > 0;
+    const businessInfoConfigured = !!((accessCtx?.org.phone || accessCtx?.org.email || accessCtx?.org.address || "").trim());
+    const setupComplete = !!(
+      enabled &&
+      activeTradeTemplate &&
+      businessInfoConfigured &&
+      publicFormsConfigured &&
+      leadSourcesConfigured &&
+      settings.defaultSmsTemplate?.trim() &&
+      settings.defaultEmailSubject?.trim() &&
+      settings.defaultEmailTemplate?.trim() &&
+      settings.followUpEnabled &&
+      totalLeads > 0
+    );
+
+    const blockers: string[] = [];
+    const nextSteps: string[] = [];
+    if (!enabled) blockers.push("Lead Conversion Center is not enabled on this plan.");
+    if (!activeTradeTemplate) nextSteps.push("Choose a trade template.");
+    if (!businessInfoConfigured) nextSteps.push("Add business contact information.");
+    if (!publicFormsConfigured) nextSteps.push("Configure a public lead capture form.");
+    if (!leadSourcesConfigured) nextSteps.push("Connect or label at least one lead source.");
+    if (!settings.defaultSmsTemplate?.trim() || !settings.defaultEmailTemplate?.trim()) nextSteps.push("Review SMS and email templates.");
+    if (!settings.followUpEnabled) nextSteps.push("Enable the follow-up sequence.");
+    if (settings.smsEnabled && !smsReady) blockers.push("SMS is enabled but Twilio, from phone, template, or opt-out wording is missing.");
+    if (settings.emailEnabled && !emailReady) blockers.push("Email is enabled but SendGrid, from email, subject, or body is missing.");
+    if (!settings.dryRun && !messagingLive) blockers.push("Live mode is selected but no messaging channel is ready.");
+    if (totalLeads === 0) nextSteps.push("Create or receive the first lead.");
+    if (convertedThisMonth === 0) nextSteps.push("Convert a qualified lead into a customer and job.");
+
+    const needsAttention = blockers.length > 0 || (!setupComplete && !settings.dryRun);
+    const mode = needsAttention
+      ? "needs_attention"
+      : messagingLive
+        ? "live"
+        : demoDataPresent && totalLeads > 0
+          ? "demo"
+          : settings.dryRun
+            ? "dry_run"
+            : "needs_attention";
+
+    res.json({
+      module: LEAD_CONVERSION_CENTER_MODULE,
+      enabled,
+      setupComplete,
+      mode,
+      activeTradeTemplate: activeTradeTemplate
+        ? { key: activeTradeTemplate.tradeKey, name: activeTradeTemplate.tradeName }
+        : null,
+      businessInfoConfigured,
+      publicFormsConfigured,
+      leadSourcesConfigured,
+      smsReady,
+      emailReady,
+      messagingLive,
+      followUpEnabled: settings.followUpEnabled,
+      autoResponseEnabled: settings.autoRespond,
+      demoDataPresent,
+      totalLeads,
+      hotLeads,
+      overdueFollowUps,
+      convertedThisMonth,
+      blockers,
+      nextSteps,
+      usageSummary: {
+        leadsThisMonth: leads.filter((lead) => new Date(lead.createdAt).getTime() >= startOfMonth.getTime()).length,
+        activeLeadSources: activeAdapterKeys.size + configuredLeadSourceLabels.length,
+        publicForms: activeForms.length,
+        followupsScheduled,
+        messagesPrepared,
+        messagesSent,
+        messagesDryRun,
+        failedMessageAttempts: failedMessageAttempts.length,
+        conversionsThisMonth: convertedThisMonth,
+      },
+      plan: {
+        source: accessCtx?.access.source || "legacy",
+        linked: accessCtx?.access.linked || false,
+        planSlug: accessCtx?.access.planSlug || null,
+      },
+    });
+  } catch (err) {
+    res.status(500).send(errMsg(err));
+  }
+});
 
 router.post("/api/public/lead-capture/:publicToken", publicLeadCaptureLimiter, async (req: Request, res: Response) => {
   try {
@@ -486,6 +747,14 @@ router.get("/api/leads/provider-status", requireAuth, requireOrg, async (_req: R
   }
 });
 
+router.get("/api/leads/production-readiness", requireAuth, requireOrg, async (req: Request, res: Response) => {
+  try {
+    res.json(await buildLeadProductionReadiness(req));
+  } catch (err) {
+    res.status(500).send(errMsg(err));
+  }
+});
+
 router.get("/api/leads/operator-dashboard", requireAuth, requireOrg, async (req: Request, res: Response) => {
   try {
     const orgId = req.session.orgId!;
@@ -591,6 +860,11 @@ router.get("/api/leads/operator-dashboard", requireAuth, requireOrg, async (req:
 
 router.patch("/api/leads/settings", requireAuth, requireOrg, async (req: Request, res: Response) => {
   try {
+    const body = req.body || {};
+    const patchBody = leadSettingsPatchSchema.safeParse(body);
+    if (!patchBody.success) {
+      return res.status(400).json({ error: patchBody.error.errors[0]?.message || "Invalid lead settings" });
+    }
     const parsed = leadSettingsSchema.safeParse(req.body?.settings || req.body || {});
     if (!parsed.success) {
       return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid lead settings" });
@@ -598,7 +872,64 @@ router.patch("/api/leads/settings", requireAuth, requireOrg, async (req: Request
     if (parsed.data.tradeTemplateKey && !isLeadTradeKey(parsed.data.tradeTemplateKey)) {
       return res.status(400).json({ error: "Invalid trade template" });
     }
-    const settings = await storage.upsertLeadSettings(req.session.orgId!, {
+    const orgId = req.session.orgId!;
+    const before = await getOrCreateLeadSettings(orgId);
+    const candidateSettings = {
+      ...before,
+      ...parsed.data,
+      notificationEmail: parsed.data.notificationEmail || before.notificationEmail || null,
+      tradeTemplateKey: parsed.data.tradeTemplateKey || before.tradeTemplateKey || null,
+      serviceArea: parsed.data.serviceArea || before.serviceArea || null,
+      leadSources: parsed.data.leadSources || before.leadSources || [],
+      smsComplianceFooter: parsed.data.smsComplianceFooter || before.smsComplianceFooter || "Reply STOP to opt out.",
+    };
+    const isRequestingLiveMode = before.dryRun !== false && parsed.data.dryRun === false;
+
+    if (isRequestingLiveMode) {
+      const readiness = await buildLeadProductionReadiness(req, candidateSettings);
+      if (patchBody.data.liveConfirmationPhrase !== LIVE_LEADS_CONFIRMATION_PHRASE) {
+        await storage.recordAudit({
+          orgId,
+          userId: req.session.userId,
+          action: "request_live_mode_blocked",
+          entity: "lead_settings",
+          entityId: before.id,
+          after: {
+            reason: "confirmation_required",
+            canGoLive: readiness.canGoLive,
+            blockers: readiness.blockers,
+            warnings: readiness.warnings,
+          },
+        });
+        return res.status(400).json({
+          error: "live_confirmation_required",
+          message: `Type ${LIVE_LEADS_CONFIRMATION_PHRASE} to enable live lead messaging.`,
+          requiredPhrase: LIVE_LEADS_CONFIRMATION_PHRASE,
+          readiness,
+        });
+      }
+      if (!readiness.canGoLive) {
+        await storage.recordAudit({
+          orgId,
+          userId: req.session.userId,
+          action: "request_live_mode_blocked",
+          entity: "lead_settings",
+          entityId: before.id,
+          after: {
+            reason: "production_readiness_blocked",
+            blockers: readiness.blockers,
+            warnings: readiness.warnings,
+          },
+        });
+        return res.status(400).json({
+          error: "production_readiness_blocked",
+          message: "Lead Conversion Center is not ready for live messaging.",
+          readiness,
+        });
+      }
+    }
+
+    const settings = await storage.upsertLeadSettings(orgId, {
       ...parsed.data,
       notificationEmail: parsed.data.notificationEmail || null,
       tradeTemplateKey: parsed.data.tradeTemplateKey || null,
@@ -606,6 +937,30 @@ router.patch("/api/leads/settings", requireAuth, requireOrg, async (req: Request
       leadSources: parsed.data.leadSources || [],
       smsComplianceFooter: parsed.data.smsComplianceFooter || "Reply STOP to opt out.",
     });
+    if (before.dryRun !== settings.dryRun) {
+      await storage.recordAudit({
+        orgId,
+        userId: req.session.userId,
+        action: settings.dryRun ? "disable_live_mode" : "enable_live_mode",
+        entity: "lead_settings",
+        entityId: settings.id,
+        before: {
+          dryRun: before.dryRun,
+          smsEnabled: before.smsEnabled,
+          emailEnabled: before.emailEnabled,
+          autoRespond: before.autoRespond,
+          followUpEnabled: before.followUpEnabled,
+        },
+        after: {
+          dryRun: settings.dryRun,
+          smsEnabled: settings.smsEnabled,
+          emailEnabled: settings.emailEnabled,
+          autoRespond: settings.autoRespond,
+          followUpEnabled: settings.followUpEnabled,
+          readiness: await buildLeadProductionReadiness(req),
+        },
+      });
+    }
     res.json(settings);
   } catch (err) {
     res.status(500).send(errMsg(err));

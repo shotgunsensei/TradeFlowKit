@@ -24,6 +24,7 @@ export const FEATURE_KEYS = [
   "review_requests",
   "recurring_invoices",
   "stripe_connect",
+  "lead_conversion_center",
 ] as const;
 export type FeatureKey = (typeof FEATURE_KEYS)[number];
 
@@ -101,6 +102,7 @@ export function deriveDefaultsFromPlanSlug(
           review_requests: true,
           recurring_invoices: true,
           stripe_connect: true,
+          lead_conversion_center: true,
         },
         limits: { customers: -1, jobs: -1, quotes: -1, invoices: -1, teamMembers: -1 },
       };
@@ -119,6 +121,7 @@ export function deriveDefaultsFromPlanSlug(
           review_requests: true,
           recurring_invoices: true,
           stripe_connect: true,
+          lead_conversion_center: true,
         },
         limits: { customers: -1, jobs: -1, quotes: -1, invoices: -1, teamMembers: 25 },
       };
@@ -137,6 +140,7 @@ export function deriveDefaultsFromPlanSlug(
           review_requests: true,
           recurring_invoices: false,
           stripe_connect: true,
+          lead_conversion_center: false,
         },
         limits: { customers: -1, jobs: -1, quotes: -1, invoices: -1, teamMembers: 1 },
       };
@@ -155,6 +159,7 @@ export function deriveDefaultsFromPlanSlug(
           review_requests: false,
           recurring_invoices: false,
           stripe_connect: false,
+          lead_conversion_center: false,
         },
         limits: { customers: 5, jobs: 5, quotes: 5, invoices: 5, teamMembers: 1 },
       };
@@ -227,6 +232,7 @@ function legacyFeaturesFor(plan: string): Record<FeatureKey, boolean> {
     review_requests: isPaid,
     recurring_invoices: isSB,
     stripe_connect: isPaid,
+    lead_conversion_center: isSB,
   };
 }
 

@@ -125,6 +125,7 @@ function AppContent() {
               <Switch>
                 <Route path="/" component={Dashboard} />
                 <Route path="/dashboard" component={Dashboard} />
+                <Route path="/leads/demo" component={LeadsPage} />
                 <Route path="/leads" component={LeadsPage} />
                 <Route path="/customers" component={CustomersPage} />
                 <Route path="/customers/:id" component={CustomerDetail} />

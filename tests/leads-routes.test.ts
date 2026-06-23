@@ -126,6 +126,180 @@ describeWithDb("Lead routes", () => {
     expect(dashboard.body.overdueFollowUps.some((lead: any) => lead.id === overdue.body.id)).toBe(true);
   });
 
+  it("returns org-scoped module readiness without exposing provider secrets", async () => {
+    const originalSendgridKey = process.env.SENDGRID_API_KEY;
+    const originalSendgridFrom = process.env.SENDGRID_FROM_EMAIL;
+    process.env.SENDGRID_API_KEY = "sg-super-secret-test-key";
+    process.env.SENDGRID_FROM_EMAIL = "sender@example.com";
+
+    try {
+      await storage.upsertLeadSettings(orgA.id, {
+        tradeTemplateKey: "hvac",
+        serviceArea: "Test service area",
+        leadSources: ["Website Form"],
+        followUpEnabled: true,
+        autoRespond: true,
+        dryRun: true,
+        defaultSmsTemplate: "Hi {name}, we received your {service} request. Reply STOP to opt out.",
+        defaultEmailSubject: "Thanks for contacting {business}",
+        defaultEmailTemplate: "Hi {name}, we received your request.",
+        smsComplianceFooter: "Reply STOP to opt out.",
+      });
+      await storage.createLeadCaptureForm(orgA.id, {
+        name: "Module Status Form",
+        sourceLabel: "Website Form",
+        isEnabled: true,
+      });
+      const demoLead = await storage.createLead(orgA.id, {
+        name: "Demo Module Lead",
+        source: "website_form",
+        status: "new",
+        urgency: "emergency",
+        phone: "555-0777",
+        serviceType: "No cooling",
+        score: 91,
+        metadata: { demoLeadSeed: true },
+      } as any, userA.id);
+      await storage.createLeadFollowupTask(orgA.id, demoLead.id, {
+        stepNumber: 1,
+        channel: "email",
+        dueAt: hoursFromNow(2),
+        status: "pending",
+        messageTemplate: "Follow up",
+        lastAttemptAt: null,
+        completedAt: null,
+        error: null,
+      });
+      await storage.createLeadActivity(orgA.id, demoLead.id, {
+        type: "message",
+        channel: "email",
+        direction: "outbound",
+        subject: "Dry-run email",
+        body: "Prepared only",
+        status: "dry_run",
+        metadata: { mode: "dry-run", provider: "sendgrid", recipient: "lead@example.com" },
+        createdBy: userA.id,
+      });
+
+      const own = await request(appA).get("/api/leads/module-status");
+      expect(own.status).toBe(200);
+      expect(own.body.enabled).toBe(true);
+      expect(own.body.module.moduleKey).toBe("lead_conversion_center");
+      expect(own.body.activeTradeTemplate.name).toBe("HVAC");
+      expect(own.body.publicFormsConfigured).toBe(true);
+      expect(own.body.leadSourcesConfigured).toBe(true);
+      expect(own.body.demoDataPresent).toBe(true);
+      expect(own.body.hotLeads).toBeGreaterThanOrEqual(1);
+      expect(own.body.usageSummary.followupsScheduled).toBeGreaterThanOrEqual(1);
+      expect(own.body.usageSummary.messagesDryRun).toBeGreaterThanOrEqual(1);
+
+      const serialized = JSON.stringify(own.body);
+      expect(serialized).not.toContain("sg-super-secret-test-key");
+
+      const other = await request(appB).get("/api/leads/module-status");
+      expect(other.status).toBe(200);
+      expect(other.body.totalLeads).toBeLessThan(own.body.totalLeads);
+      expect(JSON.stringify(other.body)).not.toContain(demoLead.id);
+    } finally {
+      if (originalSendgridKey === undefined) delete process.env.SENDGRID_API_KEY;
+      else process.env.SENDGRID_API_KEY = originalSendgridKey;
+      if (originalSendgridFrom === undefined) delete process.env.SENDGRID_FROM_EMAIL;
+      else process.env.SENDGRID_FROM_EMAIL = originalSendgridFrom;
+    }
+  });
+
+  it("returns production readiness and blocks unsafe live-mode activation", async () => {
+    const originalSendgridKey = process.env.SENDGRID_API_KEY;
+    const originalSendgridFrom = process.env.SENDGRID_FROM_EMAIL;
+    process.env.SENDGRID_API_KEY = "sg-hidden-production-readiness-secret";
+    process.env.SENDGRID_FROM_EMAIL = "sender@example.com";
+
+    try {
+      await storage.upsertLeadSettings(orgB.id, {
+        tradeTemplateKey: "plumbing",
+        serviceArea: "Route test service area",
+        leadSources: ["Website Form"],
+        autoRespond: true,
+        followUpEnabled: true,
+        dryRun: true,
+        smsEnabled: true,
+        emailEnabled: true,
+        defaultSmsTemplate: "Hi {name}, we received your {service} request. Reply STOP to opt out.",
+        defaultEmailSubject: "Thanks for contacting {business}",
+        defaultEmailTemplate: "Hi {name}, we received your request.",
+        smsComplianceFooter: "Reply STOP to opt out.",
+      });
+      await storage.createLeadCaptureForm(orgB.id, {
+        name: "Production Readiness Form",
+        sourceLabel: "Website Form",
+        isEnabled: true,
+      });
+
+      const readiness = await request(appB).get("/api/leads/production-readiness");
+      expect(readiness.status).toBe(200);
+      expect(readiness.body.messagingStatus.dryRun).toBe(true);
+      expect(readiness.body.providerStatus.emailConfigured).toBe(true);
+      expect(readiness.body.providerStatus.fromEmailConfigured).toBe(true);
+      expect(readiness.body.providerStatus).not.toHaveProperty("sendgridApiKey");
+      expect(JSON.stringify(readiness.body)).not.toContain("sg-hidden-production-readiness-secret");
+
+      const missingConfirmation = await request(appB)
+        .patch("/api/leads/settings")
+        .send({
+          settings: {
+            autoRespond: true,
+            followUpEnabled: true,
+            hotLeadThreshold: 75,
+            dryRun: false,
+            smsEnabled: true,
+            emailEnabled: true,
+            defaultSmsTemplate: "Hi {name}, we received your {service} request. Reply STOP to opt out.",
+            defaultEmailSubject: "Thanks for contacting {business}",
+            defaultEmailTemplate: "Hi {name}, we received your request.",
+            smsComplianceFooter: "Reply STOP to opt out.",
+            tradeTemplateKey: "plumbing",
+            serviceArea: "Route test service area",
+            leadSources: ["Website Form"],
+          },
+        });
+      expect(missingConfirmation.status).toBe(400);
+      expect(missingConfirmation.body.error).toBe("live_confirmation_required");
+
+      const blocked = await request(appB)
+        .patch("/api/leads/settings")
+        .send({
+          liveConfirmationPhrase: "ENABLE LIVE LEADS",
+          settings: {
+            autoRespond: true,
+            followUpEnabled: true,
+            hotLeadThreshold: 75,
+            dryRun: false,
+            smsEnabled: true,
+            emailEnabled: true,
+            defaultSmsTemplate: "Hi {name}, we received your {service} request. Reply STOP to opt out.",
+            defaultEmailSubject: "Thanks for contacting {business}",
+            defaultEmailTemplate: "Hi {name}, we received your request.",
+            smsComplianceFooter: "Reply STOP to opt out.",
+            tradeTemplateKey: "plumbing",
+            serviceArea: "Route test service area",
+            leadSources: ["Website Form"],
+          },
+        });
+      expect(blocked.status).toBe(400);
+      expect(blocked.body.error).toBe("production_readiness_blocked");
+      expect(blocked.body.readiness.canGoLive).toBe(false);
+
+      const otherOrgReadiness = await request(appA).get("/api/leads/production-readiness");
+      expect(otherOrgReadiness.status).toBe(200);
+      expect(JSON.stringify(otherOrgReadiness.body)).not.toContain("Production Readiness Form");
+    } finally {
+      if (originalSendgridKey === undefined) delete process.env.SENDGRID_API_KEY;
+      else process.env.SENDGRID_API_KEY = originalSendgridKey;
+      if (originalSendgridFrom === undefined) delete process.env.SENDGRID_FROM_EMAIL;
+      else process.env.SENDGRID_FROM_EMAIL = originalSendgridFrom;
+    }
+  });
+
   it("stamps lastContactedAt when status moves into contacted pipeline stages", async () => {
     const created = await request(appA).post("/api/leads").send({
       name: "Contact Stamp",

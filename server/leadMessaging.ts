@@ -368,7 +368,7 @@ export async function sendLeadTestMessage(opts: {
   const status = await getLeadMessagingProviderStatus();
   const to = opts.to.trim();
   if (!to) return { ok: false, mode: "blocked", reason: "missing_test_destination" };
-  if (!settings || settings.dryRun) return { ok: false, mode: "blocked", reason: "dry_run_enabled" };
+  if (!settings) return { ok: false, mode: "blocked", reason: "settings_missing" };
 
   if (opts.channel === "sms") {
     const fromPhone = await deps.getTwilioPhoneNumber();

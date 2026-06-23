@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { format, formatDistanceToNow, isThisMonth } from "date-fns";
 import {
   Activity,
   AlertTriangle,
+  ArrowLeft,
+  ArrowRight,
   Bot,
   CheckCircle2,
   Clock,
@@ -36,7 +38,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -50,6 +52,17 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { Lead, LeadActivity, LeadCaptureForm, LeadFollowupTask, LeadSettings, LeadSourceEvent } from "@shared/schema";
+import { LEAD_CONVERSION_CENTER_MODULE } from "@shared/modules";
+import {
+  LIVE_LEADS_CONFIRMATION_PHRASE,
+  type LeadProductionReadiness,
+} from "@shared/leadProductionReadiness";
+import { deploymentChecklistStatus } from "@shared/leadDeployment";
+import {
+  LEAD_DEMO_WALKTHROUGH_STEPS,
+  LEAD_FIRST_RUN_CHECKLIST,
+  type LeadDemoWalkthroughStep,
+} from "@shared/leadDemo";
 import {
   LEAD_TRADE_TEMPLATES,
   getLeadTradeTemplate,
@@ -91,6 +104,45 @@ type OperatorDashboard = {
     reason: string;
     createdAt: string | Date;
   }>;
+};
+
+type LeadModuleStatus = {
+  module: typeof LEAD_CONVERSION_CENTER_MODULE;
+  enabled: boolean;
+  setupComplete: boolean;
+  mode: "demo" | "dry_run" | "live" | "needs_attention";
+  activeTradeTemplate: { key: string; name: string } | null;
+  businessInfoConfigured?: boolean;
+  publicFormsConfigured: boolean;
+  leadSourcesConfigured: boolean;
+  smsReady: boolean;
+  emailReady: boolean;
+  messagingLive: boolean;
+  followUpEnabled: boolean;
+  autoResponseEnabled: boolean;
+  demoDataPresent: boolean;
+  totalLeads: number;
+  hotLeads: number;
+  overdueFollowUps: number;
+  convertedThisMonth: number;
+  blockers: string[];
+  nextSteps: string[];
+  usageSummary: {
+    leadsThisMonth: number;
+    activeLeadSources: number;
+    publicForms: number;
+    followupsScheduled: number;
+    messagesPrepared: number;
+    messagesSent: number;
+    messagesDryRun: number;
+    failedMessageAttempts: number;
+    conversionsThisMonth: number;
+  };
+  plan: {
+    source: string;
+    linked: boolean;
+    planSlug: string | null;
+  };
 };
 
 type LeadForm = {
@@ -176,6 +228,7 @@ const pipelineStages = [
   { key: "converted", label: "Converted" },
   { key: "lost", label: "Lost" },
 ];
+
 
 function labelize(value: string) {
   return value.replace("_", " ").replace(/\b\w/g, (c) => c.toUpperCase());
@@ -553,6 +606,7 @@ function OperatorList({
   actionLabel = "Review Lead",
   loading = false,
   error = null,
+  className = "",
 }: {
   title: string;
   icon: React.ComponentType<{ className?: string }>;
@@ -566,9 +620,10 @@ function OperatorList({
   actionLabel?: string;
   loading?: boolean;
   error?: unknown;
+  className?: string;
 }) {
   return (
-    <Card>
+    <Card className={className}>
       <CardHeader className="pb-2">
         <CardTitle className="text-sm flex items-center gap-2">
           <Icon className="h-4 w-4 text-muted-foreground" />
@@ -731,6 +786,7 @@ function LeadFields({ form, setForm, template }: { form: LeadForm; setForm: (nex
 export default function LeadsPage() {
   const { toast } = useToast();
   const { org } = useAuth();
+  const [location, navigate] = useLocation();
   const [statusFilter, setStatusFilter] = useState("all");
   const [sourceFilter, setSourceFilter] = useState("all");
   const [urgencyFilter, setUrgencyFilter] = useState("all");
@@ -742,6 +798,11 @@ export default function LeadsPage() {
   const [showCapture, setShowCapture] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showSetup, setShowSetup] = useState(false);
+  const [showLiveConfirm, setShowLiveConfirm] = useState(false);
+  const [liveConfirmText, setLiveConfirmText] = useState("");
+  const [showDemoWalkthrough, setShowDemoWalkthrough] = useState(false);
+  const [demoStep, setDemoStep] = useState(0);
+  const [firstRunDismissed, setFirstRunDismissed] = useState(false);
   const [setupStep, setSetupStep] = useState(0);
   const [createForm, setCreateForm] = useState<LeadForm>(emptyForm);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
@@ -787,6 +848,12 @@ export default function LeadsPage() {
   const { data: sourceEvents = [] } = useQuery<LeadSourceEvent[]>({ queryKey: ["/api/leads/source-events"] });
   const { data: providerStatus } = useQuery<ProviderStatus>({ queryKey: ["/api/leads/provider-status"] });
   const {
+    data: moduleStatus,
+    isLoading: moduleStatusLoading,
+    error: moduleStatusError,
+  } = useQuery<LeadModuleStatus>({ queryKey: ["/api/leads/module-status"] });
+  const { data: productionReadiness } = useQuery<LeadProductionReadiness>({ queryKey: ["/api/leads/production-readiness"] });
+  const {
     data: operatorDashboard,
     isLoading: operatorDashboardLoading,
     error: operatorDashboardError,
@@ -805,7 +872,15 @@ export default function LeadsPage() {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
     if (params.get("new") === "1") setShowCreate(true);
+    if (params.get("demo") === "1") setShowDemoWalkthrough(true);
   }, []);
+
+  useEffect(() => {
+    if (location === "/leads/demo") {
+      setShowDemoWalkthrough(true);
+      setDemoStep(0);
+    }
+  }, [location]);
 
   useEffect(() => {
     if (!leadSettings) return;
@@ -1044,15 +1119,27 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
   });
 
   const saveSettingsMutation = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("PATCH", "/api/leads/settings", { settings: settingsForm });
+    mutationFn: async (options?: { liveConfirmationPhrase?: string; settingsOverride?: LeadSettingsForm }) => {
+      const res = await apiRequest("PATCH", "/api/leads/settings", {
+        settings: options?.settingsOverride || settingsForm,
+        liveConfirmationPhrase: options?.liveConfirmationPhrase,
+      });
       return res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/leads/settings"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leads/provider-status"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leads/module-status"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leads/production-readiness"] });
+      setShowLiveConfirm(false);
+      setLiveConfirmText("");
       toast({ title: "Lead settings saved" });
     },
-    onError: (err: Error) => toast({ title: "Settings failed", description: err.message, variant: "destructive" }),
+    onError: (err: Error) => {
+      setSettingsForm((current) => ({ ...current, dryRun: leadSettings?.settings.dryRun ?? true }));
+      queryClient.invalidateQueries({ queryKey: ["/api/leads/production-readiness"] });
+      toast({ title: "Settings failed", description: err.message, variant: "destructive" });
+    },
   });
 
   const saveCaptureFormMutation = useMutation({
@@ -1086,6 +1173,7 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
       return res.json();
     },
     onSuccess: (result, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/leads/production-readiness"] });
       toast({
         title: result.ok ? `${vars.channel.toUpperCase()} test sent` : `${vars.channel.toUpperCase()} test blocked`,
         description: result.reason ? String(result.reason).replaceAll("_", " ") : undefined,
@@ -1142,22 +1230,165 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
     "Finish setup",
   ];
   const finishSetup = () => {
-    saveSettingsMutation.mutate();
+    saveSettingsMutation.mutate(undefined);
     setShowSetup(false);
     setSetupStep(0);
   };
-  const smsReady = !settingsForm.dryRun
-    && settingsForm.smsEnabled
+  const smsReady = settingsForm.smsEnabled
     && !!providerStatus?.twilio.configured
     && !!providerStatus?.twilio.fromPhoneConfigured
     && !!settingsForm.defaultSmsTemplate.trim()
     && !!settingsForm.smsComplianceFooter.trim();
-  const emailReady = !settingsForm.dryRun
-    && settingsForm.emailEnabled
+  const emailReady = settingsForm.emailEnabled
     && !!providerStatus?.sendgrid.configured
     && !!providerStatus?.sendgrid.fromEmailConfigured
     && !!settingsForm.defaultEmailSubject.trim()
     && !!settingsForm.defaultEmailTemplate.trim();
+  const productionChecks = productionReadiness?.requiredChecks || [];
+  const productionCompleteCount = productionChecks.filter((item) => item.status === "complete").length;
+  const productionCanGoLive = !!productionReadiness?.canGoLive;
+  const deploymentChecks = deploymentChecklistStatus({
+    activeTradeTemplate: !!moduleStatus?.activeTradeTemplate || !!settingsForm.tradeTemplateKey,
+    businessInfoConfigured: !!moduleStatus?.businessInfoConfigured,
+    publicFormsConfigured: !!moduleStatus?.publicFormsConfigured || !!captureForm.publicToken,
+    leadSourcesConfigured: !!moduleStatus?.leadSourcesConfigured || activeLeadSources.length > 0,
+    templatesReviewed: !!productionReadiness?.complianceStatus.templatesReviewed,
+    followUpEnabled: !!moduleStatus?.followUpEnabled,
+    totalLeads: moduleStatus?.totalLeads || allLeads.length,
+    productionCanGoLive,
+    convertedCount: moduleStatus?.convertedThisMonth || convertedThisMonth,
+  });
+  const deploymentCompleteCount = deploymentChecks.filter((item) => item.complete).length;
+  const firstWeekLastSourceEvent = sourceEvents[0];
+  const firstWeekSince = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const firstWeekLeads = allLeads.filter((lead) => new Date(lead.createdAt).getTime() >= firstWeekSince);
+  const firstWeekConverted = allLeads.filter((lead) => lead.convertedAt && new Date(lead.convertedAt).getTime() >= firstWeekSince);
+  const handleDryRunToggle = (checked: boolean) => {
+    if (checked) {
+      setSettingsForm({ ...settingsForm, dryRun: true });
+      return;
+    }
+    setLiveConfirmText("");
+    setShowLiveConfirm(true);
+  };
+  const confirmLiveMode = () => {
+    const nextSettings = { ...settingsForm, dryRun: false };
+    setSettingsForm(nextSettings);
+    saveSettingsMutation.mutate({ liveConfirmationPhrase: liveConfirmText, settingsOverride: nextSettings });
+  };
+  const leadModule = moduleStatus?.module || LEAD_CONVERSION_CENTER_MODULE;
+  const setupChecklist = [
+    {
+      label: "Choose trade template",
+      complete: !!moduleStatus?.activeTradeTemplate || !!settingsForm.tradeTemplateKey,
+      why: "Scoring, service labels, and follow-up defaults work better when the trade is known.",
+      actionLabel: "Open setup",
+      action: () => setShowSetup(true),
+    },
+    {
+      label: "Add business/contact info",
+      complete: !!moduleStatus?.businessInfoConfigured,
+      why: "Lead replies and customer-facing messages need a recognizable business identity.",
+      actionLabel: "Open settings",
+      action: () => setShowSettings(true),
+    },
+    {
+      label: "Configure lead capture form",
+      complete: !!moduleStatus?.publicFormsConfigured || !!captureForm.publicToken,
+      why: "Website visitors need a working form endpoint that creates internal leads.",
+      actionLabel: "Open form",
+      action: () => setShowCapture(true),
+    },
+    {
+      label: "Connect at least one lead source",
+      complete: !!moduleStatus?.leadSourcesConfigured || activeLeadSources.length > 0,
+      why: "Source labels make it clear whether the lead came from web, phone, referral, or webhook.",
+      actionLabel: "Lead settings",
+      action: () => setShowSettings(true),
+    },
+    {
+      label: "Review SMS/email templates",
+      complete: !!settingsForm.defaultSmsTemplate.trim() && !!settingsForm.defaultEmailSubject.trim() && !!settingsForm.defaultEmailTemplate.trim(),
+      why: "Prepared replies should sound like the contractor before dry-run or live use.",
+      actionLabel: "Lead settings",
+      action: () => setShowSettings(true),
+    },
+    {
+      label: "Enable follow-up sequence",
+      complete: !!moduleStatus?.followUpEnabled,
+      why: "Follow-ups keep leads visible before they fall through the cracks.",
+      actionLabel: "Lead settings",
+      action: () => setShowSettings(true),
+    },
+    {
+      label: "Confirm provider readiness",
+      complete: !!moduleStatus?.smsReady || !!moduleStatus?.emailReady || settingsForm.dryRun,
+      why: "Live messaging stays blocked until providers and sender details are ready.",
+      actionLabel: "Lead settings",
+      action: () => setShowSettings(true),
+    },
+    {
+      label: "Send test message if going live",
+      complete: settingsForm.dryRun || !!moduleStatus?.messagingLive,
+      why: "A live test confirms the selected provider is working before messaging leads.",
+      actionLabel: "Lead settings",
+      action: () => setShowSettings(true),
+    },
+    {
+      label: "Review dry-run/live mode",
+      complete: !!moduleStatus,
+      why: "Staff should always know whether messages are only logged or actually sent.",
+      actionLabel: "Lead settings",
+      action: () => setShowSettings(true),
+    },
+    {
+      label: "Create or receive first lead",
+      complete: (moduleStatus?.totalLeads || allLeads.length) > 0,
+      why: "A real or demo lead proves the pipeline is usable from capture to follow-up.",
+      actionLabel: "New lead",
+      action: () => setShowCreate(true),
+    },
+    {
+      label: "Convert first lead to customer/job",
+      complete: (moduleStatus?.convertedThisMonth || convertedThisMonth) > 0 || allLeads.some((lead) => lead.status === "converted" || lead.convertedAt),
+      why: "Conversion proves the Lead Center connects into the existing lead-to-cash workflow.",
+      actionLabel: "Open leads",
+      action: () => {
+        const lead = allLeads.find((item) => item.status !== "converted") || allLeads[0];
+        if (lead) openLead(lead);
+      },
+    },
+  ];
+  const setupCompleteCount = setupChecklist.filter((item) => item.complete).length;
+  const setupProgress = Math.round((setupCompleteCount / setupChecklist.length) * 100);
+  const moduleModeLabel = moduleStatus?.mode
+    ? labelize(moduleStatus.mode)
+    : "Checking";
+  const nextBestAction = moduleStatus?.blockers[0] || moduleStatus?.nextSteps[0] || "Lead Conversion Center is ready to use.";
+  const loadError = leadsError || settingsError || moduleStatusError;
+  const currentDemoStep = LEAD_DEMO_WALKTHROUGH_STEPS[demoStep];
+  const isDemoRoute = location === "/leads/demo";
+  const firstRunNeeded = !!moduleStatus && !moduleStatus.setupComplete && !firstRunDismissed;
+  const demoHighlight = (focus: LeadDemoWalkthroughStep["focus"]) =>
+    showDemoWalkthrough && currentDemoStep.focus === focus
+      ? "ring-2 ring-primary/40 border-primary/60 shadow-sm"
+      : "";
+  const runDemoAction = () => {
+    if (currentDemoStep.focus === "capture") setShowCapture(true);
+    if (currentDemoStep.focus === "score") {
+      const lead = hotOperatorLeads[0] || allLeads[0];
+      if (lead) openLead(lead);
+    }
+    if (currentDemoStep.focus === "hot") setHotOnly(true);
+    if (currentDemoStep.focus === "followup") setDueOnly(true);
+    if (currentDemoStep.focus === "message") setShowSettings(true);
+    if (currentDemoStep.focus === "convert") {
+      const lead = allLeads.find((item) => item.status === "qualified" || item.status === "follow_up") || allLeads[0];
+      if (lead) openLead(lead);
+    }
+  };
+  const demoNext = () => setDemoStep((step) => Math.min(LEAD_DEMO_WALKTHROUGH_STEPS.length - 1, step + 1));
+  const demoPrevious = () => setDemoStep((step) => Math.max(0, step - 1));
 
   return (
     <div className="flex flex-col h-full">
@@ -1182,6 +1413,13 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
               <Sparkles className="h-4 w-4 mr-1" />
               Lead Setup
             </Button>
+            <Button size="sm" variant="outline" onClick={() => {
+              setShowDemoWalkthrough(true);
+              if (location !== "/leads/demo") navigate("/leads/demo");
+            }}>
+              <Target className="h-4 w-4 mr-1" />
+              Demo Walkthrough
+            </Button>
             <Button size="sm" variant="outline" onClick={() => setShowSettings(true)}>
               <Settings className="h-4 w-4 mr-1" />
               Lead Settings
@@ -1199,10 +1437,10 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
           </Alert>
         )}
 
-        {(leadsError || settingsError) && (
+        {loadError && (
           <Alert variant="destructive">
             <AlertTitle>Lead Center could not load completely</AlertTitle>
-            <AlertDescription>{String((leadsError || settingsError) instanceof Error ? (leadsError || settingsError as Error).message : "Check the server logs.")}</AlertDescription>
+            <AlertDescription>{loadError instanceof Error ? loadError.message : "Check the server logs."}</AlertDescription>
           </Alert>
         )}
 
@@ -1214,7 +1452,122 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
           </Alert>
         )}
 
-        <Card>
+        {firstRunNeeded && (
+          <Card className="border-primary/40 bg-primary/5">
+            <CardContent className="p-4">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div className="space-y-2">
+                  <Badge variant="secondary">First run</Badge>
+                  <h2 className="text-lg font-semibold">Set up your Lead Conversion Center</h2>
+                  <p className="max-w-2xl text-sm text-muted-foreground">
+                    Capture every lead, prioritize urgent opportunities, and convert qualified leads into booked jobs.
+                  </p>
+                  <div className="grid gap-2 pt-2 sm:grid-cols-2 lg:grid-cols-3">
+                    {LEAD_FIRST_RUN_CHECKLIST.map((item) => (
+                      <div key={item} className="flex items-center gap-2 text-sm">
+                        <CheckCircle2 className="h-4 w-4 text-primary" />
+                        <span>{item}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button size="sm" onClick={() => setShowSetup(true)}>Continue setup</Button>
+                  <Button size="sm" variant="outline" onClick={() => setShowCreate(true)}>Create first lead</Button>
+                  <Button size="sm" variant="ghost" onClick={() => setFirstRunDismissed(true)}>Dismiss</Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {(showDemoWalkthrough || isDemoRoute) && (
+          <Card className="border-primary/40">
+            <CardContent className="p-4">
+              <div className="grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Badge variant="secondary">Sales demo</Badge>
+                    <h2 className="text-xl font-semibold">See the lead-to-job path in under a minute</h2>
+                    <p className="text-sm text-muted-foreground">
+                      Show how a contractor captures a request, knows who to call first, follows up before the lead goes cold, and turns qualified work into a customer and job.
+                    </p>
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {[
+                      ["Problem solved", "No more lost forms, calls, or manual notes."],
+                      ["Lead entry", "Website, call, manual, and source links feed the same pipeline."],
+                      ["Priority", "Hot leads rise to the top for fast contact."],
+                      ["Conversion", "Qualified leads become customers and jobs."],
+                    ].map(([label, value]) => (
+                      <div key={label} className="rounded-lg border p-3">
+                        <p className="text-xs text-muted-foreground">{label}</p>
+                        <p className="mt-1 text-sm font-medium">{value}</p>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" onClick={() => setShowSetup(true)}>Start setup</Button>
+                    <Button size="sm" variant="outline" onClick={() => setShowCreate(true)}>Add first lead</Button>
+                    {isDemoRoute && <Button size="sm" variant="ghost" onClick={() => navigate("/leads")}>Open Lead Center</Button>}
+                  </div>
+                </div>
+
+                <div className="rounded-lg border p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs text-muted-foreground">Step {demoStep + 1} of {LEAD_DEMO_WALKTHROUGH_STEPS.length}</p>
+                      <h3 className="mt-1 text-lg font-semibold">{currentDemoStep.title}</h3>
+                    </div>
+                    <Badge variant="outline">{currentDemoStep.outcome}</Badge>
+                  </div>
+                  <p className="mt-3 text-sm text-muted-foreground">{currentDemoStep.detail}</p>
+                  <div className="mt-4 grid grid-cols-6 gap-1.5">
+                    {LEAD_DEMO_WALKTHROUGH_STEPS.map((step, index) => (
+                      <button
+                        key={step.title}
+                        type="button"
+                        aria-label={step.title}
+                        onClick={() => setDemoStep(index)}
+                        className={`h-2 rounded-full ${index === demoStep ? "bg-primary" : "bg-muted"}`}
+                      />
+                    ))}
+                  </div>
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex gap-2">
+                      <Button size="sm" variant="outline" onClick={demoPrevious} disabled={demoStep === 0}>
+                        <ArrowLeft className="mr-1 h-4 w-4" />
+                        Previous
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={demoNext} disabled={demoStep === LEAD_DEMO_WALKTHROUGH_STEPS.length - 1}>
+                        Next
+                        <ArrowRight className="ml-1 h-4 w-4" />
+                      </Button>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button size="sm" variant="outline" onClick={runDemoAction}>{currentDemoStep.actionLabel}</Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => {
+                          if (isDemoRoute) {
+                            navigate("/leads");
+                            return;
+                          }
+                          setShowDemoWalkthrough(false);
+                        }}
+                      >
+                        Close walkthrough
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        <Card className={demoHighlight("capture")}>
           <CardContent className="p-4">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div className="space-y-2">
@@ -1282,6 +1635,7 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
             actionLabel="Review Lead"
             loading={operatorDashboardLoading && allLeads.length === 0}
             error={operatorDashboardError}
+            className={demoHighlight("hot")}
           />
           <OperatorList
             title="Needs Contact"
@@ -1310,6 +1664,7 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
             actionLabel="Follow Up"
             loading={operatorDashboardLoading && allLeads.length === 0}
             error={operatorDashboardError}
+            className={demoHighlight("followup")}
           />
           <OperatorList
             title="Overdue"
@@ -1377,7 +1732,7 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
           </Card>
         </div>
 
-        <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
+        <div className={`grid grid-cols-2 lg:grid-cols-6 gap-3 rounded-lg ${demoHighlight("score")}`}>
           <StatCard icon={UserPlus} label="New Leads" value={stats?.newLeads || 0} />
           <StatCard icon={Flame} label="Hot Leads" value={stats?.hotLeads || 0} sub={`Threshold ${settingsForm.hotLeadThreshold}`} />
           <StatCard icon={Activity} label="Due Follow-Up" value={stats?.needsFollowUp || 0} />
@@ -1386,38 +1741,225 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
           <StatCard icon={DollarSign} label="Pipeline Value" value={money(pipelineValue)} />
         </div>
 
-        <Card>
+        <Card className={demoHighlight("message")}>
           <CardContent className="p-4">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-              <div className="space-y-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h2 className="text-base font-semibold">Lead Conversion Center</h2>
-                  <Badge variant="secondary">Add-on module</Badge>
-                  {hasDemoData && <Badge variant="outline">Demo data</Badge>}
-                </div>
-                <p className="text-sm text-muted-foreground max-w-3xl">
-                  Capture new opportunities, prioritize who to contact first, and move qualified leads into the customer and job workflow.
-                </p>
-              </div>
-              <div className="grid gap-2 text-sm sm:grid-cols-2 lg:min-w-[520px]">
-                {[
-                  "Capture website, call, and manual leads",
-                  "Prioritize hot leads automatically",
-                  "Track follow-ups before they fall through the cracks",
-                  "Convert qualified leads into customers and jobs",
-                  "Keep outreach in dry-run until messaging is enabled",
-                ].map((item) => (
-                  <div key={item} className="flex items-start gap-2">
-                    <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
-                    <span>{item}</span>
+            <div className="grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
+              <div className="space-y-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h2 className="text-base font-semibold">{leadModule.displayName}</h2>
+                      <Badge variant="secondary">Add-on module</Badge>
+                      <Badge variant={moduleStatus?.enabled === false ? "destructive" : "outline"}>
+                        {moduleStatus?.enabled === false ? "Plan required" : moduleModeLabel}
+                      </Badge>
+                      {(hasDemoData || moduleStatus?.demoDataPresent) && <Badge variant="outline">Demo data</Badge>}
+                    </div>
+                    <p className="text-sm text-muted-foreground max-w-3xl">
+                      Never lose another lead. Respond faster, follow up automatically, and convert opportunities into booked jobs.
+                    </p>
                   </div>
-                ))}
+                  <Button size="sm" variant="outline" onClick={() => setShowSetup(true)}>
+                    <ListChecks className="mr-1 h-4 w-4" />
+                    Continue setup
+                  </Button>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-3">
+                  <div className="rounded-lg border p-3">
+                    <p className="text-xs text-muted-foreground">Current status</p>
+                    <p className="mt-1 text-lg font-semibold">{moduleStatusLoading ? "Checking..." : moduleModeLabel}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {settingsForm.dryRun ? "Messages are logged but not sent." : moduleStatus?.messagingLive ? "Live messaging is ready." : "Live mode needs attention."}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border p-3">
+                    <p className="text-xs text-muted-foreground">Setup progress</p>
+                    <p className="mt-1 text-lg font-semibold">{setupProgress}%</p>
+                    <div className="mt-2 h-2 rounded-full bg-muted">
+                      <div className="h-2 rounded-full bg-primary" style={{ width: `${setupProgress}%` }} />
+                    </div>
+                  </div>
+                  <div className="rounded-lg border p-3">
+                    <p className="text-xs text-muted-foreground">Next best action</p>
+                    <p className="mt-1 text-sm font-medium">{nextBestAction}</p>
+                  </div>
+                </div>
+
+                <div className="grid gap-2 text-sm sm:grid-cols-2">
+                  {leadModule.valueBullets.map((item) => (
+                    <div key={item} className="flex items-start gap-2">
+                      <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+                      <span>{item}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Connected lead sources</p>
+                  <p className="mt-1 text-2xl font-bold">{moduleStatus?.usageSummary.activeLeadSources ?? activeLeadSources.length}</p>
+                  <p className="text-xs text-muted-foreground">{moduleStatus?.publicFormsConfigured || captureForm.publicToken ? "Public form ready" : "Public form not ready"}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Messaging mode</p>
+                  <p className="mt-1 text-2xl font-bold">{settingsForm.dryRun ? "Dry-run" : moduleStatus?.messagingLive ? "Live" : "Blocked"}</p>
+                  <p className="text-xs text-muted-foreground">{moduleStatus?.smsReady ? "SMS ready" : "SMS not ready"} · {moduleStatus?.emailReady ? "Email ready" : "Email not ready"}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Leads captured this month</p>
+                  <p className="mt-1 text-2xl font-bold">{moduleStatus?.usageSummary.leadsThisMonth ?? 0}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Leads converted this month</p>
+                  <p className="mt-1 text-2xl font-bold">{moduleStatus?.convertedThisMonth ?? convertedThisMonth}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Follow-ups scheduled</p>
+                  <p className="mt-1 text-2xl font-bold">{moduleStatus?.usageSummary.followupsScheduled ?? 0}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Messages prepared</p>
+                  <p className="mt-1 text-2xl font-bold">{moduleStatus?.usageSummary.messagesPrepared ?? 0}</p>
+                  <p className="text-xs text-muted-foreground">{moduleStatus?.usageSummary.messagesDryRun ?? 0} dry-run · {moduleStatus?.usageSummary.messagesSent ?? 0} sent</p>
+                </div>
               </div>
             </div>
           </CardContent>
         </Card>
 
         <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center justify-between gap-3 text-base">
+              <span className="flex items-center gap-2">
+                <ListChecks className="h-4 w-4 text-primary" />
+                Setup Checklist
+              </span>
+              <Badge variant={moduleStatus?.setupComplete ? "default" : "outline"}>
+                {setupCompleteCount}/{setupChecklist.length} complete
+              </Badge>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {setupChecklist.map((item) => (
+              <div key={item.label} className="rounded-lg border p-3">
+                <div className="flex items-start gap-2">
+                  {item.complete ? (
+                    <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+                  ) : (
+                    <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium">{item.label}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">{item.why}</p>
+                  </div>
+                </div>
+                <Button size="sm" variant="outline" className="mt-3" onClick={item.action}>
+                  {item.actionLabel}
+                </Button>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+
+        <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center justify-between gap-3 text-base">
+                <span className="flex items-center gap-2">
+                  <FileText className="h-4 w-4 text-primary" />
+                  Deployment Checklist
+                </span>
+                <Badge variant="outline">{deploymentCompleteCount}/{deploymentChecks.length} ready</Badge>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="grid gap-3 md:grid-cols-2">
+              {deploymentChecks.map((item) => (
+                <div key={item.key} className="rounded-lg border p-3">
+                  <div className="flex items-start gap-2">
+                    {item.complete ? (
+                      <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+                    ) : (
+                      <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium">{item.label}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">{item.explanation}</p>
+                    </div>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="mt-3"
+                    onClick={() => {
+                      if (item.key === "capture_form") setShowCapture(true);
+                      else if (["trade_template", "business_settings", "lead_source", "templates", "followups", "dry_run_test"].includes(item.key)) setShowSetup(true);
+                      else if (item.key === "production_readiness") setShowSettings(true);
+                      else if (item.key === "handoff" || item.key === "first_week_review" || item.key === "go_live" || item.key === "discovery") setShowSettings(true);
+                    }}
+                  >
+                    {item.action}
+                  </Button>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Activity className="h-4 w-4 text-primary" />
+                First Week Monitor
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Leads captured</p>
+                  <p className="mt-1 text-2xl font-bold">{firstWeekLeads.length}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Hot leads</p>
+                  <p className="mt-1 text-2xl font-bold">{moduleStatus?.hotLeads ?? stats?.hotLeads ?? 0}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Overdue follow-ups</p>
+                  <p className="mt-1 text-2xl font-bold">{moduleStatus?.overdueFollowUps ?? overdueLeads.length}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Failed messages</p>
+                  <p className="mt-1 text-2xl font-bold">{moduleStatus?.usageSummary.failedMessageAttempts ?? operatorDashboard?.failedAttempts.length ?? 0}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Converted leads</p>
+                  <p className="mt-1 text-2xl font-bold">{firstWeekConverted.length}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Current mode</p>
+                  <p className="mt-1 text-sm font-semibold">{productionReadiness ? labelize(productionReadiness.currentMode) : moduleModeLabel}</p>
+                </div>
+              </div>
+              <div className="rounded-lg border p-3">
+                <p className="text-xs text-muted-foreground">Last lead source event</p>
+                <p className="mt-1 text-sm font-medium">
+                  {firstWeekLastSourceEvent
+                    ? `${labelize(firstWeekLastSourceEvent.adapterKey)} · ${labelize(firstWeekLastSourceEvent.status)}`
+                    : "No source events yet"}
+                </p>
+                {firstWeekLastSourceEvent && (
+                  <p className="text-xs text-muted-foreground">{formatDistanceToNow(new Date(firstWeekLastSourceEvent.createdAt), { addSuffix: true })}</p>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" variant="outline" onClick={() => setShowCreate(true)}>Create test lead</Button>
+                <Button size="sm" variant="outline" onClick={() => setShowSettings(true)}>Review readiness</Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        <Card className={demoHighlight("convert")}>
           <CardContent className="p-4 space-y-3">
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -1736,8 +2278,13 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
               )}
               {setupStep === 6 && (
                 <div className="space-y-4">
-                  <h3 className="text-lg font-semibold">Finish setup</h3>
-                  <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <h3 className="text-lg font-semibold">Launch plan</h3>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      Confirm what is ready, what stays in dry-run, and what to do next before the team uses this with real leads.
+                    </p>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                     <div className="rounded-lg border p-3">
                       <p className="text-xs text-muted-foreground">Trade</p>
                       <p className="font-medium">{activeTemplate?.tradeName || "Not selected"}</p>
@@ -1747,12 +2294,30 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
                       <p className="font-medium">{settingsForm.serviceArea || "Not set"}</p>
                     </div>
                     <div className="rounded-lg border p-3">
+                      <p className="text-xs text-muted-foreground">Lead capture link</p>
+                      <p className="font-medium">{captureForm.publicToken ? "Ready to copy" : "Not ready"}</p>
+                    </div>
+                    <div className="rounded-lg border p-3">
                       <p className="text-xs text-muted-foreground">Lead sources</p>
-                      <p className="font-medium">{activeLeadSources.join(", ") || "Not set"}</p>
+                      <p className="font-medium">{activeLeadSources.length > 0 ? `${activeLeadSources.length} selected` : "Not set"}</p>
+                    </div>
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs text-muted-foreground">Follow-up sequence</p>
+                      <p className="font-medium">{settingsForm.followUpEnabled ? "Enabled" : "Not enabled"}</p>
                     </div>
                     <div className="rounded-lg border p-3">
                       <p className="text-xs text-muted-foreground">Messaging</p>
-                      <p className="font-medium">Dry-run mode stays on</p>
+                      <p className="font-medium">{settingsForm.dryRun ? "Dry-run" : moduleStatus?.messagingLive ? "Live" : "Needs attention"}</p>
+                    </div>
+                  </div>
+                  <div className="rounded-lg border p-3">
+                    <p className="text-xs text-muted-foreground">Next best action</p>
+                    <p className="mt-1 text-sm font-medium">{nextBestAction}</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Button size="sm" variant="outline" onClick={() => setShowCreate(true)}>Add first lead</Button>
+                      <Button size="sm" variant="outline" onClick={() => setShowCapture(true)}>Copy website form link</Button>
+                      <Button size="sm" variant="outline" onClick={() => setSetupStep(5)}>Review follow-up sequence</Button>
+                      <Button size="sm" variant="outline" onClick={() => setShowSetup(false)}>Open operator dashboard</Button>
                     </div>
                   </div>
                 </div>
@@ -1992,6 +2557,91 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
                 Live SMS and email still require channel enablement, provider readiness, valid recipients, and consent checks before any message is sent.
               </AlertDescription>
             </Alert>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                  <span className="flex items-center gap-2">
+                    <ListChecks className="h-4 w-4 text-primary" />
+                    Go Live Checklist
+                  </span>
+                  <Badge variant={productionCanGoLive ? "default" : "outline"}>
+                    {productionCompleteCount}/{productionChecks.length || 13} ready
+                  </Badge>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="grid gap-2 sm:grid-cols-3">
+                  <div className="rounded-md border p-3">
+                    <p className="text-xs text-muted-foreground">Current mode</p>
+                    <p className="mt-1 text-sm font-semibold">{productionReadiness ? labelize(productionReadiness.currentMode) : "Checking"}</p>
+                  </div>
+                  <div className="rounded-md border p-3">
+                    <p className="text-xs text-muted-foreground">Lead sources</p>
+                    <p className="mt-1 text-sm font-semibold">{productionReadiness?.leadSourceStatus.activeLeadSources ?? 0} active</p>
+                  </div>
+                  <div className="rounded-md border p-3">
+                    <p className="text-xs text-muted-foreground">Provider tests</p>
+                    <p className="mt-1 text-sm font-semibold">
+                      SMS {productionReadiness?.messagingStatus.testSmsSent ? "passed" : "not passed"} · Email {productionReadiness?.messagingStatus.testEmailSent ? "passed" : "not passed"}
+                    </p>
+                  </div>
+                </div>
+                {productionReadiness?.blockers.length ? (
+                  <Alert variant="destructive">
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertTitle>Live mode is blocked</AlertTitle>
+                    <AlertDescription>{productionReadiness.blockers[0]}</AlertDescription>
+                  </Alert>
+                ) : productionReadiness?.warnings.length ? (
+                  <Alert>
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertTitle>Review before launch</AlertTitle>
+                    <AlertDescription>{productionReadiness.warnings[0]}</AlertDescription>
+                  </Alert>
+                ) : (
+                  <Alert>
+                    <CheckCircle2 className="h-4 w-4" />
+                    <AlertTitle>Production checks are ready</AlertTitle>
+                    <AlertDescription>Use the live confirmation when the contractor is ready for real lead messages.</AlertDescription>
+                  </Alert>
+                )}
+                <div className="grid gap-2">
+                  {productionChecks.map((item) => (
+                    <div key={item.key} className="flex flex-col gap-2 rounded-md border p-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="flex items-start gap-2">
+                        {item.status === "complete" ? (
+                          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+                        ) : item.status === "warning" ? (
+                          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                        ) : (
+                          <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+                        )}
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="text-sm font-medium">{item.label}</p>
+                            <Badge variant={item.status === "blocked" ? "destructive" : item.status === "warning" ? "outline" : "secondary"}>
+                              {item.status === "complete" ? "Ready" : labelize(item.status)}
+                            </Badge>
+                          </div>
+                          <p className="mt-1 text-xs text-muted-foreground">{item.explanation}</p>
+                        </div>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          if (item.key.includes("capture")) setShowCapture(true);
+                          else if (item.key.includes("trade") || item.key.includes("business") || item.key.includes("lead_source") || item.key.includes("templates") || item.key.includes("followups")) setShowSetup(true);
+                          else if (item.key.includes("provider") || item.key.includes("test") || item.key.includes("compliance") || item.key.includes("dry_run") || item.key.includes("live")) setShowSettings(true);
+                        }}
+                      >
+                        {item.action}
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
             <div className="grid sm:grid-cols-2 gap-3">
               <label className="flex items-center justify-between rounded-md border px-3 py-2"><span className="text-sm font-medium">Auto-response enabled</span><Switch checked={settingsForm.autoRespond} onCheckedChange={(v) => setSettingsForm({ ...settingsForm, autoRespond: v })} /></label>
               <label className="flex items-center justify-between rounded-md border px-3 py-2"><span className="text-sm font-medium">Follow-up enabled</span><Switch checked={settingsForm.followUpEnabled} onCheckedChange={(v) => setSettingsForm({ ...settingsForm, followUpEnabled: v })} /></label>
@@ -1999,7 +2649,7 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
                 <Label>Hot Lead Threshold</Label>
                 <Input type="number" min={0} max={100} value={settingsForm.hotLeadThreshold} onChange={(e) => setSettingsForm({ ...settingsForm, hotLeadThreshold: Number(e.target.value) })} />
               </div>
-              <label className="flex items-center justify-between rounded-md border px-3 py-2"><span className="text-sm font-medium">Dry-run mode</span><Switch checked={settingsForm.dryRun} onCheckedChange={(v) => setSettingsForm({ ...settingsForm, dryRun: v })} /></label>
+              <label className="flex items-center justify-between rounded-md border px-3 py-2"><span className="text-sm font-medium">Dry-run mode</span><Switch checked={settingsForm.dryRun} onCheckedChange={handleDryRunToggle} /></label>
               <label className="flex items-center justify-between rounded-md border px-3 py-2"><span className="text-sm font-medium">SMS enabled</span><Switch checked={settingsForm.smsEnabled} onCheckedChange={(v) => setSettingsForm({ ...settingsForm, smsEnabled: v })} /></label>
               <label className="flex items-center justify-between rounded-md border px-3 py-2"><span className="text-sm font-medium">Email enabled</span><Switch checked={settingsForm.emailEnabled} onCheckedChange={(v) => setSettingsForm({ ...settingsForm, emailEnabled: v })} /></label>
               <div className="space-y-1.5">
@@ -2067,8 +2717,66 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
                 </div>
               </CardContent>
             </Card>
-            <Button onClick={() => saveSettingsMutation.mutate()} disabled={saveSettingsMutation.isPending}>Save Settings</Button>
+            <Button onClick={() => saveSettingsMutation.mutate(undefined)} disabled={saveSettingsMutation.isPending}>Save Settings</Button>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showLiveConfirm} onOpenChange={(open) => {
+        setShowLiveConfirm(open);
+        if (!open) setLiveConfirmText("");
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Enable live lead messaging?</DialogTitle>
+            <DialogDescription>
+              Messages may be sent to real leads once dry-run is off. SMS requires consent, provider settings must be correct, templates should be reviewed, and compliance is your responsibility.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <Alert variant="destructive">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>Live messages are controlled but real</AlertTitle>
+              <AlertDescription>
+                TradeFlowKit will still block sends without consent, provider readiness, templates, and valid recipients. This confirmation only allows the org to leave dry-run mode.
+              </AlertDescription>
+            </Alert>
+            {productionReadiness && !productionReadiness.canGoLive && (
+              <Alert>
+                <AlertTriangle className="h-4 w-4" />
+                <AlertTitle>Checklist needs attention</AlertTitle>
+                <AlertDescription>{productionReadiness.blockers[0] || productionReadiness.warnings[0] || "Review the Go Live Checklist before enabling live mode."}</AlertDescription>
+              </Alert>
+            )}
+            <div className="space-y-2">
+              <Label>
+                Type <span className="font-mono">{LIVE_LEADS_CONFIRMATION_PHRASE}</span> to continue
+              </Label>
+              <Input
+                value={liveConfirmText}
+                onChange={(event) => setLiveConfirmText(event.target.value)}
+                placeholder={LIVE_LEADS_CONFIRMATION_PHRASE}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowLiveConfirm(false);
+                setLiveConfirmText("");
+              }}
+            >
+              Keep dry-run on
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={confirmLiveMode}
+              disabled={liveConfirmText !== LIVE_LEADS_CONFIRMATION_PHRASE || saveSettingsMutation.isPending}
+            >
+              Enable live mode
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

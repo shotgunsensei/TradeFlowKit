@@ -140,6 +140,20 @@ describe("lead messaging guards", () => {
     expect(sendSMS).not.toHaveBeenCalled();
   });
 
+  it("allows explicitly requested test SMS while lead messaging is still dry-run", async () => {
+    getLeadSettings.mockResolvedValue(settings({ dryRun: true, smsEnabled: true }));
+
+    const result = await messaging.sendLeadTestMessage({
+      orgId: "org-1",
+      channel: "sms",
+      to: "+15550001111",
+      template: "This is a test. Reply STOP to opt out.",
+    });
+
+    expect(result.mode).toBe("live");
+    expect(sendSMS).toHaveBeenCalledWith("+15550001111", "+15557654321", expect.stringContaining("Reply STOP"));
+  });
+
   it("keeps dry-run email from calling SendGrid", async () => {
     getLeadSettings.mockResolvedValue(settings({ dryRun: true, emailEnabled: true }));
 

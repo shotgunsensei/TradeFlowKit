@@ -230,6 +230,7 @@ describe("feature gates — linked + non-linked paths", () => {
     { feature: "review_requests", legacyAllow: "individual", legacyDeny: "free", linkedAllow: "starter", linkedDeny: "free" },
     { feature: "customer_portal", legacyAllow: "individual", legacyDeny: "free", linkedAllow: "starter", linkedDeny: "free" },
     { feature: "stripe_connect", legacyAllow: "individual", legacyDeny: "free", linkedAllow: "starter", linkedDeny: "free" },
+    { feature: "lead_conversion_center", legacyAllow: "small_business", legacyDeny: "individual", linkedAllow: "pro", linkedDeny: "starter" },
   ];
 
   for (const g of gates) {
@@ -305,6 +306,7 @@ describe("deriveDefaultsFromPlanSlug", () => {
     const d = deriveDefaultsFromPlanSlug("pro");
     expect(d.features.automations).toBe(true);
     expect(d.features.call_recovery).toBe(false);
+    expect(d.features.lead_conversion_center).toBe(true);
     expect(d.limits.teamMembers).toBe(25);
   });
   it("starter → analytics only", () => {

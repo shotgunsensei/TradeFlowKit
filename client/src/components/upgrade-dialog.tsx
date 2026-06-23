@@ -25,6 +25,7 @@ const FEATURE_LABELS: Record<string, string> = {
   team_invites: "Team Invites",
   unlimited_entities: "Unlimited Records",
   call_recovery: "Call Recovery",
+  lead_conversion_center: "Lead Conversion Center",
 };
 
 function featureLabel(key: string): string {

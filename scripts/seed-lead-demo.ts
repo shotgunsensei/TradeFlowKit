@@ -132,6 +132,35 @@ async function ensureFollowupTasks(orgId: string, leadId: string) {
   });
 }
 
+async function ensureFailedDryRunActivity(orgId: string, leadId: string, createdBy: string | null) {
+  const existing = await storage.getLeadActivities(orgId, leadId);
+  if (existing.some((activity) => (
+    activity.metadata &&
+    typeof activity.metadata === "object" &&
+    (activity.metadata as Record<string, unknown>).demoScenario === "first-client-hvac-rooftop" &&
+    (activity.metadata as Record<string, unknown>).demoFailedDryRun === true
+  ))) return;
+
+  await storage.createLeadActivity(orgId, leadId, {
+    type: "message",
+    channel: "sms",
+    direction: "outbound",
+    subject: "Demo dry-run SMS blocked",
+    body: "Prepared message was blocked in demo because the lead needs consent review before live SMS.",
+    status: "blocked",
+    error: "Demo blocked dry-run message activity",
+    metadata: {
+      demoLeadSeed: true,
+      demoScenario: "first-client-hvac-rooftop",
+      demoFailedDryRun: true,
+      mode: "blocked",
+      dryRun: true,
+      reason: "missing_sms_consent",
+    },
+    createdBy,
+  });
+}
+
 async function seedMissedCallLead(orgId: string, createdBy: string | null) {
   const existing = (await storage.getLeads(orgId)).find((lead) => isDemoScenario(lead, "missed-call-recovery"));
   if (existing) return existing;
@@ -269,6 +298,24 @@ async function main() {
       nextFollowUpAt: daysFromNow(3),
     },
     {
+      key: "first-client-hvac-rooftop",
+      name: "Northgate Fitness",
+      phone: "555-414-0108",
+      email: "manager.demo@example.com",
+      address: "510 Industrial Pkwy",
+      source: "website_form",
+      sourceDetail: "First Client Deployment Demo",
+      status: "qualified",
+      serviceType: "Commercial rooftop HVAC unit replacement",
+      description: "Commercial gym has intermittent cooling on a rooftop unit and wants a replacement quote before peak season.",
+      urgency: "urgent",
+      estimatedValue: "18500",
+      preferredContact: "email",
+      consentToSms: false,
+      lastContactedAt: hoursFromNow(-6),
+      nextFollowUpAt: hoursFromNow(-2),
+    },
+    {
       key: "converted-water-heater",
       name: "Taylor Brooks",
       phone: "555-414-0105",
@@ -305,6 +352,10 @@ async function main() {
     const lead = await createDemoLead(orgId, createdBy, scenario);
     created.push(lead);
     if (scenario.key === "plumbing-overdue") await ensureFollowupTasks(orgId, lead.id);
+    if (scenario.key === "first-client-hvac-rooftop") {
+      await ensureFollowupTasks(orgId, lead.id);
+      await ensureFailedDryRunActivity(orgId, lead.id, createdBy);
+    }
     if (scenario.key === "converted-water-heater" && lead.status !== "converted") {
       await storage.convertLeadToCustomerAndJob(orgId, lead.id, { createdBy });
     }
