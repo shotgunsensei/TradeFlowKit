@@ -154,6 +154,21 @@ describe("lead messaging guards", () => {
     expect(sendSMS).toHaveBeenCalledWith("+15550001111", "+15557654321", expect.stringContaining("Reply STOP"));
   });
 
+  it("returns a safe result when an explicit provider test fails", async () => {
+    getLeadSettings.mockResolvedValue(settings({ dryRun: true, smsEnabled: true }));
+    sendSMS.mockRejectedValueOnce(new Error("test provider exposed internal detail"));
+
+    const result = await messaging.sendLeadTestMessage({
+      orgId: "org-1",
+      channel: "sms",
+      to: "+15550001111",
+      template: "This is a test. Reply STOP to opt out.",
+    });
+
+    expect(result).toEqual({ ok: false, mode: "error", reason: "provider_error" });
+    expect(JSON.stringify(result)).not.toContain("internal detail");
+  });
+
   it("keeps dry-run email from calling SendGrid", async () => {
     getLeadSettings.mockResolvedValue(settings({ dryRun: true, emailEnabled: true }));
 
@@ -166,6 +181,39 @@ describe("lead messaging guards", () => {
 
     expect(result.mode).toBe("dry-run");
     expect(sendEmail).not.toHaveBeenCalled();
+  });
+
+  it("logs safe SMS provider errors without exposing provider details", async () => {
+    getLeadSettings.mockResolvedValue(settings({ dryRun: false, smsEnabled: true }));
+    sendSMS.mockRejectedValueOnce(new Error("provider exploded with credential detail"));
+
+    const result = await messaging.sendLeadSms({
+      orgId: "org-1",
+      lead,
+      template: "Hi {name}",
+    });
+
+    expect(result.mode).toBe("error");
+    expect(result.activity.error).toBe("SMS provider request failed.");
+    expect(JSON.stringify(result.activity)).not.toContain("credential detail");
+  });
+
+  it("logs safe email provider errors without exposing provider details", async () => {
+    process.env.SENDGRID_API_KEY = "sendgrid-secret";
+    process.env.SENDGRID_FROM_EMAIL = "from@example.com";
+    getLeadSettings.mockResolvedValue(settings({ dryRun: false, emailEnabled: true }));
+    sendEmail.mockRejectedValueOnce(new Error("provider exploded with credential detail"));
+
+    const result = await messaging.sendLeadEmail({
+      orgId: "org-1",
+      lead,
+      subject: "Hello {name}",
+      template: "Hi {name}",
+    });
+
+    expect(result.mode).toBe("error");
+    expect(result.activity.error).toBe("Email provider request failed.");
+    expect(JSON.stringify(result.activity)).not.toContain("credential detail");
   });
 
   it("provider status exposes readiness without secrets", async () => {

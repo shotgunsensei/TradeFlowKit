@@ -7,6 +7,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
+  BarChart3,
   Bot,
   CheckCircle2,
   Clock,
@@ -238,6 +239,54 @@ function money(value: number) {
   return `$${value.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
 }
 
+function validDate(value: string | Date | null | undefined): Date | null {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatLeadDate(value: string | Date | null | undefined, pattern: string, fallback = "Not set") {
+  const date = validDate(value);
+  return date ? format(date, pattern) : fallback;
+}
+
+function modePresentation(mode: LeadModuleStatus["mode"] | undefined, dryRun: boolean) {
+  if (mode === "live" && !dryRun) {
+    return {
+      label: "Live Mode",
+      description: "Live mode is active. Messages may be sent to real leads based on your settings.",
+      className: "border-emerald-300 bg-emerald-50 text-emerald-950 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100",
+      iconClassName: "text-emerald-700 dark:text-emerald-300",
+      icon: CheckCircle2,
+    };
+  }
+  if (mode === "needs_attention") {
+    return {
+      label: "Needs Attention",
+      description: "Lead capture remains available, but setup or messaging checks need review.",
+      className: "border-red-300 bg-red-50 text-red-950 dark:border-red-900 dark:bg-red-950/30 dark:text-red-100",
+      iconClassName: "text-red-700 dark:text-red-300",
+      icon: AlertTriangle,
+    };
+  }
+  if (mode === "demo") {
+    return {
+      label: "Demo Mode",
+      description: "Demo mode is active. Sample leads are for walkthroughs and messages are not sent.",
+      className: "border-sky-300 bg-sky-50 text-sky-950 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-100",
+      iconClassName: "text-sky-700 dark:text-sky-300",
+      icon: Sparkles,
+    };
+  }
+  return {
+    label: "Dry-Run Mode",
+    description: "Dry-run mode is active. Messages are logged but not sent.",
+    className: "border-amber-300 bg-amber-50 text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100",
+    iconClassName: "text-amber-700 dark:text-amber-300",
+    icon: MessageSquare,
+  };
+}
+
 function scoreColor(score: number) {
   if (score >= 85) return "text-red-700 bg-red-50 border-red-200 dark:text-red-300 dark:bg-red-950/30 dark:border-red-900";
   if (score >= 70) return "text-orange-700 bg-orange-50 border-orange-200 dark:text-orange-300 dark:bg-orange-950/30 dark:border-orange-900";
@@ -265,12 +314,14 @@ function isClosedLead(lead: Lead) {
 }
 
 function isOverdue(lead: Lead) {
-  return !!lead.nextFollowUpAt && new Date(lead.nextFollowUpAt).getTime() <= Date.now() && !["converted", "lost", "spam"].includes(lead.status);
+  const dueAt = validDate(lead.nextFollowUpAt);
+  return !!dueAt && dueAt.getTime() <= Date.now() && !["converted", "lost", "spam"].includes(lead.status);
 }
 
 function isDueToday(lead: Lead) {
   if (!lead.nextFollowUpAt || isClosedLead(lead)) return false;
-  const due = new Date(lead.nextFollowUpAt);
+  const due = validDate(lead.nextFollowUpAt);
+  if (!due) return false;
   const now = new Date();
   const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
@@ -401,7 +452,7 @@ function formFromLead(lead: Lead): LeadForm {
     preferredContact: lead.preferredContact || "phone",
     preferredTime: lead.preferredTime || "",
     consentToSms: !!lead.consentToSms,
-    nextFollowUpAt: lead.nextFollowUpAt ? format(new Date(lead.nextFollowUpAt), "yyyy-MM-dd'T'HH:mm") : "",
+    nextFollowUpAt: formatLeadDate(lead.nextFollowUpAt, "yyyy-MM-dd'T'HH:mm", ""),
     status: lead.status || "new",
     lostReason: lead.lostReason || "",
     aiSummary: lead.aiSummary || "",
@@ -506,11 +557,11 @@ function LeadSummaryCard({
       <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
         <div>
           <span className="block">Age</span>
-          <span className="font-medium text-foreground">{formatDistanceToNow(new Date(lead.createdAt), { addSuffix: true })}</span>
+          <span className="font-medium text-foreground">{validDate(lead.createdAt) ? formatDistanceToNow(validDate(lead.createdAt)!, { addSuffix: true }) : "Unknown"}</span>
         </div>
         <div>
           <span className="block">Next follow-up</span>
-          <span className="font-medium text-foreground">{lead.nextFollowUpAt ? format(new Date(lead.nextFollowUpAt), "MMM d, h:mm a") : "Not set"}</span>
+          <span className="font-medium text-foreground">{formatLeadDate(lead.nextFollowUpAt, "MMM d, h:mm a")}</span>
         </div>
       </div>
 
@@ -569,11 +620,11 @@ function OperatorLeadCard({
       <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
         <div>
           <span className="block">Age</span>
-          <span className="font-medium text-foreground">{formatDistanceToNow(new Date(lead.createdAt), { addSuffix: true })}</span>
+          <span className="font-medium text-foreground">{validDate(lead.createdAt) ? formatDistanceToNow(validDate(lead.createdAt)!, { addSuffix: true }) : "Unknown"}</span>
         </div>
         <div>
           <span className="block">Next follow-up</span>
-          <span className="font-medium text-foreground">{lead.nextFollowUpAt ? format(new Date(lead.nextFollowUpAt), "MMM d, h:mm a") : "Not set"}</span>
+          <span className="font-medium text-foreground">{formatLeadDate(lead.nextFollowUpAt, "MMM d, h:mm a")}</span>
         </div>
       </div>
       <LeadSlaBadge lead={lead} />
@@ -587,7 +638,7 @@ function OperatorLeadCard({
           <Button size="sm" variant="outline" className="h-8" onClick={() => onSms(lead)}>Follow Up</Button>
         )}
         <Button size="sm" variant="ghost" className="h-8" onClick={() => onScore(lead)}>Re-score</Button>
-        <Button size="sm" variant="ghost" className="h-8" onClick={() => onSms(lead)}>Message Prepared</Button>
+        <Button size="sm" variant="ghost" className="h-8" onClick={() => onSms(lead)}>Prepare Message</Button>
       </div>
     </div>
   );
@@ -804,6 +855,8 @@ export default function LeadsPage() {
   const [demoStep, setDemoStep] = useState(0);
   const [firstRunDismissed, setFirstRunDismissed] = useState(false);
   const [setupStep, setSetupStep] = useState(0);
+  const [workspaceView, setWorkspaceView] = useState<"work" | "performance">("work");
+  const [reportRange, setReportRange] = useState<"30" | "90" | "all">("30");
   const [createForm, setCreateForm] = useState<LeadForm>(emptyForm);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<LeadForm>(emptyForm);
@@ -873,7 +926,11 @@ export default function LeadsPage() {
     const params = new URLSearchParams(window.location.search);
     if (params.get("new") === "1") setShowCreate(true);
     if (params.get("demo") === "1") setShowDemoWalkthrough(true);
-  }, []);
+    if (params.get("settings") === "1") setShowSettings(true);
+    if (params.get("setup") === "1") setShowSetup(true);
+    if (params.get("form") === "1") setShowCapture(true);
+    if (params.get("view") === "performance") setWorkspaceView("performance");
+  }, [location]);
 
   useEffect(() => {
     if (location === "/leads/demo") {
@@ -942,6 +999,42 @@ export default function LeadsPage() {
   const pipelineValue = allLeads
     .filter((lead) => !["converted", "lost", "spam"].includes(lead.status))
     .reduce((sum, lead) => sum + Number(lead.estimatedValue || 0), 0);
+  const reportCutoff = reportRange === "all"
+    ? null
+    : new Date(Date.now() - Number(reportRange) * 24 * 60 * 60 * 1000);
+  const reportLeads = allLeads.filter((lead) => {
+    const createdAt = validDate(lead.createdAt);
+    return !reportCutoff || (!!createdAt && createdAt >= reportCutoff);
+  });
+  const reportConverted = reportLeads.filter((lead) => lead.status === "converted" || lead.convertedAt);
+  const reportConversionRate = reportLeads.length > 0
+    ? Math.round((reportConverted.length / reportLeads.length) * 100)
+    : 0;
+  const reportEstimatedValue = reportConverted.reduce((sum, lead) => sum + Number(lead.estimatedValue || 0), 0);
+  const responseMinutes = reportLeads
+    .map((lead) => {
+      const createdAt = validDate(lead.createdAt);
+      const respondedAt = validDate((lead as Lead & { firstResponseAt?: string | Date | null }).firstResponseAt || lead.lastContactedAt);
+      if (!createdAt || !respondedAt) return null;
+      return Math.max(0, (respondedAt.getTime() - createdAt.getTime()) / 60000);
+    })
+    .filter((value): value is number => value !== null);
+  const averageResponseMinutes = responseMinutes.length
+    ? Math.round(responseMinutes.reduce((sum, value) => sum + value, 0) / responseMinutes.length)
+    : null;
+  const sourcePerformance = Object.values(reportLeads.reduce((acc, lead) => {
+    const key = lead.source || "unknown";
+    const row = acc[key] || { source: key, captured: 0, converted: 0, estimatedValue: 0 };
+    row.captured += 1;
+    if (lead.status === "converted" || lead.convertedAt) {
+      row.converted += 1;
+      row.estimatedValue += Number(lead.estimatedValue || 0);
+    }
+    acc[key] = row;
+    return acc;
+  }, {} as Record<string, { source: string; captured: number; converted: number; estimatedValue: number }>))
+    .sort((a, b) => b.converted - a.converted || b.captured - a.captured);
+  const topSource = sourcePerformance[0] || null;
   const hotThreshold = Math.max(70, settingsForm.hotLeadThreshold || 0);
   const activeLeads = allLeads.filter((lead) => !isClosedLead(lead));
   const hotOperatorLeads = [...activeLeads]
@@ -1364,6 +1457,8 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
   const moduleModeLabel = moduleStatus?.mode
     ? labelize(moduleStatus.mode)
     : "Checking";
+  const operatingMode = modePresentation(moduleStatus?.mode, settingsForm.dryRun);
+  const OperatingModeIcon = operatingMode.icon;
   const nextBestAction = moduleStatus?.blockers[0] || moduleStatus?.nextSteps[0] || "Lead Conversion Center is ready to use.";
   const loadError = leadsError || settingsError || moduleStatusError;
   const currentDemoStep = LEAD_DEMO_WALKTHROUGH_STEPS[demoStep];
@@ -1389,53 +1484,71 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
   };
   const demoNext = () => setDemoStep((step) => Math.min(LEAD_DEMO_WALKTHROUGH_STEPS.length - 1, step + 1));
   const demoPrevious = () => setDemoStep((step) => Math.max(0, step - 1));
+  const reportPeriodLabel = reportRange === "all" ? "All time" : `Last ${reportRange} days`;
+  const reportSummary = [
+    `${reportPeriodLabel} Lead Conversion Center summary`,
+    `Leads captured: ${reportLeads.length}`,
+    `Leads converted: ${reportConverted.length} (${reportConversionRate}%)`,
+    `Estimated converted opportunity value: ${money(reportEstimatedValue)}`,
+    `Average recorded response time: ${averageResponseMinutes == null ? "Not enough response data" : `${averageResponseMinutes} minutes`}`,
+    `Overdue follow-ups now: ${overdueLeads.length}`,
+    `Top source: ${topSource ? `${labelize(topSource.source)} (${topSource.converted} converted)` : "No source data yet"}`,
+  ].join("\n");
 
   return (
     <div className="flex flex-col h-full">
       <PageHeader
         title="Lead Conversion Center"
-        description="Capture, qualify, follow up, and convert new opportunities into booked jobs."
+        description="Know who to call first, follow up before leads go cold, and turn qualified work into jobs."
         actions={
-          <div className="flex flex-wrap gap-2">
+          <div className="flex w-full flex-wrap gap-2 sm:w-auto">
             <Button size="sm" onClick={() => setShowCreate(true)} data-testid="button-create-lead">
               <Plus className="h-4 w-4 mr-1" />
               New Lead
             </Button>
-            <Button size="sm" variant="outline" onClick={() => copyText(captureEndpoint, "Public form link copied")} disabled={!captureEndpoint}>
-              <Copy className="h-4 w-4 mr-1" />
-              Copy Public Form Link
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => setShowCapture(true)}>
-              <Globe2 className="h-4 w-4 mr-1" />
-              View Embed Code
+            <Button
+              size="sm"
+              variant={workspaceView === "performance" ? "secondary" : "outline"}
+              onClick={() => {
+                setWorkspaceView(workspaceView === "performance" ? "work" : "performance");
+                navigate(workspaceView === "performance" ? "/leads" : "/leads?view=performance");
+              }}
+            >
+              <BarChart3 className="h-4 w-4 mr-1" />
+              {workspaceView === "performance" ? "Lead Center" : "Performance"}
             </Button>
             <Button size="sm" variant="outline" onClick={() => setShowSetup(true)}>
               <Sparkles className="h-4 w-4 mr-1" />
-              Lead Setup
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => {
-              setShowDemoWalkthrough(true);
-              if (location !== "/leads/demo") navigate("/leads/demo");
-            }}>
-              <Target className="h-4 w-4 mr-1" />
-              Demo Walkthrough
+              Setup
             </Button>
             <Button size="sm" variant="outline" onClick={() => setShowSettings(true)}>
               <Settings className="h-4 w-4 mr-1" />
-              Lead Settings
+              Settings
             </Button>
           </div>
         }
       />
 
       <div className="flex-1 overflow-auto p-4 sm:p-6 space-y-4">
-        {dryRunActive && (
-          <Alert>
-            <MessageSquare className="h-4 w-4" />
-            <AlertTitle>Dry-run mode is active</AlertTitle>
-            <AlertDescription>Lead SMS and email actions are logged to the timeline but are not sent.</AlertDescription>
-          </Alert>
-        )}
+        <div className={`flex flex-col gap-3 border-l-4 p-4 sm:flex-row sm:items-center sm:justify-between ${operatingMode.className}`} data-testid="lead-operating-mode">
+          <div className="flex items-start gap-3">
+            <OperatingModeIcon className={`mt-0.5 h-5 w-5 shrink-0 ${operatingMode.iconClassName}`} />
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="font-semibold">{operatingMode.label}</p>
+                <Badge variant="outline">{moduleStatusLoading ? "Checking setup" : moduleStatus?.setupComplete ? "Setup complete" : "Setup incomplete"}</Badge>
+              </div>
+              <p className="mt-1 text-sm">{operatingMode.description}</p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="outline" onClick={() => setShowSettings(true)}>Review readiness</Button>
+            <Button size="sm" variant="outline" onClick={() => {
+              setShowDemoWalkthrough(true);
+              if (location !== "/leads/demo") navigate("/leads/demo");
+            }}>Demo walkthrough</Button>
+          </div>
+        </div>
 
         {loadError && (
           <Alert variant="destructive">
@@ -1452,6 +1565,122 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
           </Alert>
         )}
 
+        {workspaceView === "performance" && (
+          <div className="space-y-4" data-testid="lead-performance-report">
+            <Card>
+              <CardContent className="p-4 sm:p-5">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant="secondary">Lead performance</Badge>
+                      <Badge variant="outline">{reportPeriodLabel}</Badge>
+                    </div>
+                    <h2 className="mt-2 text-xl font-semibold">Are leads turning into real opportunities?</h2>
+                    <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+                      Review capture volume, response speed, source quality, follow-up risk, and estimated converted opportunity value.
+                    </p>
+                  </div>
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <Select value={reportRange} onValueChange={(value) => setReportRange(value as "30" | "90" | "all")}>
+                      <SelectTrigger className="w-full sm:w-[160px]" aria-label="Report date range"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="30">Last 30 days</SelectItem>
+                        <SelectItem value="90">Last 90 days</SelectItem>
+                        <SelectItem value="all">All time</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Button variant="outline" onClick={() => copyText(reportSummary, "Performance summary copied")}>
+                      <Copy className="mr-1 h-4 w-4" />
+                      Copy summary
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+              <StatCard icon={UserPlus} label="Leads Captured" value={reportLeads.length} sub={reportPeriodLabel} />
+              <StatCard icon={Target} label="Converted" value={reportConverted.length} sub={`${reportConversionRate}% conversion rate`} />
+              <StatCard icon={Clock} label="Average Response" value={averageResponseMinutes == null ? "No data" : `${averageResponseMinutes} min`} sub="Recorded contacts only" />
+              <StatCard icon={AlertTriangle} label="Overdue Now" value={overdueLeads.length} sub="Needs follow-up" />
+              <StatCard icon={DollarSign} label="Converted Value" value={money(reportEstimatedValue)} sub="Estimated opportunity value" />
+            </div>
+
+            <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <BarChart3 className="h-4 w-4 text-primary" />
+                    Which lead sources are working?
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {sourcePerformance.length === 0 ? (
+                    <div className="py-8 text-center">
+                      <Globe2 className="mx-auto h-9 w-9 text-muted-foreground" />
+                      <p className="mt-3 font-medium">No source performance yet</p>
+                      <p className="mt-1 text-sm text-muted-foreground">Create or capture leads to compare which sources produce qualified work.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {sourcePerformance.map((source) => {
+                        const conversionRate = source.captured ? Math.round((source.converted / source.captured) * 100) : 0;
+                        return (
+                          <div key={source.source} className="grid gap-3 rounded-md border p-3 sm:grid-cols-[1fr_repeat(3,minmax(90px,auto))] sm:items-center">
+                            <div>
+                              <p className="font-medium">{labelize(source.source)}</p>
+                              <p className="text-xs text-muted-foreground">{conversionRate}% converted</p>
+                            </div>
+                            <div><p className="text-xs text-muted-foreground">Captured</p><p className="font-semibold">{source.captured}</p></div>
+                            <div><p className="text-xs text-muted-foreground">Converted</p><p className="font-semibold">{source.converted}</p></div>
+                            <div><p className="text-xs text-muted-foreground">Est. value</p><p className="font-semibold">{money(source.estimatedValue)}</p></div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-2"><CardTitle className="text-base">What should we fix next?</CardTitle></CardHeader>
+                <CardContent className="space-y-3">
+                  {needsContactLeads.length > 0 && (
+                    <button type="button" onClick={() => { setWorkspaceView("work"); setStatusFilter("new"); }} className="w-full rounded-md border p-3 text-left hover:bg-muted/40">
+                      <p className="font-medium">{needsContactLeads.length} lead{needsContactLeads.length === 1 ? "" : "s"} still need first contact</p>
+                      <p className="mt-1 text-xs text-muted-foreground">Open the Lead Center and call the oldest new leads first.</p>
+                    </button>
+                  )}
+                  {overdueLeads.length > 0 && (
+                    <button type="button" onClick={() => { setWorkspaceView("work"); setOverdueOnly(true); }} className="w-full rounded-md border border-red-200 p-3 text-left hover:bg-red-50 dark:border-red-900 dark:hover:bg-red-950/20">
+                      <p className="font-medium">{overdueLeads.length} overdue follow-up{overdueLeads.length === 1 ? "" : "s"}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">Follow up before these opportunities go cold.</p>
+                    </button>
+                  )}
+                  {(operatorDashboard?.failedAttempts.length || 0) > 0 && (
+                    <button type="button" onClick={() => setShowSettings(true)} className="w-full rounded-md border p-3 text-left hover:bg-muted/40">
+                      <p className="font-medium">{operatorDashboard?.failedAttempts.length} message issue{operatorDashboard?.failedAttempts.length === 1 ? "" : "s"} need review</p>
+                      <p className="mt-1 text-xs text-muted-foreground">Review message readiness and recent failures.</p>
+                    </button>
+                  )}
+                  {needsContactLeads.length === 0 && overdueLeads.length === 0 && (operatorDashboard?.failedAttempts.length || 0) === 0 && (
+                    <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3 dark:border-emerald-900 dark:bg-emerald-950/20">
+                      <p className="font-medium">No immediate lead risks</p>
+                      <p className="mt-1 text-xs text-muted-foreground">New leads are contacted, follow-ups are current, and no message failures are waiting.</p>
+                    </div>
+                  )}
+                  <div className="rounded-md bg-muted/50 p-3">
+                    <p className="text-xs text-muted-foreground">Value note</p>
+                    <p className="mt-1 text-sm">Converted value uses lead estimates. It is not booked revenue or a guaranteed return.</p>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+        )}
+
+        {workspaceView === "work" && (
+          <>
         {firstRunNeeded && (
           <Card className="border-primary/40 bg-primary/5">
             <CardContent className="p-4">
@@ -1971,7 +2200,7 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
               </div>
               <Badge variant="outline">Lead Conversion Center</Badge>
             </div>
-            <div className="grid grid-cols-5 gap-2">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
               {pipelineCounts.map((stage, index) => (
                 <button
                   key={stage.key}
@@ -1990,13 +2219,13 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
 
         <Card>
           <CardContent className="p-4 space-y-4">
-            <div className="flex items-center gap-2 flex-wrap">
-              <div className="relative flex-1 min-w-[220px] max-w-md">
+            <div className="grid gap-2 sm:flex sm:flex-wrap sm:items-center">
+              <div className="relative w-full sm:min-w-[220px] sm:max-w-md sm:flex-1">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input className="pl-9" placeholder="Search name, phone, email, address, service..." value={search} onChange={(e) => setSearch(e.target.value)} data-testid="input-search-leads" />
               </div>
               <Select value={statusFilter} onValueChange={setStatusFilter}>
-                <SelectTrigger className="w-[150px]"><SelectValue /></SelectTrigger>
+                <SelectTrigger className="w-full sm:w-[150px]"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Statuses</SelectItem>
                   {pipelineStages.map((s) => <SelectItem key={s.key} value={s.key}>{s.label}</SelectItem>)}
@@ -2004,32 +2233,32 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
                 </SelectContent>
               </Select>
               <Select value={sourceFilter} onValueChange={setSourceFilter}>
-                <SelectTrigger className="w-[150px]"><SelectValue /></SelectTrigger>
+                <SelectTrigger className="w-full sm:w-[150px]"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Sources</SelectItem>
                   {sourceOptions.map((s) => <SelectItem key={s} value={s}>{labelize(s)}</SelectItem>)}
                 </SelectContent>
               </Select>
               <Select value={urgencyFilter} onValueChange={setUrgencyFilter}>
-                <SelectTrigger className="w-[150px]"><SelectValue /></SelectTrigger>
+                <SelectTrigger className="w-full sm:w-[150px]"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Urgency</SelectItem>
                   {urgencyOptions.map((s) => <SelectItem key={s} value={s}>{labelize(s)}</SelectItem>)}
                 </SelectContent>
               </Select>
-              <Button variant={hotOnly ? "default" : "outline"} size="sm" onClick={() => setHotOnly(!hotOnly)}>
+              <Button className="w-full sm:w-auto" variant={hotOnly ? "default" : "outline"} size="sm" onClick={() => setHotOnly(!hotOnly)}>
                 <Flame className="h-4 w-4 mr-1" />
                 Hot
               </Button>
-              <Button variant={dueOnly ? "default" : "outline"} size="sm" onClick={() => setDueOnly(!dueOnly)}>
+              <Button className="w-full sm:w-auto" variant={dueOnly ? "default" : "outline"} size="sm" onClick={() => setDueOnly(!dueOnly)}>
                 <Activity className="h-4 w-4 mr-1" />
                 Needs follow-up
               </Button>
-              <Button variant={overdueOnly ? "default" : "outline"} size="sm" onClick={() => setOverdueOnly(!overdueOnly)}>
+              <Button className="w-full sm:w-auto" variant={overdueOnly ? "default" : "outline"} size="sm" onClick={() => setOverdueOnly(!overdueOnly)}>
                 <AlertTriangle className="h-4 w-4 mr-1" />
                 Overdue
               </Button>
-              <span className="text-sm text-muted-foreground">{leads.length} lead{leads.length !== 1 ? "s" : ""}</span>
+              <span className="text-center text-sm text-muted-foreground sm:text-left">{leads.length} lead{leads.length !== 1 ? "s" : ""}</span>
             </div>
 
             <Tabs defaultValue="table">
@@ -2126,7 +2355,7 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
                 </div>
               </TabsContent>
               <TabsContent value="pipeline" className="mt-3">
-                <div className="grid md:grid-cols-2 xl:grid-cols-7 gap-3">
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-7">
                   {pipelineStages.map((stage) => {
                     const stageLeads = leads.filter((lead) => pipelineStageForLead(lead) === stage.key);
                     return (
@@ -2149,15 +2378,20 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
             </Tabs>
           </CardContent>
         </Card>
+          </>
+        )}
       </div>
 
       <Dialog open={showCreate} onOpenChange={setShowCreate}>
-        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-auto">
-          <DialogHeader><DialogTitle>New Lead</DialogTitle></DialogHeader>
+        <DialogContent className="max-h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] overflow-auto p-4 sm:max-w-2xl sm:p-6">
+          <DialogHeader>
+            <DialogTitle>New Lead</DialogTitle>
+            <DialogDescription>Add the contact and service request now. You can score, follow up, and convert it after saving.</DialogDescription>
+          </DialogHeader>
           <LeadFields form={createForm} setForm={setCreateForm} template={activeTemplate} />
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setShowCreate(false)}>Cancel</Button>
-            <Button onClick={() => createMutation.mutate()} disabled={createMutation.isPending || !createForm.name.trim()} data-testid="button-save-lead">
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <Button className="w-full sm:w-auto" variant="outline" onClick={() => setShowCreate(false)}>Cancel</Button>
+            <Button className="w-full sm:w-auto" onClick={() => createMutation.mutate()} disabled={createMutation.isPending || !createForm.name.trim()} data-testid="button-save-lead">
               {createMutation.isPending ? "Creating..." : "Create Lead"}
             </Button>
           </div>
@@ -2165,8 +2399,11 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
       </Dialog>
 
       <Dialog open={showSetup} onOpenChange={setShowSetup}>
-        <DialogContent className="sm:max-w-5xl max-h-[92vh] overflow-auto">
-          <DialogHeader><DialogTitle>Lead Conversion Setup</DialogTitle></DialogHeader>
+        <DialogContent className="max-h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] overflow-auto p-4 sm:max-w-5xl sm:p-6">
+          <DialogHeader>
+            <DialogTitle>Lead Conversion Setup</DialogTitle>
+            <DialogDescription>Configure how leads are captured, prioritized, followed up, and prepared for launch.</DialogDescription>
+          </DialogHeader>
           <div className="grid gap-5 lg:grid-cols-[240px_1fr]">
             <div className="space-y-2">
               {setupSteps.map((step, index) => (
@@ -2338,7 +2575,7 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
       </Dialog>
 
       <Dialog open={showCapture} onOpenChange={setShowCapture}>
-        <DialogContent className="sm:max-w-4xl max-h-[92vh] overflow-auto">
+        <DialogContent className="max-h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] overflow-auto p-4 sm:max-w-4xl sm:p-6">
           <DialogHeader><DialogTitle>Lead Capture Form</DialogTitle></DialogHeader>
           <div className="grid lg:grid-cols-[1fr_0.9fr] gap-4">
             <div className="space-y-3">
@@ -2378,7 +2615,7 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
                 <Label>Public Form URL</Label>
                 <div className="flex gap-2">
                   <Input readOnly value={captureEndpoint} />
-                  <Button variant="outline" onClick={() => copyText(captureEndpoint, "Public form link copied")} disabled={!captureEndpoint}><Copy className="h-4 w-4" /></Button>
+                  <Button aria-label="Copy public form link" title="Copy public form link" variant="outline" onClick={() => copyText(captureEndpoint, "Public form link copied")} disabled={!captureEndpoint}><Copy className="h-4 w-4" /></Button>
                 </div>
               </div>
               <div className="space-y-1.5">
@@ -2429,8 +2666,11 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
       </Dialog>
 
       <Dialog open={showSettings} onOpenChange={setShowSettings}>
-        <DialogContent className="sm:max-w-3xl max-h-[92vh] overflow-auto">
-          <DialogHeader><DialogTitle>Lead Settings</DialogTitle></DialogHeader>
+        <DialogContent className="max-h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] overflow-auto p-4 sm:max-w-3xl sm:p-6">
+          <DialogHeader>
+            <DialogTitle>Lead Settings and Readiness</DialogTitle>
+            <DialogDescription>Review lead sources, message safety, templates, follow-ups, and the go-live checklist.</DialogDescription>
+          </DialogHeader>
           <div className="space-y-4">
             <Card>
               <CardHeader className="pb-2">
@@ -2488,7 +2728,7 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
               <CardContent className="space-y-3">
                 <div className="grid gap-3 sm:grid-cols-[220px_1fr]">
                   <div className="space-y-1.5">
-                    <Label>Source adapter</Label>
+                    <Label>Connection type</Label>
                     <Select value={selectedAdapterKey} onValueChange={setSelectedAdapterKey}>
                       <SelectTrigger><SelectValue placeholder="Choose adapter" /></SelectTrigger>
                       <SelectContent>
@@ -2499,10 +2739,10 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
                     </Select>
                   </div>
                   <div className="space-y-1.5">
-                    <Label>Public adapter endpoint</Label>
+                    <Label>Lead source URL</Label>
                     <div className="flex gap-2">
                       <Input readOnly value={adapterEndpoint} />
-                      <Button variant="outline" onClick={() => copyText(adapterEndpoint, "Lead source endpoint copied")} disabled={!adapterEndpoint}>
+                      <Button aria-label="Copy lead source URL" title="Copy lead source URL" variant="outline" onClick={() => copyText(adapterEndpoint, "Lead source URL copied")} disabled={!adapterEndpoint}>
                         <Copy className="h-4 w-4" />
                       </Button>
                     </div>
@@ -2510,13 +2750,14 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge variant={captureForm.isEnabled ? "default" : "outline"}>{captureForm.isEnabled ? "Enabled" : "Disabled"}</Badge>
-                  <Badge variant="secondary">{selectedAdapter?.label || "Adapter"}</Badge>
-                  <span className="text-xs text-muted-foreground">{selectedAdapter?.description || "External payloads normalize into internal leads."}</span>
+                  <Badge variant="secondary">{selectedAdapter?.label || "Lead source"}</Badge>
+                  <Badge variant="outline">{operatingMode.label}</Badge>
+                  <span className="text-xs text-muted-foreground">Submissions received through this URL become leads in this org.</span>
                 </div>
                 <div className="grid gap-3 lg:grid-cols-2">
                   <div className="space-y-1.5">
                     <div className="flex items-center justify-between gap-2">
-                      <Label>Example JSON payload</Label>
+                      <Label>Example submission</Label>
                       <Button size="sm" variant="outline" onClick={() => copyText(adapterExampleJson, "Example payload copied")} disabled={!adapterExampleJson}>
                         <Copy className="mr-1 h-3 w-3" />
                         Copy JSON
@@ -2525,10 +2766,10 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
                     <Textarea readOnly rows={10} value={adapterExampleJson} className="font-mono text-xs" />
                   </div>
                   <div className="space-y-1.5">
-                    <Label>Recent adapter events</Label>
+                    <Label>Recent lead source activity</Label>
                     <div className="space-y-2 rounded-lg border p-2">
                       {sourceEvents.length === 0 ? (
-                        <p className="p-3 text-sm text-muted-foreground">No external source events yet. Successful and blocked adapter submissions will appear here.</p>
+                        <p className="p-3 text-sm text-muted-foreground">No lead source activity yet. New submissions and blocked requests will appear here.</p>
                       ) : sourceEvents.slice(0, 5).map((event) => (
                         <div key={event.id} className="rounded-md border p-2">
                           <div className="flex items-center justify-between gap-2">
@@ -2726,7 +2967,7 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
         setShowLiveConfirm(open);
         if (!open) setLiveConfirmText("");
       }}>
-        <DialogContent>
+        <DialogContent className="w-[calc(100vw-1rem)] p-4 sm:max-w-lg sm:p-6">
           <DialogHeader>
             <DialogTitle>Enable live lead messaging?</DialogTitle>
             <DialogDescription>
@@ -2781,17 +3022,35 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
       </Dialog>
 
       <Dialog open={!!selectedLeadId} onOpenChange={(open) => !open && setSelectedLeadId(null)}>
-        <DialogContent className="sm:max-w-5xl max-h-[92vh] overflow-auto">
+        <DialogContent className="max-h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] overflow-auto p-4 sm:max-w-5xl sm:p-6">
           <DialogHeader>
             <DialogTitle className="flex flex-wrap items-center justify-between gap-3">
               <span>{selectedLead?.name || "Lead Detail"}</span>
               {selectedLead && <LeadScoreBadge lead={selectedLead} breakdown={breakdown} />}
             </DialogTitle>
+            <DialogDescription>Review the service request, contact the lead, prepare follow-up, or convert qualified work into a job.</DialogDescription>
           </DialogHeader>
           {selectedLead && (
             <div className="space-y-5">
               <Card>
                 <CardContent className="p-4 space-y-3">
+                  <div className="flex flex-col gap-3 rounded-md bg-muted/50 p-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-xs text-muted-foreground">Next best action</p>
+                      <p className="mt-1 font-semibold">
+                        {needsContact(selectedLead)
+                          ? "Call this lead now"
+                          : isOverdue(selectedLead)
+                            ? "Complete the overdue follow-up"
+                            : selectedLead.status === "qualified" || selectedLead.status === "follow_up"
+                              ? "Convert qualified work into a job"
+                              : selectedLead.status === "converted"
+                                ? "Open the linked customer or job"
+                                : "Review the request and move the lead forward"}
+                      </p>
+                    </div>
+                    <Badge variant={settingsForm.dryRun ? "outline" : "default"}>{operatingMode.label}</Badge>
+                  </div>
                   <div className="grid sm:grid-cols-3 gap-3">
                     <div className="rounded-lg border p-3">
                       <p className="text-xs text-muted-foreground">Current status</p>
@@ -2800,7 +3059,7 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
                     <div className="rounded-lg border p-3">
                       <p className="text-xs text-muted-foreground">Next follow-up</p>
                       <p className="mt-1 text-sm font-medium">
-                        {selectedLead.nextFollowUpAt ? format(new Date(selectedLead.nextFollowUpAt), "MMM d, h:mm a") : "No follow-up scheduled"}
+                        {formatLeadDate(selectedLead.nextFollowUpAt, "MMM d, h:mm a", "No follow-up scheduled")}
                       </p>
                     </div>
                     <div className="rounded-lg border p-3">
@@ -2809,15 +3068,26 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
                     </div>
                   </div>
                   <LeadFlow status={selectedLead.status} />
-                  <div className="flex flex-wrap gap-2">
-                    <Button size="sm" variant="outline" onClick={() => actionMutation.mutate({ action: "score" })}><RefreshCw className="h-4 w-4 mr-1" />Re-score</Button>
-                    <Button size="sm" variant="outline" onClick={() => updateMutation.mutate({ status: "contacted" })}>Mark Contacted</Button>
+                  <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+                    {selectedLead.phone && (
+                      <Button asChild size="sm">
+                        <a href={`tel:${selectedLead.phone}`}><Phone className="mr-1 h-4 w-4" />Call Now</a>
+                      </Button>
+                    )}
+                    <Button size="sm" variant={selectedLead.phone ? "outline" : "default"} onClick={() => updateMutation.mutate({ status: "contacted" })}>Mark Contacted</Button>
                     <Button size="sm" variant="outline" onClick={() => updateMutation.mutate({ status: "qualified" })}>Mark Qualified</Button>
-                    <Button size="sm" variant="outline" onClick={() => actionMutation.mutate({ action: "send-sms" })}><MessageSquare className="h-4 w-4 mr-1" />{settingsForm.dryRun ? "Dry-run SMS" : "Send SMS"}</Button>
-                    <Button size="sm" variant="outline" onClick={() => actionMutation.mutate({ action: "send-email" })}><Mail className="h-4 w-4 mr-1" />{settingsForm.dryRun ? "Dry-run Email" : "Send Email"}</Button>
-                    <Button size="sm" onClick={() => actionMutation.mutate({ action: "convert" })} disabled={selectedLead.status === "converted"}><Target className="h-4 w-4 mr-1" />Convert</Button>
+                    <Button size="sm" variant="outline" onClick={() => actionMutation.mutate({ action: "score" })}><RefreshCw className="h-4 w-4 mr-1" />Re-score</Button>
+                    <Button size="sm" variant="outline" onClick={() => actionMutation.mutate({ action: "send-sms" })} disabled={!selectedLead.phone}><MessageSquare className="h-4 w-4 mr-1" />{settingsForm.dryRun ? "Prepare SMS" : "Send SMS"}</Button>
+                    <Button size="sm" variant="outline" onClick={() => actionMutation.mutate({ action: "send-email" })} disabled={!selectedLead.email}><Mail className="h-4 w-4 mr-1" />{settingsForm.dryRun ? "Prepare Email" : "Send Email"}</Button>
+                    <Button size="sm" onClick={() => actionMutation.mutate({ action: "convert" })} disabled={selectedLead.status === "converted"}><Target className="h-4 w-4 mr-1" />Convert to Job</Button>
                     <Button size="sm" variant="destructive" onClick={() => updateMutation.mutate({ status: "lost", lostReason: editForm.lostReason || "Marked lost by user" })} disabled={selectedLead.status === "converted"}>Mark Lost</Button>
+                    <Button size="sm" variant="ghost" onClick={() => updateMutation.mutate({ status: "spam", lostReason: editForm.lostReason || "Marked as spam by user" })} disabled={selectedLead.status === "converted"}>Mark Spam</Button>
                   </div>
+                  <p className="text-xs text-muted-foreground">
+                    {settingsForm.dryRun
+                      ? "Prepared messages are added to the timeline and are not sent."
+                      : "Live messages may be sent only when the channel, provider, recipient, and consent checks pass."}
+                  </p>
                 </CardContent>
               </Card>
 
@@ -2985,7 +3255,7 @@ document.getElementById("tradeflow-lead-form").addEventListener("submit", async 
                                   {activity.status && <Badge variant={activity.error ? "destructive" : "outline"} className="mt-1">{activity.status === "dry_run" ? "Prepared only" : labelize(activity.status)}</Badge>}
                                   {activity.metadata != null && (
                                     <details className="mt-2">
-                                      <summary className="cursor-pointer text-xs text-muted-foreground">Technical details</summary>
+                                      <summary className="cursor-pointer text-xs text-muted-foreground">Message details</summary>
                                       <pre className="mt-1 max-h-32 overflow-auto rounded bg-muted p-2 text-[11px] text-muted-foreground">
                                         {JSON.stringify(activity.metadata, null, 2)}
                                       </pre>

@@ -27,6 +27,7 @@ describeWithDb("Lead routes", () => {
   let trackUser: (id: string) => void;
   let appA: ReturnType<typeof buildApp>;
   let appB: ReturnType<typeof buildApp>;
+  let appTech: ReturnType<typeof buildApp>;
   let orgA: any;
   let orgB: any;
   let userA: any;
@@ -56,6 +57,10 @@ describeWithDb("Lead routes", () => {
     trackUser(userB.id);
     appA = buildApp(leadsRouter, orgA.id, userA.id);
     appB = buildApp(leadsRouter, orgB.id, userB.id);
+    const techUser = await helperModule.createTestUser("_lead_tech");
+    await storage.createMembership(orgA.id, techUser.id, "tech");
+    trackUser(techUser.id);
+    appTech = buildApp(leadsRouter, orgA.id, techUser.id);
   });
 
   afterAll(async () => {
@@ -300,6 +305,88 @@ describeWithDb("Lead routes", () => {
     }
   });
 
+  it("returns secret-free org-scoped operational health", async () => {
+    const beforeA = await request(appA).get("/api/leads/health");
+    const beforeB = await request(appB).get("/api/leads/health");
+    expect(beforeA.status).toBe(200);
+    expect(beforeB.status).toBe(200);
+
+    const lead = await storage.createLead(orgA.id, {
+      name: "Health Check Lead",
+      source: "manual",
+      status: "new",
+      urgency: "normal",
+    }, userA.id);
+    await storage.createLeadActivity(orgA.id, lead.id, {
+      type: "message",
+      channel: "email",
+      direction: "outbound",
+      subject: "Provider error",
+      body: "Safe body",
+      status: "error",
+      error: "Safe provider failure",
+      metadata: { mode: "error", provider: "sendgrid" },
+      createdBy: userA.id,
+    });
+
+    const healthA = await request(appA).get("/api/leads/health");
+    const healthB = await request(appB).get("/api/leads/health");
+    expect(healthA.status).toBe(200);
+    expect(healthA.body.tablesReachable).toEqual({
+      leads: true,
+      settings: true,
+      followups: true,
+      leadSources: true,
+    });
+    expect(healthA.body.failedMessageCount).toBe(beforeA.body.failedMessageCount + 1);
+    expect(healthB.body.failedMessageCount).toBe(beforeB.body.failedMessageCount);
+    expect(healthA.body.followUpWorker).toEqual(expect.objectContaining({
+      started: expect.any(Boolean),
+      running: expect.any(Boolean),
+    }));
+    expect(JSON.stringify(healthA.body)).not.toMatch(/api[_-]?key|auth[_-]?token|password|secret/i);
+  });
+
+  it("requires owner or admin role for org-wide lead configuration", async () => {
+    const captureForm = await storage.createLeadCaptureForm(orgA.id, {
+      name: "Permission Test Form",
+      sourceLabel: "Permission Test",
+      isEnabled: true,
+    });
+    const settings = await request(appTech)
+      .patch("/api/leads/settings")
+      .send({ autoRespond: false });
+    const template = await request(appTech)
+      .post("/api/leads/settings/apply-template")
+      .send({ tradeTemplateKey: "hvac" });
+    const testMessage = await request(appTech)
+      .post("/api/leads/test-message")
+      .send({
+        channel: "email",
+        to: "staff@example.com",
+        template: "Test",
+        confirm: true,
+      });
+    const formUpdate = await request(appTech)
+      .patch(`/api/leads/capture-form/${captureForm.id}`)
+      .send({ isEnabled: false });
+
+    expect(settings.status).toBe(403);
+    expect(settings.body.error).toBe("insufficient_permissions");
+    expect(template.status).toBe(403);
+    expect(testMessage.status).toBe(403);
+    expect(formUpdate.status).toBe(403);
+
+    const ordinaryLead = await request(appTech).post("/api/leads").send({
+      name: "Technician Created Lead",
+      phone: "555-0199",
+      source: "manual",
+      status: "new",
+      urgency: "normal",
+    });
+    expect(ordinaryLead.status).toBe(200);
+  });
+
   it("stamps lastContactedAt when status moves into contacted pipeline stages", async () => {
     const created = await request(appA).post("/api/leads").send({
       name: "Contact Stamp",
@@ -425,6 +512,72 @@ describeWithDb("Lead routes", () => {
     const events = await request(appA).get("/api/leads/source-events");
     expect(events.status).toBe(200);
     expect(events.body.some((event: any) => event.adapterKey === "genericJson" && event.status === "success" && event.leadId === created.id)).toBe(true);
+  });
+
+  it("deduplicates adapter replays that include a stable external id", async () => {
+    const form = await storage.createLeadCaptureForm(orgA.id, {
+      name: "Replay Intake",
+      sourceLabel: "Replay Intake",
+      isEnabled: true,
+      successMessage: "Received.",
+    });
+    const payload = {
+      sourceId: "external-lead-123",
+      name: "Replay Protected Lead",
+      email: "replay-protected@example.com",
+      serviceType: "HVAC repair",
+    };
+
+    const first = await request(appA)
+      .post(`/api/public/lead-source/${form.publicToken}/genericJson`)
+      .send(payload);
+    const second = await request(appA)
+      .post(`/api/public/lead-source/${form.publicToken}/genericJson`)
+      .send(payload);
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    const leads = await request(appA).get("/api/leads");
+    expect(leads.body.filter((lead: any) => lead.email === payload.email)).toHaveLength(1);
+  });
+
+  it("rejects oversized public lead payloads", async () => {
+    const form = await storage.createLeadCaptureForm(orgA.id, {
+      name: "Payload Limit Intake",
+      sourceLabel: "Payload Limit",
+      isEnabled: true,
+    });
+
+    const response = await request(appA)
+      .post(`/api/public/lead-source/${form.publicToken}/genericJson`)
+      .send({
+        name: "Oversized Lead",
+        email: "oversized@example.com",
+        description: "x".repeat(70 * 1024),
+      });
+
+    expect(response.status).toBe(413);
+    expect(response.body.error).toBe("payload_too_large");
+  });
+
+  it("rejects public intake when the tenant lacks the lead module entitlement", async () => {
+    const disabledOrg = await storage.createOrg({
+      name: "Lead Module Disabled",
+      slug: `lead-disabled-${Date.now()}`,
+      plan: "free",
+    });
+    trackOrg(disabledOrg.id);
+    const form = await storage.createLeadCaptureForm(disabledOrg.id, {
+      name: "Disabled Module Intake",
+      sourceLabel: "Disabled",
+      isEnabled: true,
+    });
+
+    const response = await request(appA)
+      .post(`/api/public/lead-source/${form.publicToken}/genericJson`)
+      .send({ name: "Blocked Lead", email: "blocked@example.com" });
+
+    expect(response.status).toBe(404);
   });
 
   it("rejects invalid tokens, disabled sources, and malformed adapter payloads", async () => {

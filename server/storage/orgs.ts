@@ -24,6 +24,7 @@ import {
   leadActivities,
   leadCaptureForms,
   leadFollowupTasks,
+  leadSourceEvents,
   leadSettings,
   type Org,
   type InsertOrg,
@@ -64,6 +65,7 @@ export const orgsStorage = {
     await db.delete(callRecoverySubscriptions).where(eq(callRecoverySubscriptions.orgId, id));
     await db.delete(leadFollowupTasks).where(eq(leadFollowupTasks.orgId, id));
     await db.delete(leadActivities).where(eq(leadActivities.orgId, id));
+    await db.delete(leadSourceEvents).where(eq(leadSourceEvents.orgId, id));
     await db.delete(leads).where(eq(leads.orgId, id));
     await db.delete(leadCaptureForms).where(eq(leadCaptureForms.orgId, id));
     await db.delete(leadSettings).where(eq(leadSettings.orgId, id));

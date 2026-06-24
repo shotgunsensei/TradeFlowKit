@@ -35,6 +35,26 @@ const log = rootLogger.child({ component: "reminder-worker" });
 const WORKER_INTERVAL_MS = 30 * 60 * 1000;
 const DEDUPE_WINDOW_MS = 60 * 60 * 1000; // 1 hour
 
+type ReminderWorkerStatus = {
+  started: boolean;
+  running: boolean;
+  startedAt: Date | null;
+  lastRunStartedAt: Date | null;
+  lastRunCompletedAt: Date | null;
+};
+
+const workerStatus: ReminderWorkerStatus = {
+  started: false,
+  running: false,
+  startedAt: null,
+  lastRunStartedAt: null,
+  lastRunCompletedAt: null,
+};
+
+export function getReminderWorkerStatus(): ReminderWorkerStatus {
+  return { ...workerStatus };
+}
+
 async function sendReminderSafely(opts: {
   orgId: string;
   targetType: "invoice" | "quote";
@@ -289,15 +309,24 @@ async function processLeadFollowups() {
 }
 
 async function runReminderWorker() {
-  log.info("Running reminder checks...");
-  await processInvoiceReminders();
-  await processQuoteFollowUps();
-  await processRecurringInvoices();
-  await processLeadFollowups();
-  log.info("Reminder checks complete");
+  workerStatus.running = true;
+  workerStatus.lastRunStartedAt = new Date();
+  try {
+    log.info("Running reminder checks...");
+    await processInvoiceReminders();
+    await processQuoteFollowUps();
+    await processRecurringInvoices();
+    await processLeadFollowups();
+    log.info("Reminder checks complete");
+  } finally {
+    workerStatus.running = false;
+    workerStatus.lastRunCompletedAt = new Date();
+  }
 }
 
 export function startReminderWorker() {
+  workerStatus.started = true;
+  workerStatus.startedAt = new Date();
   runReminderWorker().catch(err => log.error({ err, msg: errMsg(err) }, "Initial run error"));
   const interval = setInterval(() => {
     runReminderWorker().catch(err => log.error({ err, msg: errMsg(err) }, "Run error"));

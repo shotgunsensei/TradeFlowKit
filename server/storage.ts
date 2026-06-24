@@ -50,10 +50,10 @@ import { automationsStorage } from "./storage/automations";
 import { billingStorage } from "./storage/billing";
 import { auditStorage } from "./storage/audit";
 import { dashboardStorage } from "./storage/dashboard";
-import { leadsStorage, type LeadFilters, type LeadStats } from "./storage/leads";
+import { leadsStorage, type LeadFilters, type LeadOperationalMetrics, type LeadStats } from "./storage/leads";
 
 export type { QuoteInput, QuoteItemInput, InvoiceInput };
-export type { LeadFilters, LeadStats };
+export type { LeadFilters, LeadOperationalMetrics, LeadStats };
 
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
@@ -157,6 +157,7 @@ export interface IStorage {
   getLeadActivities(orgId: string, leadId: string): Promise<LeadActivity[]>;
   createLeadActivity(orgId: string, leadId: string, data: InsertLeadActivity): Promise<LeadActivity>;
   getLeadStats(orgId: string): Promise<LeadStats>;
+  getLeadOperationalMetrics(orgId: string): Promise<LeadOperationalMetrics>;
   convertLeadToCustomerAndJob(orgId: string, leadId: string, options?: { createdBy?: string | null }): Promise<{ lead: Lead; customer: Customer; job: Job }>;
   getLeadCaptureForms(orgId: string): Promise<LeadCaptureForm[]>;
   getLeadCaptureFormByToken(publicToken: string): Promise<LeadCaptureForm | undefined>;

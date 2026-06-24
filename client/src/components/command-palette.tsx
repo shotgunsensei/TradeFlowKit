@@ -22,6 +22,8 @@ import {
   User,
   UserPlus,
   Briefcase,
+  DollarSign,
+  ListChecks,
 } from "lucide-react";
 import { useHotkey } from "@/hooks/use-hotkey";
 
@@ -35,6 +37,9 @@ type SearchResults = {
 const NAV_ITEMS = [
   { label: "Dashboard", path: "/dashboard", icon: LayoutDashboard },
   { label: "Leads", path: "/leads", icon: UserPlus, description: "Lead Conversion Center" },
+  { label: "Lead ROI Report", path: "/leads?view=performance", icon: DollarSign, description: "Lead performance and estimated value" },
+  { label: "Lead Settings", path: "/leads?settings=1", icon: Settings, description: "Messaging, forms, and lead sources" },
+  { label: "Lead Go-Live Checklist", path: "/leads?settings=1&readiness=1", icon: ListChecks, description: "Production readiness and messaging mode" },
   { label: "Customers", path: "/customers", icon: Users },
   { label: "Jobs", path: "/jobs", icon: Wrench },
   { label: "Quotes", path: "/quotes", icon: FileText },

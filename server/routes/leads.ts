@@ -2,9 +2,12 @@ import { errMsg } from "../errors";
 import { Router, type Request, type Response } from "express";
 import rateLimit from "express-rate-limit";
 import { z } from "zod";
-import { requireAuth, requireOrg, checkPlanLimit, resolveRequestAccess } from "../middleware";
+import { requireAuth, requireFeature, requireOrg, requireOrgRole, checkPlanLimit, resolveRequestAccess } from "../middleware";
 import { storage } from "../storage";
 import { scoreLead } from "../leadScoring";
+import { getReminderWorkerStatus } from "../reminderWorker";
+import { logger as rootLogger } from "../logger";
+import { tenantHasFeature } from "@shared/entitlements";
 import { LEAD_CONVERSION_CENTER_MODULE } from "@shared/modules";
 import {
   LIVE_LEADS_CONFIRMATION_PHRASE,
@@ -25,6 +28,7 @@ import {
 } from "../leadMessaging";
 
 const router = Router();
+const requireLeadAdmin = requireOrgRole("owner", "admin");
 
 const publicLeadCaptureLimiter = rateLimit({
   windowMs: 10 * 60 * 1000,
@@ -34,9 +38,25 @@ const publicLeadCaptureLimiter = rateLimit({
   message: { error: "Too many lead submissions. Please try again later." },
 });
 
+function rejectOversizedPublicLeadPayload(req: Request, res: Response, next: () => void) {
+  const contentLength = Number(req.get("content-length") || 0);
+  const bodyBytes = Buffer.byteLength(JSON.stringify(req.body || {}), "utf8");
+  if (contentLength > 64 * 1024 || bodyBytes > 64 * 1024) {
+    return res.status(413).json({
+      error: "payload_too_large",
+      message: "Lead submissions must be 64 KB or smaller.",
+    });
+  }
+  next();
+}
+
 const DEFAULT_SMS_TEMPLATE = "Hi {name}, this is {business}. We received your request about {service}. What is the best time to follow up?";
 const DEFAULT_EMAIL_SUBJECT = "Thanks for contacting {business}";
 const DEFAULT_EMAIL_TEMPLATE = "Hi {name}, thanks for reaching out about {service}. We received your request and will follow up shortly.";
+const validOptionalDateString = z.string().refine(
+  (value) => !Number.isNaN(new Date(value).getTime()),
+  "Invalid follow-up date",
+);
 
 const leadBodySchema = z.object({
   source: z.string().trim().default("manual"),
@@ -56,7 +76,7 @@ const leadBodySchema = z.object({
   consentSource: z.string().trim().optional().nullable(),
   assignedUserId: z.string().trim().optional().nullable(),
   aiSummary: z.string().trim().optional().nullable(),
-  nextFollowUpAt: z.string().optional().nullable(),
+  nextFollowUpAt: validOptionalDateString.optional().nullable(),
   lostReason: z.string().trim().optional().nullable(),
   metadata: z.record(z.unknown()).optional().nullable(),
 });
@@ -127,17 +147,26 @@ const publicBooleanSchema = z.preprocess((value) => {
 }, z.boolean());
 
 const publicLeadCaptureSchema = z.object({
-  name: z.string().trim().min(1, "Name is required"),
-  phone: z.string().trim().optional().default(""),
-  email: z.string().trim().email("Invalid email").optional().or(z.literal("")).default(""),
-  address: z.string().trim().optional().default(""),
-  serviceType: z.string().trim().optional().default(""),
-  description: z.string().trim().optional().default(""),
-  urgency: z.string().trim().optional().default("normal"),
-  preferredContact: z.string().trim().optional().default(""),
-  preferredTime: z.string().trim().optional().default(""),
+  name: z.string().trim().min(1, "Name is required").max(200),
+  phone: z.string().trim().max(50).optional().default(""),
+  email: z.string().trim().email("Invalid email").max(320).optional().or(z.literal("")).default(""),
+  address: z.string().trim().max(500).optional().default(""),
+  serviceType: z.string().trim().max(200).optional().default(""),
+  description: z.string().trim().max(5000).optional().default(""),
+  urgency: z.enum(["low", "normal", "urgent", "emergency"]).optional().default("normal"),
+  preferredContact: z.string().trim().max(50).optional().default(""),
+  preferredTime: z.string().trim().max(200).optional().default(""),
   consentToSms: publicBooleanSchema.optional().default(false),
 });
+
+function handleLeadRouteError(req: Request, res: Response, err: unknown) {
+  const log = req.log || rootLogger;
+  log.error({ err: errMsg(err) }, "Lead Conversion Center request failed");
+  return res.status(500).json({
+    error: "lead_operation_failed",
+    message: "TradeFlowKit could not complete that lead operation. Please try again.",
+  });
+}
 
 function normalizePhone(phone: string | null | undefined): string {
   return (phone || "").replace(/\D/g, "").slice(-10);
@@ -299,6 +328,22 @@ async function createLeadFromAdapterPayload(orgId: string, payload: NormalizedLe
   await scheduleDefaultFollowups(orgId, lead);
 
   return lead;
+}
+
+async function publicLeadIntakeEnabled(orgId: string) {
+  const org = await storage.getOrg(orgId);
+  return tenantHasFeature(org, "lead_conversion_center");
+}
+
+function adapterReplayKey(payload: NormalizedLeadSourcePayload): string | null {
+  for (const key of ["id", "leadId", "sourceId"]) {
+    const value = payload.metadata[key];
+    if (typeof value === "string" || typeof value === "number") {
+      const normalized = String(value).trim();
+      if (normalized) return `${payload.metadata.adapterKey || "adapter"}:${normalized}`;
+    }
+  }
+  return null;
 }
 
 function monthStart(date = new Date()) {
@@ -547,14 +592,16 @@ router.get("/api/leads/module-status", requireAuth, requireOrg, async (req: Requ
       },
     });
   } catch (err) {
-    res.status(500).send(errMsg(err));
+    return handleLeadRouteError(req, res, err);
   }
 });
 
-router.post("/api/public/lead-capture/:publicToken", publicLeadCaptureLimiter, async (req: Request, res: Response) => {
+router.use("/api/leads", requireAuth, requireOrg, requireFeature("lead_conversion_center"));
+
+router.post("/api/public/lead-capture/:publicToken", publicLeadCaptureLimiter, rejectOversizedPublicLeadPayload, async (req: Request, res: Response) => {
   try {
     const form = await storage.getLeadCaptureFormByToken(req.params.publicToken as string);
-    if (!form || !form.isEnabled) {
+    if (!form || !form.isEnabled || !(await publicLeadIntakeEnabled(form.orgId))) {
       return res.status(404).json({ error: "Lead capture form not found" });
     }
 
@@ -623,7 +670,7 @@ router.get("/api/leads", requireAuth, requireOrg, async (req: Request, res: Resp
     const result = await storage.getLeads(req.session.orgId!, filters);
     res.json(result);
   } catch (err) {
-    res.status(500).send(errMsg(err));
+    return handleLeadRouteError(req, res, err);
   }
 });
 
@@ -631,7 +678,7 @@ router.get("/api/leads/stats", requireAuth, requireOrg, async (req: Request, res
   try {
     res.json(await storage.getLeadStats(req.session.orgId!));
   } catch (err) {
-    res.status(500).send(errMsg(err));
+    return handleLeadRouteError(req, res, err);
   }
 });
 
@@ -642,15 +689,15 @@ router.get("/api/leads/settings", requireAuth, requireOrg, async (req: Request, 
     const form = await storage.ensureDefaultLeadCaptureForm(orgId);
     res.json({ settings, captureForm: form, tradeTemplate: getLeadTradeTemplate(settings.tradeTemplateKey) || null });
   } catch (err) {
-    res.status(500).send(errMsg(err));
+    return handleLeadRouteError(req, res, err);
   }
 });
 
-router.post("/api/public/lead-source/:publicToken/:adapterKey", publicLeadCaptureLimiter, async (req: Request, res: Response) => {
+router.post("/api/public/lead-source/:publicToken/:adapterKey", publicLeadCaptureLimiter, rejectOversizedPublicLeadPayload, async (req: Request, res: Response) => {
   const adapterKey = String(req.params.adapterKey || "");
   try {
     const form = await storage.getLeadCaptureFormByToken(req.params.publicToken as string);
-    if (!form) {
+    if (!form || !(await publicLeadIntakeEnabled(form.orgId))) {
       return res.status(404).json({ error: "Lead source not found" });
     }
     if (!form.isEnabled) {
@@ -693,6 +740,23 @@ router.post("/api/public/lead-source/:publicToken/:adapterKey", publicLeadCaptur
       return res.status(400).json({ error: errMsg(err) });
     }
 
+    const replayKey = adapterReplayKey(normalized);
+    if (replayKey) {
+      const priorEvents = await storage.getLeadSourceEvents(form.orgId, 100);
+      const replay = priorEvents.find((event) => {
+        const metadata = event.metadata && typeof event.metadata === "object"
+          ? event.metadata as Record<string, unknown>
+          : {};
+        return event.captureFormId === form.id
+          && event.adapterKey === adapterKey
+          && event.status === "success"
+          && metadata.replayKey === replayKey;
+      });
+      if (replay) {
+        return res.json({ ok: true, message: form.successMessage });
+      }
+    }
+
     const lead = await createLeadFromAdapterPayload(form.orgId, {
       ...normalized,
       sourceDetail: normalized.sourceDetail || form.sourceLabel,
@@ -716,6 +780,7 @@ router.post("/api/public/lead-source/:publicToken/:adapterKey", publicLeadCaptur
         hasPhone: !!lead.phone,
         hasEmail: !!lead.email,
         serviceType: lead.serviceType || null,
+        replayKey,
       },
     });
 
@@ -734,7 +799,7 @@ router.get("/api/leads/source-adapters", requireAuth, requireOrg, async (_req: R
   res.json(getPublicLeadSourceAdapters());
 });
 
-router.get("/api/leads/provider-status", requireAuth, requireOrg, async (_req: Request, res: Response) => {
+router.get("/api/leads/provider-status", requireAuth, requireOrg, async (req: Request, res: Response) => {
   try {
     const status = await getLeadMessagingProviderStatus();
     res.json({
@@ -743,7 +808,7 @@ router.get("/api/leads/provider-status", requireAuth, requireOrg, async (_req: R
       openai: { configured: status.openaiConfigured, mode: status.openaiMode },
     });
   } catch (err) {
-    res.status(500).send(errMsg(err));
+    return handleLeadRouteError(req, res, err);
   }
 });
 
@@ -751,7 +816,57 @@ router.get("/api/leads/production-readiness", requireAuth, requireOrg, async (re
   try {
     res.json(await buildLeadProductionReadiness(req));
   } catch (err) {
-    res.status(500).send(errMsg(err));
+    return handleLeadRouteError(req, res, err);
+  }
+});
+
+router.get("/api/leads/health", requireAuth, requireOrg, async (req: Request, res: Response) => {
+  try {
+    const orgId = req.session.orgId!;
+    const [existingSettings, metrics, readiness] = await Promise.all([
+      storage.getLeadSettings(orgId),
+      storage.getLeadOperationalMetrics(orgId),
+      buildLeadProductionReadiness(req),
+    ]);
+    const configuredSources = Array.isArray(existingSettings?.leadSources)
+      ? existingSettings.leadSources.length
+      : 0;
+    const worker = getReminderWorkerStatus();
+    const warnings = [...readiness.warnings];
+    if (!existingSettings) warnings.push("Lead settings have not been initialized.");
+    if (!worker.started) warnings.push("The follow-up worker is not running in this process.");
+    if (metrics.failedMessageCount > 0) {
+      warnings.push(`${metrics.failedMessageCount} failed or blocked message attempt(s) need review.`);
+    }
+
+    res.json({
+      tablesReachable: {
+        leads: true,
+        settings: true,
+        followups: true,
+        leadSources: true,
+      },
+      settingsPresent: !!existingSettings,
+      providerStatus: readiness.providerStatus,
+      followUpWorker: {
+        started: worker.started,
+        running: worker.running,
+        startedAt: worker.startedAt,
+        lastRunStartedAt: worker.lastRunStartedAt,
+        lastRunCompletedAt: worker.lastRunCompletedAt,
+      },
+      lastLeadReceivedAt: metrics.lastLeadReceivedAt,
+      lastFollowUpProcessedAt: metrics.lastFollowupProcessedAt,
+      failedMessageCount: metrics.failedMessageCount,
+      pendingFollowUpCount: metrics.pendingFollowupCount,
+      activeLeadSourcesCount: metrics.activeLeadSourcesCount + configuredSources,
+      currentMode: readiness.currentMode,
+      blockers: readiness.blockers,
+      warnings: Array.from(new Set(warnings)),
+      checkedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    return handleLeadRouteError(req, res, err);
   }
 });
 
@@ -854,11 +969,11 @@ router.get("/api/leads/operator-dashboard", requireAuth, requireOrg, async (req:
       failedAttempts: failedAttempts.slice(0, 8),
     });
   } catch (err) {
-    res.status(500).send(errMsg(err));
+    return handleLeadRouteError(req, res, err);
   }
 });
 
-router.patch("/api/leads/settings", requireAuth, requireOrg, async (req: Request, res: Response) => {
+router.patch("/api/leads/settings", requireAuth, requireOrg, requireLeadAdmin, async (req: Request, res: Response) => {
   try {
     const body = req.body || {};
     const patchBody = leadSettingsPatchSchema.safeParse(body);
@@ -963,11 +1078,11 @@ router.patch("/api/leads/settings", requireAuth, requireOrg, async (req: Request
     }
     res.json(settings);
   } catch (err) {
-    res.status(500).send(errMsg(err));
+    return handleLeadRouteError(req, res, err);
   }
 });
 
-router.post("/api/leads/settings/apply-template", requireAuth, requireOrg, async (req: Request, res: Response) => {
+router.post("/api/leads/settings/apply-template", requireAuth, requireOrg, requireLeadAdmin, async (req: Request, res: Response) => {
   try {
     const parsed = z.object({
       tradeTemplateKey: z.string().trim().min(1),
@@ -992,11 +1107,11 @@ router.post("/api/leads/settings/apply-template", requireAuth, requireOrg, async
 
     res.json({ settings, tradeTemplate: template });
   } catch (err) {
-    res.status(500).send(errMsg(err));
+    return handleLeadRouteError(req, res, err);
   }
 });
 
-router.patch("/api/leads/capture-form/:id", requireAuth, requireOrg, async (req: Request, res: Response) => {
+router.patch("/api/leads/capture-form/:id", requireAuth, requireOrg, requireLeadAdmin, async (req: Request, res: Response) => {
   try {
     const parsed = captureFormSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -1009,7 +1124,7 @@ router.patch("/api/leads/capture-form/:id", requireAuth, requireOrg, async (req:
     if (!form) return res.status(404).send("Lead capture form not found");
     res.json(form);
   } catch (err) {
-    res.status(500).send(errMsg(err));
+    return handleLeadRouteError(req, res, err);
   }
 });
 
@@ -1018,7 +1133,7 @@ router.get("/api/leads/source-events", requireAuth, requireOrg, async (req: Requ
     const limit = typeof req.query.limit === "string" ? Math.min(100, Math.max(1, Number(req.query.limit) || 25)) : 25;
     res.json(await storage.getLeadSourceEvents(req.session.orgId!, limit));
   } catch (err) {
-    res.status(500).send(errMsg(err));
+    return handleLeadRouteError(req, res, err);
   }
 });
 
@@ -1028,7 +1143,7 @@ router.get("/api/leads/:id", requireAuth, requireOrg, async (req: Request, res: 
     if (!lead) return res.status(404).send("Lead not found");
     res.json(lead);
   } catch (err) {
-    res.status(500).send(errMsg(err));
+    return handleLeadRouteError(req, res, err);
   }
 });
 
@@ -1060,7 +1175,7 @@ router.post("/api/leads", requireAuth, requireOrg, async (req: Request, res: Res
     await storage.recordAudit({ orgId: req.session.orgId!, userId: req.session.userId, action: "create", entity: "lead", entityId: lead.id, after: lead });
     res.json(lead);
   } catch (err) {
-    res.status(500).send(errMsg(err));
+    return handleLeadRouteError(req, res, err);
   }
 });
 
@@ -1104,7 +1219,7 @@ router.patch("/api/leads/:id", requireAuth, requireOrg, async (req: Request, res
     await storage.recordAudit({ orgId, userId: req.session.userId, action: "update", entity: "lead", entityId: updated.id, before, after: updated });
     res.json(updated);
   } catch (err) {
-    res.status(500).send(errMsg(err));
+    return handleLeadRouteError(req, res, err);
   }
 });
 
@@ -1117,7 +1232,7 @@ router.delete("/api/leads/:id", requireAuth, requireOrg, async (req: Request, re
     await storage.recordAudit({ orgId, userId: req.session.userId, action: "delete", entity: "lead", entityId: before.id, before });
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).send(errMsg(err));
+    return handleLeadRouteError(req, res, err);
   }
 });
 
@@ -1128,7 +1243,7 @@ router.get("/api/leads/:id/activities", requireAuth, requireOrg, async (req: Req
     if (!lead) return res.status(404).send("Lead not found");
     res.json(await storage.getLeadActivities(orgId, lead.id));
   } catch (err) {
-    res.status(500).send(errMsg(err));
+    return handleLeadRouteError(req, res, err);
   }
 });
 
@@ -1139,7 +1254,7 @@ router.get("/api/leads/:id/followups", requireAuth, requireOrg, async (req: Requ
     if (!lead) return res.status(404).send("Lead not found");
     res.json(await storage.getLeadFollowupTasks(orgId, lead.id));
   } catch (err) {
-    res.status(500).send(errMsg(err));
+    return handleLeadRouteError(req, res, err);
   }
 });
 
@@ -1153,7 +1268,7 @@ router.post("/api/leads/:id/activities", requireAuth, requireOrg, async (req: Re
     const activity = await storage.createLeadActivity(orgId, lead.id, { ...parsed.data, createdBy: req.session.userId || null });
     res.json(activity);
   } catch (err) {
-    res.status(500).send(errMsg(err));
+    return handleLeadRouteError(req, res, err);
   }
 });
 
@@ -1179,7 +1294,7 @@ router.post("/api/leads/:id/score", requireAuth, requireOrg, async (req: Request
     });
     res.json({ lead: updated, score: scored });
   } catch (err) {
-    res.status(500).send(errMsg(err));
+    return handleLeadRouteError(req, res, err);
   }
 });
 
@@ -1196,7 +1311,7 @@ router.post("/api/leads/:id/send-sms", requireAuth, requireOrg, async (req: Requ
     const result = await sendLeadSms({ orgId, lead, org, template, createdBy: req.session.userId || null });
     res.json({ ...result, dryRun: result.mode === "dry-run" });
   } catch (err) {
-    res.status(500).send(errMsg(err));
+    return handleLeadRouteError(req, res, err);
   }
 });
 
@@ -1214,11 +1329,11 @@ router.post("/api/leads/:id/send-email", requireAuth, requireOrg, async (req: Re
     const result = await sendLeadEmail({ orgId, lead, org, subject, template, createdBy: req.session.userId || null });
     res.json({ ...result, dryRun: result.mode === "dry-run" });
   } catch (err) {
-    res.status(500).send(errMsg(err));
+    return handleLeadRouteError(req, res, err);
   }
 });
 
-router.post("/api/leads/test-message", requireAuth, requireOrg, async (req: Request, res: Response) => {
+router.post("/api/leads/test-message", requireAuth, requireOrg, requireLeadAdmin, async (req: Request, res: Response) => {
   try {
     const parsed = testMessageSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid test message" });
@@ -1247,7 +1362,7 @@ router.post("/api/leads/test-message", requireAuth, requireOrg, async (req: Requ
     });
     res.json(result);
   } catch (err) {
-    res.status(500).send(errMsg(err));
+    return handleLeadRouteError(req, res, err);
   }
 });
 
@@ -1274,7 +1389,7 @@ router.post("/api/leads/:id/convert", requireAuth, requireOrg, async (req: Reque
     await storage.recordAudit({ orgId, userId: req.session.userId, action: "convert", entity: "lead", entityId: lead.id, before: lead, after: result.lead });
     res.json(result);
   } catch (err) {
-    res.status(500).send(errMsg(err));
+    return handleLeadRouteError(req, res, err);
   }
 });
 

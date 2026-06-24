@@ -153,6 +153,28 @@ export async function resolveRequestAccess(req: Request) {
   return { org, membership: membership ?? null, access: resolveAccess(org, membership ?? null) };
 }
 
+/** Express middleware: require one of the resolved org roles. */
+export function requireOrgRole(...allowedRoles: Array<"owner" | "admin" | "tech" | "viewer">) {
+  return async function (req: Request, res: Response, next: NextFunction) {
+    const ctx = await resolveRequestAccess(req);
+    if (!ctx) return res.status(401).json({ error: "unauthorized" });
+    if (!ctx.access.allowed) {
+      return res.status(403).json({
+        error: "access_denied",
+        reason: ctx.access.reason,
+        linked: ctx.access.linked,
+      });
+    }
+    if (!allowedRoles.includes(ctx.access.effectiveRole)) {
+      return res.status(403).json({
+        error: "insufficient_permissions",
+        message: "Owner or admin access is required for this action.",
+      });
+    }
+    next();
+  };
+}
+
 /** Express middleware: require a specific feature on the active org. */
 export function requireFeature(feature: FeatureKey) {
   return async function (req: Request, res: Response, next: NextFunction) {

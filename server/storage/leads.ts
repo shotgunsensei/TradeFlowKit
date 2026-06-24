@@ -1,5 +1,5 @@
 import { randomBytes } from "crypto";
-import { and, count, desc, eq, gte, ilike, isNull, lte, ne, or, sql } from "drizzle-orm";
+import { and, count, countDistinct, desc, eq, gte, ilike, isNotNull, isNull, lte, max, ne, or, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
   customers,
@@ -40,6 +40,14 @@ export interface LeadStats {
   needsFollowUp: number;
   converted: number;
   totalOpen: number;
+}
+
+export interface LeadOperationalMetrics {
+  lastLeadReceivedAt: Date | null;
+  lastFollowupProcessedAt: Date | null;
+  failedMessageCount: number;
+  activeLeadSourcesCount: number;
+  pendingFollowupCount: number;
 }
 
 export const DEFAULT_LEAD_SMS_TEMPLATE = "Hi {name}, this is {business}. We received your request about {service}. What is the best time to follow up?";
@@ -206,6 +214,55 @@ export const leadsStorage = {
       needsFollowUp: followUpCount.c,
       converted: convertedCount.c,
       totalOpen: openCount.c,
+    };
+  },
+
+  async getLeadOperationalMetrics(orgId: string): Promise<LeadOperationalMetrics> {
+    const [
+      [leadRow],
+      [followupRow],
+      [failedMessageRow],
+      [activeSourceRow],
+      [pendingFollowupRow],
+    ] = await Promise.all([
+      db.select({ value: max(leads.createdAt) })
+        .from(leads)
+        .where(and(eq(leads.orgId, orgId), isNull(leads.deletedAt))),
+      db.select({ value: max(leadFollowupTasks.lastAttemptAt) })
+        .from(leadFollowupTasks)
+        .where(eq(leadFollowupTasks.orgId, orgId)),
+      db.select({ value: count() })
+        .from(leadActivities)
+        .where(and(
+          eq(leadActivities.orgId, orgId),
+          eq(leadActivities.type, "message"),
+          or(
+            eq(leadActivities.status, "failed"),
+            eq(leadActivities.status, "error"),
+            eq(leadActivities.status, "blocked"),
+            isNotNull(leadActivities.error),
+          ),
+        )),
+      db.select({ value: countDistinct(leadSourceEvents.adapterKey) })
+        .from(leadSourceEvents)
+        .where(and(
+          eq(leadSourceEvents.orgId, orgId),
+          eq(leadSourceEvents.status, "success"),
+        )),
+      db.select({ value: count() })
+        .from(leadFollowupTasks)
+        .where(and(
+          eq(leadFollowupTasks.orgId, orgId),
+          eq(leadFollowupTasks.status, "pending"),
+        )),
+    ]);
+
+    return {
+      lastLeadReceivedAt: leadRow?.value || null,
+      lastFollowupProcessedAt: followupRow?.value || null,
+      failedMessageCount: Number(failedMessageRow?.value || 0),
+      activeLeadSourcesCount: Number(activeSourceRow?.value || 0),
+      pendingFollowupCount: Number(pendingFollowupRow?.value || 0),
     };
   },
 

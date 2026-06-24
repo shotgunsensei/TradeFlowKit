@@ -2,6 +2,9 @@ import type { Lead, Org } from "@shared/schema";
 import { storage } from "./storage";
 import { sendSMS as twilioSendSMS, getTwilioPhoneNumber, isTwilioConfigured } from "./twilioClient";
 import { sendEmail as sendGridEmail } from "./emailClient";
+import { logger as rootLogger } from "./logger";
+
+const log = rootLogger.child({ component: "lead-messaging" });
 
 function valueOrBlank(value: unknown): string {
   return value == null ? "" : String(value);
@@ -252,6 +255,12 @@ export async function sendLeadSms(opts: {
     });
     return { ok: sent, mode, reason: sent ? null : "provider_error", activity };
   } catch (err) {
+    log.error({
+      err: err instanceof Error ? err.message : String(err),
+      orgId: opts.orgId,
+      leadId: opts.lead.id,
+      channel: "sms",
+    }, "Lead SMS provider request failed");
     const activity = await recordMessageActivity({
       orgId: opts.orgId,
       lead: opts.lead,
@@ -262,7 +271,7 @@ export async function sendLeadSms(opts: {
       body,
       template: opts.template,
       provider: "twilio",
-      error: err instanceof Error ? err.message : "SMS send failed",
+      error: "SMS provider request failed.",
       createdBy: opts.createdBy || null,
     });
     return { ok: false, mode: "error", reason: "provider_error", activity };
@@ -339,6 +348,12 @@ export async function sendLeadEmail(opts: {
     });
     return { ok: true, mode: "live", reason: null, activity };
   } catch (err) {
+    log.error({
+      err: err instanceof Error ? err.message : String(err),
+      orgId: opts.orgId,
+      leadId: opts.lead.id,
+      channel: "email",
+    }, "Lead email provider request failed");
     const activity = await recordMessageActivity({
       orgId: opts.orgId,
       lead: opts.lead,
@@ -349,7 +364,7 @@ export async function sendLeadEmail(opts: {
       body,
       template: opts.template,
       provider: "sendgrid",
-      error: err instanceof Error ? err.message : "Email send failed",
+      error: "Email provider request failed.",
       createdBy: opts.createdBy || null,
     });
     return { ok: false, mode: "error", reason: "provider_error", activity };
@@ -375,19 +390,37 @@ export async function sendLeadTestMessage(opts: {
     if (!settings.smsEnabled) return { ok: false, mode: "blocked", reason: "sms_not_enabled" };
     if (!status.twilioConfigured || !fromPhone) return { ok: false, mode: "blocked", reason: "twilio_not_configured" };
     const body = appendSmsFooter(opts.template, settings.smsComplianceFooter);
-    const sent = await deps.sendSMS(to, fromPhone, body);
-    return { ok: sent, mode: sent ? "live" : "error", reason: sent ? null : "provider_error" };
+    try {
+      const sent = await deps.sendSMS(to, fromPhone, body);
+      return { ok: sent, mode: sent ? "live" : "error", reason: sent ? null : "provider_error" };
+    } catch (err) {
+      log.error({
+        err: err instanceof Error ? err.message : String(err),
+        orgId: opts.orgId,
+        channel: "sms",
+      }, "Lead test SMS provider request failed");
+      return { ok: false, mode: "error", reason: "provider_error" };
+    }
   }
 
   if (!settings.emailEnabled) return { ok: false, mode: "blocked", reason: "email_not_enabled" };
   if (!status.sendgridConfigured || !status.sendgridFromEmailConfigured) return { ok: false, mode: "blocked", reason: "sendgrid_not_configured" };
-  await deps.sendEmail({
-    to,
-    fromName: opts.org?.name || "TradeFlow",
-    replyTo: opts.org?.email || undefined,
-    subject: opts.subject || "TradeFlow test message",
-    text: opts.template,
-    html: safeEmailHtml(opts.template),
-  });
-  return { ok: true, mode: "live", reason: null };
+  try {
+    await deps.sendEmail({
+      to,
+      fromName: opts.org?.name || "TradeFlow",
+      replyTo: opts.org?.email || undefined,
+      subject: opts.subject || "TradeFlow test message",
+      text: opts.template,
+      html: safeEmailHtml(opts.template),
+    });
+    return { ok: true, mode: "live", reason: null };
+  } catch (err) {
+    log.error({
+      err: err instanceof Error ? err.message : String(err),
+      orgId: opts.orgId,
+      channel: "email",
+    }, "Lead test email provider request failed");
+    return { ok: false, mode: "error", reason: "provider_error" };
+  }
 }
